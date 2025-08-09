@@ -1,4 +1,4 @@
-module gogl
+module mini-mc
 
 go 1.24
 
