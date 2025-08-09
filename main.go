@@ -212,69 +212,35 @@ func (w *World) GetActiveBlocks() []mgl32.Vec3 {
 	return positions
 }
 
-// DDA-based raycast for efficiency
 func raycast(start mgl32.Vec3, direction mgl32.Vec3, minDist, maxDist float32, world *World) ([3]int, [3]int, float32, bool) {
-	pos := start
-	dir := direction.Normalize()
+	stepSize := float32(0.02)
+	steps := int(maxDist / stepSize)
 
-	gridX := int(math.Floor(float64(pos.X())))
-	gridY := int(math.Floor(float64(pos.Y())))
-	gridZ := int(math.Floor(float64(pos.Z())))
-
-	deltaX := float32(math.Abs(1.0 / float64(dir.X())))
-	deltaY := float32(math.Abs(1.0 / float64(dir.Y())))
-	deltaZ := float32(math.Abs(1.0 / float64(dir.Z())))
-
-	var stepX, stepY, stepZ int
-	var sideDistX, sideDistY, sideDistZ float32
-
-	if dir.X() > 0 {
-		stepX = 1
-		sideDistX = (float32(gridX) + 1 - pos.X()) * deltaX
-	} else {
-		stepX = -1
-		sideDistX = (pos.X() - float32(gridX)) * deltaX
-	}
-	if dir.Y() > 0 {
-		stepY = 1
-		sideDistY = (float32(gridY) + 1 - pos.Y()) * deltaY
-	} else {
-		stepY = -1
-		sideDistY = (pos.Y() - float32(gridY)) * deltaY
-	}
-	if dir.Z() > 0 {
-		stepZ = 1
-		sideDistZ = (float32(gridZ) + 1 - pos.Z()) * deltaZ
-	} else {
-		stepZ = -1
-		sideDistZ = (pos.Z() - float32(gridZ)) * deltaZ
-	}
-
-	var lastEmptyPos [3]int = [3]int{gridX, gridY, gridZ}
+	var lastEmptyPos [3]int
 	var hitDistance float32
 
-	for hitDistance < maxDist {
-		if sideDistX < sideDistY && sideDistX < sideDistZ {
-			sideDistX += deltaX
-			gridX += stepX
-			hitDistance = sideDistX - deltaX
-		} else if sideDistY < sideDistZ {
-			sideDistY += deltaY
-			gridY += stepY
-			hitDistance = sideDistY - deltaY
-		} else {
-			sideDistZ += deltaZ
-			gridZ += stepZ
-			hitDistance = sideDistZ - deltaZ
-		}
-
-		if hitDistance < minDist {
+	for i := 0; i <= steps; i++ {
+		dist := float32(i) * stepSize
+		if dist < minDist {
 			continue
 		}
 
-		blockPos := [3]int{gridX, gridY, gridZ}
+		pos := start.Add(direction.Mul(dist))
+
+		blockPos := [3]int{
+			int(math.Floor(float64(pos.X()) + 0.5)),
+			int(math.Floor(float64(pos.Y()) + 0.5)),
+			int(math.Floor(float64(pos.Z()) + 0.5)),
+		}
+
 		if world.Get(blockPos[0], blockPos[1], blockPos[2]) {
-			return blockPos, lastEmptyPos, hitDistance, true
+			bx, by, bz := float32(blockPos[0]), float32(blockPos[1]), float32(blockPos[2])
+			if pos.X() >= bx-0.5 && pos.X() < bx+0.5 &&
+				pos.Y() >= by-0.5 && pos.Y() < by+0.5 &&
+				pos.Z() >= bz-0.5 && pos.Z() < bz+0.5 {
+				hitDistance = dist
+				return blockPos, lastEmptyPos, hitDistance, true
+			}
 		}
 
 		lastEmptyPos = blockPos
@@ -575,16 +541,15 @@ func updatePlayerPosition(dt float64, world *World, yaw, pitch float64, window *
 }
 
 func findGroundLevel(x, z float32, world *World) float32 {
-	// Consider player width
-	minX := int(math.Floor(float64(x - 0.3)))
-	maxX := int(math.Floor(float64(x + 0.3)))
-	minZ := int(math.Floor(float64(z - 0.3)))
-	maxZ := int(math.Floor(float64(z + 0.3)))
+	minX := int(math.Floor(float64(x - 0.3 + 0.5)))
+	maxX := int(math.Floor(float64(x + 0.3 + 0.5)))
+	minZ := int(math.Floor(float64(z - 0.3 + 0.5)))
+	maxZ := int(math.Floor(float64(z + 0.3 + 0.5)))
 
 	maxGroundY := float32(-10)
 	for bx := minX; bx <= maxX; bx++ {
 		for bz := minZ; bz <= maxZ; bz++ {
-			for by := int(math.Floor(float64(playerPos.Y()))); by >= -10; by-- {
+			for by := int(math.Floor(float64(playerPos.Y()) + 0.5)); by >= -10; by-- {
 				if world.Get(bx, by, bz) {
 					groundY := float32(by) + 0.5 // Top of block
 					if groundY > maxGroundY {
@@ -602,19 +567,17 @@ func findGroundLevel(x, z float32, world *World) float32 {
 }
 
 func collides(pos mgl32.Vec3, world *World) bool {
-	// Player AABB: width 0.6 (±0.3), height 1.8 (but using 2.5? Adjust to 1.8)
-	minX := int(math.Floor(float64(pos.X() - 0.3)))
-	maxX := int(math.Floor(float64(pos.X() + 0.3)))
-	minY := int(math.Floor(float64(pos.Y())))
-	maxY := int(math.Floor(float64(pos.Y() + 1.8)))
-	minZ := int(math.Floor(float64(pos.Z() - 0.3)))
-	maxZ := int(math.Floor(float64(pos.Z() + 0.3)))
+	minX := int(math.Floor(float64(pos.X() - 0.3 + 0.5)))
+	maxX := int(math.Floor(float64(pos.X() + 0.3 + 0.5)))
+	minY := int(math.Floor(float64(pos.Y() + 0.5)))
+	maxY := int(math.Floor(float64(pos.Y() + 2.5 + 0.5)))
+	minZ := int(math.Floor(float64(pos.Z() - 0.3 + 0.5)))
+	maxZ := int(math.Floor(float64(pos.Z() + 0.3 + 0.5)))
 
-	for x := minX; x <= maxX; x++ {
-		for y := minY; y <= maxY; y++ {
-			for z := minZ; z <= maxZ; z++ {
+	for x := minX - 1; x <= maxX+1; x++ {
+		for y := minY - 1; y <= maxY+1; y++ {
+			for z := minZ - 1; z <= maxZ+1; z++ {
 				if world.Get(x, y, z) {
-					// Check actual AABB overlap
 					blockMinX := float32(x) - 0.5
 					blockMaxX := float32(x) + 0.5
 					blockMinY := float32(y) - 0.5
@@ -623,7 +586,7 @@ func collides(pos mgl32.Vec3, world *World) bool {
 					blockMaxZ := float32(z) + 0.5
 
 					if pos.X()-0.3 < blockMaxX && pos.X()+0.3 > blockMinX &&
-						pos.Y() < blockMaxY && pos.Y()+1.8 > blockMinY &&
+						pos.Y() < blockMaxY && pos.Y()+2.5 > blockMinY &&
 						pos.Z()-0.3 < blockMaxZ && pos.Z()+0.3 > blockMinZ {
 						return true
 					}
