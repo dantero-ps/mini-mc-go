@@ -1,0 +1,625 @@
+package main
+
+import (
+	"fmt"
+	"math"
+	"runtime"
+	"strings"
+	"time"
+
+	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/glfw/v3.3/glfw"
+	"github.com/go-gl/mathgl/mgl32"
+)
+
+func init() { runtime.LockOSThread() }
+
+const (
+	winW = 900
+	winH = 600
+
+	// Block interaction distance range
+	minReachDistance = 0.1
+	maxReachDistance = 5.0
+)
+
+var cubeVertices = []float32{
+	-0.5, -0.5, 0.5, 0, 0, 1,
+	0.5, -0.5, 0.5, 0, 0, 1,
+	0.5, 0.5, 0.5, 0, 0, 1,
+	0.5, 0.5, 0.5, 0, 0, 1,
+	-0.5, 0.5, 0.5, 0, 0, 1,
+	-0.5, -0.5, 0.5, 0, 0, 1,
+	0.5, -0.5, -0.5, 0, 0, -1,
+	-0.5, -0.5, -0.5, 0, 0, -1,
+	-0.5, 0.5, -0.5, 0, 0, -1,
+	-0.5, 0.5, -0.5, 0, 0, -1,
+	0.5, 0.5, -0.5, 0, 0, -1,
+	0.5, -0.5, -0.5, 0, 0, -1,
+	-0.5, -0.5, -0.5, -1, 0, 0,
+	-0.5, -0.5, 0.5, -1, 0, 0,
+	-0.5, 0.5, 0.5, -1, 0, 0,
+	-0.5, 0.5, 0.5, -1, 0, 0,
+	-0.5, 0.5, -0.5, -1, 0, 0,
+	-0.5, -0.5, -0.5, -1, 0, 0,
+	0.5, -0.5, 0.5, 1, 0, 0,
+	0.5, -0.5, -0.5, 1, 0, 0,
+	0.5, 0.5, -0.5, 1, 0, 0,
+	0.5, 0.5, -0.5, 1, 0, 0,
+	0.5, 0.5, 0.5, 1, 0, 0,
+	0.5, -0.5, 0.5, 1, 0, 0,
+	-0.5, 0.5, 0.5, 0, 1, 0,
+	0.5, 0.5, 0.5, 0, 1, 0,
+	0.5, 0.5, -0.5, 0, 1, 0,
+	0.5, 0.5, -0.5, 0, 1, 0,
+	-0.5, 0.5, -0.5, 0, 1, 0,
+	-0.5, 0.5, 0.5, 0, 1, 0,
+	-0.5, -0.5, -0.5, 0, -1, 0,
+	0.5, -0.5, -0.5, 0, -1, 0,
+	0.5, -0.5, 0.5, 0, -1, 0,
+	0.5, -0.5, 0.5, 0, -1, 0,
+	-0.5, -0.5, 0.5, 0, -1, 0,
+	-0.5, -0.5, -0.5, 0, -1, 0,
+}
+
+// Wireframe cube edges for highlighting
+var cubeWireframeVertices = []float32{
+	// Bottom face
+	-0.5, -0.5, -0.5, 0.5, -0.5, -0.5,
+	0.5, -0.5, -0.5, 0.5, -0.5, 0.5,
+	0.5, -0.5, 0.5, -0.5, -0.5, 0.5,
+	-0.5, -0.5, 0.5, -0.5, -0.5, -0.5,
+	// Top face
+	-0.5, 0.5, -0.5, 0.5, 0.5, -0.5,
+	0.5, 0.5, -0.5, 0.5, 0.5, 0.5,
+	0.5, 0.5, 0.5, -0.5, 0.5, 0.5,
+	-0.5, 0.5, 0.5, -0.5, 0.5, -0.5,
+	// Vertical edges
+	-0.5, -0.5, -0.5, -0.5, 0.5, -0.5,
+	0.5, -0.5, -0.5, 0.5, 0.5, -0.5,
+	0.5, -0.5, 0.5, 0.5, 0.5, 0.5,
+	-0.5, -0.5, 0.5, -0.5, 0.5, 0.5,
+}
+
+// Crosshair vertices
+var crosshairVertices = []float32{
+	// Horizontal line
+	-0.02, 0.0,
+	0.02, 0.0,
+	// Vertical line
+	0.0, -0.02,
+	0.0, 0.02,
+}
+
+var vertexShader = `#version 330 core
+layout(location = 0) in vec3 aPos;
+layout(location = 1) in vec3 aNormal;
+uniform mat4 model;
+uniform mat4 view;
+uniform mat4 proj;
+out vec3 Normal;
+out vec3 FragPos;
+void main() {
+	FragPos = vec3(model * vec4(aPos, 1.0));
+	Normal = mat3(transpose(inverse(model))) * aNormal;
+	gl_Position = proj * view * vec4(FragPos, 1.0);
+}
+`
+
+var fragmentShader = `#version 330 core
+in vec3 Normal;
+in vec3 FragPos;
+uniform vec3 color;
+uniform vec3 lightDir;
+out vec4 FragColor;
+void main() {
+	vec3 n = normalize(Normal);
+	float diff = max(dot(n, -lightDir), 0.3);
+	float edge = pow(1.0 - max(dot(n, vec3(0,1,0)), 0.0), 3.0);
+	vec3 col = color * diff * (1.0 - 0.2 * edge);
+	FragColor = vec4(col, 1.0);
+}
+`
+
+// Simple shader for wireframe and 2D elements
+var simpleVertexShader = `#version 330 core
+layout(location = 0) in vec3 aPos;
+uniform mat4 model;
+uniform mat4 view;
+uniform mat4 proj;
+void main() {
+	gl_Position = proj * view * model * vec4(aPos, 1.0);
+}
+`
+
+var simpleFragmentShader = `#version 330 core
+uniform vec3 color;
+out vec4 FragColor;
+void main() {
+	FragColor = vec4(color, 1.0);
+}
+`
+
+// 2D shader for crosshair
+var crosshairVertexShader = `#version 330 core
+layout(location = 0) in vec2 aPos;
+void main() {
+	gl_Position = vec4(aPos, 0.0, 1.0);
+}
+`
+
+var crosshairFragmentShader = `#version 330 core
+out vec4 FragColor;
+void main() {
+	FragColor = vec4(1.0, 1.0, 1.0, 0.8);
+}
+`
+
+var (
+	playerPos               = mgl32.Vec3{0, 2.8, 0}
+	velocityY       float32 = 0
+	gravity         float32 = 15.0
+	jumpSpeed       float32 = 6.0
+	onGround        bool    = false
+	hoveredBlock    [3]int  // Currently hovered block for highlighting
+	hasHoveredBlock bool    // Whether there's a block being hovered
+)
+
+func raycast(start mgl32.Vec3, direction mgl32.Vec3, minDist, maxDist float32, blocks map[string]bool) ([3]int, [3]int, float32, bool) {
+	stepSize := float32(0.02)
+	steps := int(maxDist / stepSize)
+
+	var lastEmptyPos [3]int
+	var hitDistance float32
+
+	for i := 0; i <= steps; i++ {
+		dist := float32(i) * stepSize
+		if dist < minDist {
+			continue
+		}
+
+		pos := start.Add(direction.Mul(dist))
+
+		// Check which block this position is inside, adjusted for centering
+		blockPos := [3]int{
+			int(math.Floor(float64(pos.X()) + 0.5)),
+			int(math.Floor(float64(pos.Y()) + 0.5)),
+			int(math.Floor(float64(pos.Z()) + 0.5)),
+		}
+
+		// Check if this block exists
+		if blocks[key(blockPos[0], blockPos[1], blockPos[2])] {
+			// Verify we're actually inside the block bounds
+			bx, by, bz := float32(blockPos[0]), float32(blockPos[1]), float32(blockPos[2])
+			if pos.X() >= bx-0.5 && pos.X() < bx+0.5 && // Use < for half-open to avoid edge disputes
+				pos.Y() >= by-0.5 && pos.Y() < by+0.5 &&
+				pos.Z() >= bz-0.5 && pos.Z() < bz+0.5 {
+				hitDistance = dist
+				return blockPos, lastEmptyPos, hitDistance, true
+			}
+		}
+
+		lastEmptyPos = blockPos
+	}
+
+	// No hit within range
+	return [3]int{}, [3]int{}, 0, false
+}
+
+func main() {
+	if err := glfw.Init(); err != nil {
+		panic(err)
+	}
+	defer glfw.Terminate()
+
+	glfw.WindowHint(glfw.ContextVersionMajor, 3)
+	glfw.WindowHint(glfw.ContextVersionMinor, 2)
+	glfw.WindowHint(glfw.OpenGLForwardCompatible, glfw.True)
+	glfw.WindowHint(glfw.OpenGLProfile, glfw.OpenGLCoreProfile)
+
+	window, err := glfw.CreateWindow(winW, winH, "mini-mc", nil, nil)
+	if err != nil {
+		panic(err)
+	}
+	window.MakeContextCurrent()
+	if err := gl.Init(); err != nil {
+		panic(err)
+	}
+
+	program, err := newProgram(vertexShader, fragmentShader)
+	if err != nil {
+		panic(err)
+	}
+
+	simpleProgram, err := newProgram(simpleVertexShader, simpleFragmentShader)
+	if err != nil {
+		panic(err)
+	}
+
+	crosshairProgram, err := newProgram(crosshairVertexShader, crosshairFragmentShader)
+	if err != nil {
+		panic(err)
+	}
+
+	// Setup cube VAO
+	var vao uint32
+	gl.GenVertexArrays(1, &vao)
+	gl.BindVertexArray(vao)
+
+	var vbo uint32
+	gl.GenBuffers(1, &vbo)
+	gl.BindBuffer(gl.ARRAY_BUFFER, vbo)
+	gl.BufferData(gl.ARRAY_BUFFER, len(cubeVertices)*4, gl.Ptr(cubeVertices), gl.STATIC_DRAW)
+
+	stride := int32(6 * 4)
+	gl.EnableVertexAttribArray(0)
+	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, stride, gl.PtrOffset(0))
+	gl.EnableVertexAttribArray(1)
+	gl.VertexAttribPointer(1, 3, gl.FLOAT, false, stride, gl.PtrOffset(3*4))
+
+	// Setup wireframe VAO
+	var wireframeVAO uint32
+	gl.GenVertexArrays(1, &wireframeVAO)
+	gl.BindVertexArray(wireframeVAO)
+
+	var wireframeVBO uint32
+	gl.GenBuffers(1, &wireframeVBO)
+	gl.BindBuffer(gl.ARRAY_BUFFER, wireframeVBO)
+	gl.BufferData(gl.ARRAY_BUFFER, len(cubeWireframeVertices)*4, gl.Ptr(cubeWireframeVertices), gl.STATIC_DRAW)
+
+	gl.EnableVertexAttribArray(0)
+	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, 3*4, gl.PtrOffset(0))
+
+	// Setup crosshair VAO
+	var crosshairVAO uint32
+	gl.GenVertexArrays(1, &crosshairVAO)
+	gl.BindVertexArray(crosshairVAO)
+
+	var crosshairVBO uint32
+	gl.GenBuffers(1, &crosshairVBO)
+	gl.BindBuffer(gl.ARRAY_BUFFER, crosshairVBO)
+	gl.BufferData(gl.ARRAY_BUFFER, len(crosshairVertices)*4, gl.Ptr(crosshairVertices), gl.STATIC_DRAW)
+
+	gl.EnableVertexAttribArray(0)
+	gl.VertexAttribPointer(0, 2, gl.FLOAT, false, 2*4, gl.PtrOffset(0))
+
+	gl.Enable(gl.DEPTH_TEST)
+
+	camYaw := -90.0
+	camPitch := -20.0
+	lastX := float64(winW) / 2
+	lastY := float64(winH) / 2
+	firstMouse := true
+	window.SetInputMode(glfw.CursorMode, glfw.CursorDisabled)
+
+	window.SetCursorPosCallback(func(w *glfw.Window, xpos float64, ypos float64) {
+		if firstMouse {
+			lastX = xpos
+			lastY = ypos
+			firstMouse = false
+		}
+		xoffset := xpos - lastX
+		yoffset := lastY - ypos
+		lastX = xpos
+		lastY = ypos
+		sensitivity := 0.1
+		xoffset *= sensitivity
+		yoffset *= sensitivity
+		camYaw += xoffset
+		camPitch += yoffset
+		if camPitch > 89 {
+			camPitch = 89
+		}
+		if camPitch < -89 {
+			camPitch = -89
+		}
+	})
+
+	blocks := map[string]bool{}
+	for x := -8; x <= 8; x++ {
+		for z := -8; z <= 8; z++ {
+			blocks[key(x, 0, z)] = true
+		}
+	}
+
+	window.SetMouseButtonCallback(func(w *glfw.Window, button glfw.MouseButton, action glfw.Action, mods glfw.ModifierKey) {
+		if action == glfw.Press && hasHoveredBlock {
+			if button == glfw.MouseButtonLeft {
+				// Break block
+				delete(blocks, key(hoveredBlock[0], hoveredBlock[1], hoveredBlock[2]))
+			}
+			if button == glfw.MouseButtonRight {
+				// Place block at the adjacent position
+				front := getFrontVector(camYaw, camPitch)
+				rayStart := playerPos.Add(mgl32.Vec3{0, 1.5, 0})
+				_, placePos, _, hit := raycast(rayStart, front, minReachDistance, maxReachDistance, blocks)
+				if hit {
+					blocks[key(placePos[0], placePos[1], placePos[2])] = true
+				}
+			}
+		}
+	})
+
+	lastTime := time.Now()
+
+	for !window.ShouldClose() {
+		now := time.Now()
+		dt := now.Sub(lastTime).Seconds()
+		lastTime = now
+
+		updatePlayerPosition(dt, blocks, camYaw, camPitch, window)
+		updateHoveredBlock(camYaw, camPitch, blocks)
+
+		gl.ClearColor(0.53, 0.81, 0.92, 1.0)
+		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+
+		// Render blocks
+		gl.UseProgram(program)
+
+		proj := mgl32.Perspective(mgl32.DegToRad(60.0), float32(winW)/float32(winH), 0.1, 100.0)
+		front := getFrontVector(camYaw, camPitch)
+		eyePos := playerPos.Add(mgl32.Vec3{0, 1.5, 0})
+		view := mgl32.LookAtV(eyePos, eyePos.Add(front), mgl32.Vec3{0, 1, 0})
+
+		projLoc := gl.GetUniformLocation(program, gl.Str("proj\x00"))
+		viewLoc := gl.GetUniformLocation(program, gl.Str("view\x00"))
+		modelLoc := gl.GetUniformLocation(program, gl.Str("model\x00"))
+		colorLoc := gl.GetUniformLocation(program, gl.Str("color\x00"))
+		lightLoc := gl.GetUniformLocation(program, gl.Str("lightDir\x00"))
+
+		gl.UniformMatrix4fv(projLoc, 1, false, &proj[0])
+		gl.UniformMatrix4fv(viewLoc, 1, false, &view[0])
+
+		light := mgl32.Vec3{0.5, 1.0, 0.3}.Normalize()
+		gl.Uniform3f(lightLoc, light.X(), light.Y(), light.Z())
+
+		gl.BindVertexArray(vao)
+		for k := range blocks {
+			x, y, z := parseKey(k)
+			model := mgl32.Translate3D(float32(x), float32(y), float32(z))
+			gl.UniformMatrix4fv(modelLoc, 1, false, &model[0])
+			if y == 0 {
+				gl.Uniform3f(colorLoc, 0.3, 0.9, 0.3)
+			} else {
+				gl.Uniform3f(colorLoc, 0.8, 0.7, 0.5)
+			}
+			gl.DrawArrays(gl.TRIANGLES, 0, int32(len(cubeVertices)/6))
+		}
+
+		// Render block outline for hovered block
+		if hasHoveredBlock {
+			gl.UseProgram(simpleProgram)
+
+			simpleProjLoc := gl.GetUniformLocation(simpleProgram, gl.Str("proj\x00"))
+			simpleViewLoc := gl.GetUniformLocation(simpleProgram, gl.Str("view\x00"))
+			simpleModelLoc := gl.GetUniformLocation(simpleProgram, gl.Str("model\x00"))
+			simpleColorLoc := gl.GetUniformLocation(simpleProgram, gl.Str("color\x00"))
+
+			gl.UniformMatrix4fv(simpleProjLoc, 1, false, &proj[0])
+			gl.UniformMatrix4fv(simpleViewLoc, 1, false, &view[0])
+
+			// Draw wireframe outline with slight offset to prevent z-fighting
+			model := mgl32.Translate3D(float32(hoveredBlock[0]), float32(hoveredBlock[1]), float32(hoveredBlock[2])).Mul4(mgl32.Scale3D(1.01, 1.01, 1.01))
+			gl.UniformMatrix4fv(simpleModelLoc, 1, false, &model[0])
+			gl.Uniform3f(simpleColorLoc, 0.0, 0.0, 0.0) // Black outline
+
+			gl.BindVertexArray(wireframeVAO)
+			gl.LineWidth(2.0)
+			gl.DrawArrays(gl.LINES, 0, int32(len(cubeWireframeVertices)/3))
+		}
+
+		// Render crosshair
+		gl.UseProgram(crosshairProgram)
+		gl.BindVertexArray(crosshairVAO)
+		gl.LineWidth(2.0)
+		gl.DrawArrays(gl.LINES, 0, 4)
+
+		window.SwapBuffers()
+		glfw.PollEvents()
+	}
+}
+
+func updateHoveredBlock(yaw, pitch float64, blocks map[string]bool) {
+	front := getFrontVector(yaw, pitch)
+	rayStart := playerPos.Add(mgl32.Vec3{0, 1.5, 0})
+	hitPos, _, _, hit := raycast(rayStart, front, minReachDistance, maxReachDistance, blocks)
+
+	if hit {
+		hoveredBlock = hitPos
+		hasHoveredBlock = true
+	} else {
+		hasHoveredBlock = false
+	}
+}
+
+func updatePlayerPosition(dt float64, blocks map[string]bool, yaw, pitch float64, window *glfw.Window) {
+	speed := float32(5.0)
+	front := getFrontVector(yaw, pitch)
+	right := front.Cross(mgl32.Vec3{0, 1, 0}).Normalize()
+
+	moveDir := mgl32.Vec3{0, 0, 0}
+	if window.GetKey(glfw.KeyW) == glfw.Press {
+		moveDir = moveDir.Add(front)
+	}
+	if window.GetKey(glfw.KeyS) == glfw.Press {
+		moveDir = moveDir.Sub(front)
+	}
+	if window.GetKey(glfw.KeyA) == glfw.Press {
+		moveDir = moveDir.Sub(right)
+	}
+	if window.GetKey(glfw.KeyD) == glfw.Press {
+		moveDir = moveDir.Add(right)
+	}
+	if moveDir.Len() > 0 {
+		moveDir = moveDir.Normalize().Mul(speed * float32(dt))
+	}
+
+	if onGround && window.GetKey(glfw.KeySpace) == glfw.Press {
+		velocityY = jumpSpeed
+		onGround = false
+	}
+
+	// Apply gravity
+	velocityY -= gravity * float32(dt)
+	moveY := velocityY * float32(dt)
+
+	// Try horizontal movement first
+	newPosH := playerPos.Add(mgl32.Vec3{moveDir.X(), 0, moveDir.Z()})
+	if !collides(newPosH, blocks) {
+		playerPos = newPosH
+	}
+
+	// Try vertical movement
+	newPosV := playerPos.Add(mgl32.Vec3{0, moveY, 0})
+	if !collides(newPosV, blocks) {
+		playerPos = newPosV
+		onGround = false
+	} else {
+		// Collision on vertical movement
+		if velocityY < 0 {
+			// Falling - find ground level
+			groundY := findGroundLevel(playerPos.X(), playerPos.Z(), blocks)
+			playerPos = mgl32.Vec3{playerPos.X(), groundY, playerPos.Z()}
+			onGround = true
+			velocityY = 0
+		} else {
+			// Hitting ceiling
+			velocityY = 0
+		}
+	}
+}
+
+func findGroundLevel(x, z float32, blocks map[string]bool) float32 {
+	// Consider player width
+	minX := int(math.Floor(float64(x - 0.3 + 0.5)))
+	maxX := int(math.Floor(float64(x + 0.3 + 0.5)))
+	minZ := int(math.Floor(float64(z - 0.3 + 0.5)))
+	maxZ := int(math.Floor(float64(z + 0.3 + 0.5)))
+
+	maxGroundY := float32(-10)
+	for bx := minX; bx <= maxX; bx++ {
+		for bz := minZ; bz <= maxZ; bz++ {
+			for by := int(math.Floor(float64(playerPos.Y()) + 0.5)); by >= -10; by-- {
+				if blocks[key(bx, by, bz)] {
+					groundY := float32(by) + 0.5 // Top of block
+					if groundY > maxGroundY {
+						maxGroundY = groundY
+					}
+					break
+				}
+			}
+		}
+	}
+	if maxGroundY == -10 {
+		return 1.0 // Safe default
+	}
+	return maxGroundY
+}
+
+func collides(pos mgl32.Vec3, blocks map[string]bool) bool {
+	// Player AABB: width 0.6 (x/z ±0.3), height 1.8 (but code uses 2.5? Adjust to match eye 1.5 + base)
+	// But keep as is, assume height from pos.Y to pos.Y+2.5
+	minX := int(math.Floor(float64(pos.X() - 0.3 + 0.5)))
+	maxX := int(math.Floor(float64(pos.X() + 0.3 + 0.5)))
+	minY := int(math.Floor(float64(pos.Y() + 0.5)))
+	maxY := int(math.Floor(float64(pos.Y() + 2.5 + 0.5)))
+	minZ := int(math.Floor(float64(pos.Z() - 0.3 + 0.5)))
+	maxZ := int(math.Floor(float64(pos.Z() + 0.3 + 0.5)))
+
+	for x := minX - 1; x <= maxX+1; x++ { // Widen range to catch all possible
+		for y := minY - 1; y <= maxY+1; y++ {
+			for z := minZ - 1; z <= maxZ+1; z++ {
+				if blocks[key(x, y, z)] {
+					// Check actual AABB overlap
+					blockMinX := float32(x) - 0.5
+					blockMaxX := float32(x) + 0.5
+					blockMinY := float32(y) - 0.5
+					blockMaxY := float32(y) + 0.5
+					blockMinZ := float32(z) - 0.5
+					blockMaxZ := float32(z) + 0.5
+
+					if pos.X()-0.3 < blockMaxX && pos.X()+0.3 > blockMinX &&
+						pos.Y() < blockMaxY && pos.Y()+2.5 > blockMinY &&
+						pos.Z()-0.3 < blockMaxZ && pos.Z()+0.3 > blockMinZ {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+func getFrontVector(yaw, pitch float64) mgl32.Vec3 {
+	y := mgl32.DegToRad(float32(yaw))
+	p := mgl32.DegToRad(float32(pitch))
+	fx := float32(math.Cos(float64(y)) * math.Cos(float64(p)))
+	fy := float32(math.Sin(float64(p)))
+	fz := float32(math.Sin(float64(y)) * math.Cos(float64(p)))
+	return mgl32.Vec3{fx, fy, fz}.Normalize()
+}
+
+func key(x, y, z int) string {
+	return fmt.Sprintf("%d,%d,%d", x, y, z)
+}
+
+func parseKey(k string) (int, int, int) {
+	parts := strings.Split(k, ",")
+	var xi, yi, zi int
+	fmt.Sscanf(parts[0], "%d", &xi)
+	fmt.Sscanf(parts[1], "%d", &yi)
+	fmt.Sscanf(parts[2], "%d", &zi)
+	return xi, yi, zi
+}
+
+func newProgram(vertexSrc, fragmentSrc string) (uint32, error) {
+	vertexShader, err := compileShader(vertexSrc, gl.VERTEX_SHADER)
+	if err != nil {
+		return 0, err
+	}
+	fragmentShader, err := compileShader(fragmentSrc, gl.FRAGMENT_SHADER)
+	if err != nil {
+		return 0, err
+	}
+
+	program := gl.CreateProgram()
+	gl.AttachShader(program, vertexShader)
+	gl.AttachShader(program, fragmentShader)
+	gl.LinkProgram(program)
+
+	var status int32
+	gl.GetProgramiv(program, gl.LINK_STATUS, &status)
+	if status == gl.FALSE {
+		var logLength int32
+		gl.GetProgramiv(program, gl.INFO_LOG_LENGTH, &logLength)
+
+		log := strings.Repeat("\x00", int(logLength+1))
+		gl.GetProgramInfoLog(program, logLength, nil, gl.Str(log))
+
+		return 0, fmt.Errorf("failed to link program: %v", log)
+	}
+	gl.DeleteShader(vertexShader)
+	gl.DeleteShader(fragmentShader)
+	return program, nil
+}
+
+func compileShader(source string, shaderType uint32) (uint32, error) {
+	shader := gl.CreateShader(shaderType)
+	csources, free := gl.Strs(source + "\x00")
+	gl.ShaderSource(shader, 1, csources, nil)
+	free()
+	gl.CompileShader(shader)
+
+	var status int32
+	gl.GetShaderiv(shader, gl.COMPILE_STATUS, &status)
+	if status == gl.FALSE {
+		var logLength int32
+		gl.GetShaderiv(shader, gl.INFO_LOG_LENGTH, &logLength)
+
+		log := strings.Repeat("\x00", int(logLength+1))
+		gl.GetShaderInfoLog(shader, logLength, nil, gl.Str(log))
+
+		return 0, fmt.Errorf("failed to compile shader: %v", log)
+	}
+	return shader, nil
+}
