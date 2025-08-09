@@ -15,11 +15,6 @@ func init() {
 	runtime.LockOSThread()
 }
 
-const (
-	winW = 900
-	winH = 600
-)
-
 func main() {
 	if err := glfw.Init(); err != nil {
 		panic(err)
@@ -57,7 +52,7 @@ func setupWindow() (*glfw.Window, error) {
 	glfw.WindowHint(glfw.OpenGLForwardCompatible, glfw.True)
 	glfw.WindowHint(glfw.OpenGLProfile, glfw.OpenGLCoreProfile)
 
-	window, err := glfw.CreateWindow(winW, winH, "mini-mc", nil, nil)
+	window, err := glfw.CreateWindow(graphics.WinWidth, graphics.WinHeight, "mini-mc", nil, nil)
 	if err != nil {
 		return nil, err
 	}

@@ -211,6 +211,11 @@ func (r *Renderer) renderHighlightedBlock(blockPos [3]int, view, projection mgl3
 
 func (r *Renderer) renderCrosshair() {
 	r.crosshairShader.Use()
+
+	aspectRatio := r.camera.AspectRatio
+
+	r.crosshairShader.SetFloat("aspectRatio", aspectRatio)
+
 	gl.BindVertexArray(r.crosshairVAO)
 	gl.LineWidth(2.0)
 	gl.DrawArrays(gl.LINES, 0, 4)
