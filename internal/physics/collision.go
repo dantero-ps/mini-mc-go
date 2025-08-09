@@ -19,7 +19,7 @@ func Collides(pos mgl32.Vec3, playerHeight float32, world *world.World) bool {
 	for x := minX - 1; x <= maxX+1; x++ {
 		for y := minY - 1; y <= maxY+1; y++ {
 			for z := minZ - 1; z <= maxZ+1; z++ {
-				if world.Get(x, y, z) {
+				if !world.IsAir(x, y, z) {
 					blockMinX := float32(x) - 0.5
 					blockMaxX := float32(x) + 0.5
 					blockMinY := float32(y) - 0.5
@@ -50,7 +50,7 @@ func FindGroundLevel(x, z float32, playerPos mgl32.Vec3, world *world.World) flo
 	for bx := minX; bx <= maxX; bx++ {
 		for bz := minZ; bz <= maxZ; bz++ {
 			for by := int(math.Floor(float64(playerPos.Y()) + 0.5)); by >= -10; by-- {
-				if world.Get(bx, by, bz) {
+				if !world.IsAir(bx, by, bz) {
 					groundY := float32(by) + 0.5 // Top of block
 					if groundY > maxGroundY {
 						maxGroundY = groundY

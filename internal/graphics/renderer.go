@@ -154,7 +154,14 @@ func (r *Renderer) Render(w *world.World, p *player.Player) {
 	projection := r.camera.GetProjectionMatrix()
 
 	// Render blocks
+	if player.WireframeMode {
+		gl.PolygonMode(gl.FRONT_AND_BACK, gl.LINE)
+	} else {
+		gl.PolygonMode(gl.FRONT_AND_BACK, gl.FILL)
+	}
 	r.renderBlocks(w, view, projection)
+
+	gl.PolygonMode(gl.FRONT_AND_BACK, gl.FILL)
 
 	// Render highlighted block
 	if p.HasHoveredBlock {

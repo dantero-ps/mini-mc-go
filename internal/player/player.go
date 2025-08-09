@@ -1,6 +1,7 @@
 package player
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/go-gl/glfw/v3.3/glfw"
@@ -82,7 +83,7 @@ func (p *Player) HandleMouseButton(button glfw.MouseButton, action glfw.Action, 
 	if action == glfw.Press && p.HasHoveredBlock {
 		if button == glfw.MouseButtonLeft {
 			// Break block
-			p.World.Set(p.HoveredBlock[0], p.HoveredBlock[1], p.HoveredBlock[2], false)
+			p.World.Set(p.HoveredBlock[0], p.HoveredBlock[1], p.HoveredBlock[2], world.BlockTypeAir)
 		}
 		if button == glfw.MouseButtonRight {
 			// Place block at the adjacent position
@@ -90,7 +91,7 @@ func (p *Player) HandleMouseButton(button glfw.MouseButton, action glfw.Action, 
 			rayStart := p.GetEyePosition()
 			result := physics.Raycast(rayStart, front, physics.MinReachDistance, physics.MaxReachDistance, p.World)
 			if result.Hit {
-				p.World.Set(result.AdjacentPosition[0], result.AdjacentPosition[1], result.AdjacentPosition[2], true)
+				p.World.Set(result.AdjacentPosition[0], result.AdjacentPosition[1], result.AdjacentPosition[2], world.BlockTypeGrass)
 			}
 		}
 	}
@@ -194,4 +195,12 @@ func (p *Player) GetViewMatrix() mgl32.Mat4 {
 	front := p.GetFrontVector()
 	target := eyePos.Add(front)
 	return mgl32.LookAtV(eyePos, target, mgl32.Vec3{0, 1, 0})
+}
+
+var WireframeMode bool = false
+
+// ToggleWireframeMode, wireframe modunu açıp kapatır
+func (p *Player) ToggleWireframeMode() {
+	WireframeMode = !WireframeMode
+	fmt.Printf("Wireframe mode: %v\n", WireframeMode)
 }

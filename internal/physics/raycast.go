@@ -42,7 +42,7 @@ func Raycast(start mgl32.Vec3, direction mgl32.Vec3, minDist, maxDist float32, w
 			int(math.Floor(float64(pos.Z()) + 0.5)),
 		}
 
-		if world.Get(blockPos[0], blockPos[1], blockPos[2]) {
+		if !world.IsAir(blockPos[0], blockPos[1], blockPos[2]) {
 			bx, by, bz := float32(blockPos[0]), float32(blockPos[1]), float32(blockPos[2])
 			if pos.X() >= bx-0.5 && pos.X() < bx+0.5 &&
 				pos.Y() >= by-0.5 && pos.Y() < by+0.5 &&

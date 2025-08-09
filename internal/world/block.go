@@ -4,6 +4,13 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 )
 
+type BlockType uint8
+
+const (
+	BlockTypeAir BlockType = iota
+	BlockTypeGrass
+)
+
 // Block data
 const (
 	BlockSize = 1.0
