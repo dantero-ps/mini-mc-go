@@ -119,15 +119,18 @@ func (p *Player) UpdateHoveredBlock() {
 func (p *Player) UpdatePosition(dt float64, window *glfw.Window) {
 	speed := float32(PlayerSpeed * dt)
 	front := p.GetFrontVector()
-	right := front.Cross(mgl32.Vec3{0, 1, 0}).Normalize()
+
+	// Project front vector to horizontal plane for consistent movement speed
+	frontHorizontal := mgl32.Vec3{front.X(), 0, front.Z()}.Normalize()
+	right := frontHorizontal.Cross(mgl32.Vec3{0, 1, 0}).Normalize()
 
 	// Calculate movement direction based on input
 	moveDir := mgl32.Vec3{0, 0, 0}
 	if window.GetKey(glfw.KeyW) == glfw.Press {
-		moveDir = moveDir.Add(front)
+		moveDir = moveDir.Add(frontHorizontal)
 	}
 	if window.GetKey(glfw.KeyS) == glfw.Press {
-		moveDir = moveDir.Sub(front)
+		moveDir = moveDir.Sub(frontHorizontal)
 	}
 	if window.GetKey(glfw.KeyA) == glfw.Press {
 		moveDir = moveDir.Sub(right)
