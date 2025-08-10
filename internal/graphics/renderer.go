@@ -23,6 +23,8 @@ const (
 	WireframeFragShader = "wireframe.frag"
 	CrosshairVertShader = "crosshair.vert"
 	CrosshairFragShader = "crosshair.frag"
+	DirectionVertShader = "direction.vert"
+	DirectionFragShader = "direction.frag"
 )
 
 var CrosshairVertices = []float32{
@@ -32,10 +34,71 @@ var CrosshairVertices = []float32{
 	0.0, 0.02,
 }
 
+// Direction indicator vertices (arrow shape pointing up)
+var DirectionVertices = []float32{
+	// Arrow body
+	-0.01, -0.08,
+	0.01, -0.08,
+	0.01, -0.02,
+	-0.01, -0.02,
+	// Arrow head
+	-0.03, -0.02,
+	0.03, -0.02,
+	0.0, 0.02,
+}
+
+// Letter vertices for N, E, S, W
+var LetterN = []float32{
+	-0.02, -0.02, // Left vertical line start
+	-0.02, 0.02, // Left vertical line end
+	-0.02, 0.02, // Diagonal line start
+	0.02, -0.02, // Diagonal line end
+	0.02, -0.02, // Right vertical line start
+	0.02, 0.02, // Right vertical line end
+}
+
+var LetterE = []float32{
+	-0.02, -0.02, // Left vertical line start
+	-0.02, 0.02, // Left vertical line end
+	-0.02, 0.02, // Top horizontal line start
+	0.02, 0.02, // Top horizontal line end
+	-0.02, 0.0, // Middle horizontal line start
+	0.01, 0.0, // Middle horizontal line end
+	-0.02, -0.02, // Bottom horizontal line start
+	0.02, -0.02, // Bottom horizontal line end
+}
+
+var LetterS = []float32{
+	0.02, 0.02, // Top horizontal line start
+	-0.02, 0.02, // Top horizontal line end
+	-0.02, 0.02, // Top left vertical line start
+	-0.02, 0.0, // Top left vertical line end
+	-0.02, 0.0, // Middle horizontal line start
+	0.02, 0.0, // Middle horizontal line end
+	0.02, 0.0, // Bottom right vertical line start
+	0.02, -0.02, // Bottom right vertical line end
+	0.02, -0.02, // Bottom horizontal line start
+	-0.02, -0.02, // Bottom horizontal line end
+}
+
+var LetterW = []float32{
+	-0.02, 0.02, // Left outer vertical line start
+	-0.02, -0.02, // Left outer vertical line end
+	-0.02, -0.02, // Left diagonal line start
+	-0.01, 0.0, // Left diagonal line end
+	-0.01, 0.0, // Middle diagonal line start
+	0.01, -0.02, // Middle diagonal line end
+	0.01, -0.02, // Right diagonal line start
+	0.02, 0.0, // Right diagonal line end
+	0.02, 0.0, // Right outer vertical line start
+	0.02, 0.02, // Right outer vertical line end
+}
+
 type Renderer struct {
 	mainShader      *Shader
 	simpleShader    *Shader
 	crosshairShader *Shader
+	directionShader *Shader
 	camera          *Camera
 
 	// OpenGL objects
@@ -46,6 +109,10 @@ type Renderer struct {
 	wireframeVBO uint32
 	crosshairVAO uint32
 	crosshairVBO uint32
+	directionVAO uint32
+	directionVBO uint32
+	letterVAO    uint32
+	letterVBO    uint32
 }
 
 func NewRenderer() (*Renderer, error) {
@@ -55,8 +122,6 @@ func NewRenderer() (*Renderer, error) {
 
 	// Configure OpenGL
 	gl.Enable(gl.DEPTH_TEST)
-	gl.Enable(gl.CULL_FACE)
-	gl.CullFace(gl.BACK)
 
 	// Create shaders from files
 	mainVertPath := filepath.Join(ShadersDir, MainVertShader)
@@ -80,6 +145,13 @@ func NewRenderer() (*Renderer, error) {
 		return nil, err
 	}
 
+	directionVertPath := filepath.Join(ShadersDir, DirectionVertShader)
+	directionFragPath := filepath.Join(ShadersDir, DirectionFragShader)
+	directionShader, err := NewShader(directionVertPath, directionFragPath)
+	if err != nil {
+		return nil, err
+	}
+
 	// Create camera
 	camera := NewCamera(WinWidth, WinHeight)
 
@@ -87,6 +159,7 @@ func NewRenderer() (*Renderer, error) {
 		mainShader:      mainShader,
 		simpleShader:    simpleShader,
 		crosshairShader: crosshairShader,
+		directionShader: directionShader,
 		camera:          camera,
 	}
 
@@ -94,6 +167,8 @@ func NewRenderer() (*Renderer, error) {
 	renderer.setupBlockVAO()
 	renderer.setupWireframeVAO()
 	renderer.setupCrosshairVAO()
+	renderer.setupDirectionVAO()
+	renderer.setupLetterVAO()
 
 	return renderer, nil
 }
@@ -144,6 +219,30 @@ func (r *Renderer) setupCrosshairVAO() {
 	gl.VertexAttribPointer(0, 2, gl.FLOAT, false, 2*4, gl.PtrOffset(0))
 }
 
+func (r *Renderer) setupDirectionVAO() {
+	gl.GenVertexArrays(1, &r.directionVAO)
+	gl.BindVertexArray(r.directionVAO)
+
+	gl.GenBuffers(1, &r.directionVBO)
+	gl.BindBuffer(gl.ARRAY_BUFFER, r.directionVBO)
+	gl.BufferData(gl.ARRAY_BUFFER, len(DirectionVertices)*4, gl.Ptr(DirectionVertices), gl.STATIC_DRAW)
+
+	gl.EnableVertexAttribArray(0)
+	gl.VertexAttribPointer(0, 2, gl.FLOAT, false, 2*4, gl.PtrOffset(0))
+}
+
+func (r *Renderer) setupLetterVAO() {
+	gl.GenVertexArrays(1, &r.letterVAO)
+	gl.BindVertexArray(r.letterVAO)
+
+	gl.GenBuffers(1, &r.letterVBO)
+	gl.BindBuffer(gl.ARRAY_BUFFER, r.letterVBO)
+	// We'll update the buffer data when drawing specific letters
+
+	gl.EnableVertexAttribArray(0)
+	gl.VertexAttribPointer(0, 2, gl.FLOAT, false, 2*4, gl.PtrOffset(0))
+}
+
 func (r *Renderer) Render(w *world.World, p *player.Player) {
 	// Clear the screen
 	gl.ClearColor(0.53, 0.81, 0.92, 1.0)
@@ -170,6 +269,9 @@ func (r *Renderer) Render(w *world.World, p *player.Player) {
 
 	// Render crosshair
 	r.renderCrosshair()
+
+	// Render direction indicator
+	r.renderDirection(p)
 }
 
 func (r *Renderer) renderBlocks(w *world.World, view, projection mgl32.Mat4) {
@@ -179,12 +281,25 @@ func (r *Renderer) renderBlocks(w *world.World, view, projection mgl32.Mat4) {
 	r.mainShader.SetMatrix4("view", &view[0])
 
 	// Set light direction
-	light := mgl32.Vec3{0.5, 1.0, 0.3}.Normalize()
+	light := mgl32.Vec3{0.3, 1.0, 0.3}.Normalize()
 	r.mainShader.SetVector3("lightDir", light.X(), light.Y(), light.Z())
 
-	// Set block color
-	color := world.GetBlockColor()
-	r.mainShader.SetVector3("color", color.X(), color.Y(), color.Z())
+	// Set face colors from Go code
+	northColor := world.GetBlockColor(world.FaceNorth)
+	southColor := world.GetBlockColor(world.FaceSouth)
+	eastColor := world.GetBlockColor(world.FaceEast)
+	westColor := world.GetBlockColor(world.FaceWest)
+	topColor := world.GetBlockColor(world.FaceTop)
+	bottomColor := world.GetBlockColor(world.FaceBottom)
+	defaultColor := mgl32.Vec3{0.5, 0.5, 0.5} // Gray (fallback)
+
+	r.mainShader.SetVector3("faceColorNorth", northColor.X(), northColor.Y(), northColor.Z())
+	r.mainShader.SetVector3("faceColorSouth", southColor.X(), southColor.Y(), southColor.Z())
+	r.mainShader.SetVector3("faceColorEast", eastColor.X(), eastColor.Y(), eastColor.Z())
+	r.mainShader.SetVector3("faceColorWest", westColor.X(), westColor.Y(), westColor.Z())
+	r.mainShader.SetVector3("faceColorTop", topColor.X(), topColor.Y(), topColor.Z())
+	r.mainShader.SetVector3("faceColorBottom", bottomColor.X(), bottomColor.Y(), bottomColor.Z())
+	r.mainShader.SetVector3("faceColorDefault", defaultColor.X(), defaultColor.Y(), defaultColor.Z())
 
 	gl.BindVertexArray(r.blockVAO)
 	positions := w.GetActiveBlocks()
@@ -226,4 +341,80 @@ func (r *Renderer) renderCrosshair() {
 	gl.BindVertexArray(r.crosshairVAO)
 	gl.LineWidth(2.0)
 	gl.DrawArrays(gl.LINES, 0, 4)
+}
+
+// drawDirectionLetter draws the specified direction letter
+func (r *Renderer) drawDirectionLetter(letter string) {
+	// Select the appropriate letter vertices
+	var vertices []float32
+	switch letter {
+	case "N":
+		vertices = LetterN
+	case "E":
+		vertices = LetterE
+	case "S":
+		vertices = LetterS
+	case "W":
+		vertices = LetterW
+	default:
+		return // Unknown letter
+	}
+
+	// Update the VBO with the letter vertices
+	gl.BindBuffer(gl.ARRAY_BUFFER, r.letterVBO)
+	gl.BufferData(gl.ARRAY_BUFFER, len(vertices)*4, gl.Ptr(vertices), gl.DYNAMIC_DRAW)
+
+	// Draw the letter
+	gl.BindVertexArray(r.letterVAO)
+	gl.LineWidth(2.0)
+	gl.DrawArrays(gl.LINES, 0, int32(len(vertices)/2))
+}
+
+func (r *Renderer) renderDirection(p *player.Player) {
+	r.directionShader.Use()
+
+	aspectRatio := r.camera.AspectRatio
+	r.directionShader.SetFloat("aspectRatio", aspectRatio)
+
+	// Set direction color (red)
+	r.directionShader.SetVector3("directionColor", 1.0, 0.0, 0.0)
+
+	// Position at the bottom of the screen
+	r.directionShader.SetFloat("positionX", 0.0)
+	r.directionShader.SetFloat("positionY", -0.85)
+
+	// Rotate based on player's yaw (convert to radians)
+	// Subtract 90 degrees because the arrow points up by default, but yaw 0 is north
+	yawRadians := float32(mgl32.DegToRad(float32(p.CamYaw + 90.0)))
+	r.directionShader.SetFloat("rotation", yawRadians)
+
+	// Draw the direction indicator
+	gl.BindVertexArray(r.directionVAO)
+	gl.LineWidth(2.0)
+	gl.DrawArrays(gl.LINE_LOOP, 0, 4) // Draw arrow body (rectangle)
+	gl.DrawArrays(gl.LINE_LOOP, 4, 3) // Draw arrow head (triangle)
+
+	// Determine cardinal direction based on player's yaw
+	// Normalize yaw to 0-360 range
+	normalizedYaw := float64(int(p.CamYaw+360) % 360)
+
+	// Get cardinal direction letter
+	var directionLetter string
+	if normalizedYaw >= 315 || normalizedYaw < 45 {
+		directionLetter = "E" // East
+	} else if normalizedYaw >= 45 && normalizedYaw < 135 {
+		directionLetter = "N" // North
+	} else if normalizedYaw >= 135 && normalizedYaw < 225 {
+		directionLetter = "W" // West
+	} else {
+		directionLetter = "S" // South
+	}
+
+	// Position for the text (above the arrow)
+	r.directionShader.SetFloat("positionX", 0.0)
+	r.directionShader.SetFloat("positionY", -0.75)
+	r.directionShader.SetFloat("rotation", 0.0) // No rotation for text
+
+	// Draw the direction letter
+	r.drawDirectionLetter(directionLetter)
 }

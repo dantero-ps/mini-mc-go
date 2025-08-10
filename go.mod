@@ -7,5 +7,3 @@ require (
 	github.com/go-gl/glfw/v3.3/glfw v0.0.0-20250301202403-da16c1255728
 	github.com/go-gl/mathgl v1.2.0
 )
-
-require github.com/go-gl/example v0.0.0-20220216040751-d71b0d9f823d // indirect
