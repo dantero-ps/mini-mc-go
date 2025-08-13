@@ -101,6 +101,10 @@ type Renderer struct {
 	directionShader *Shader
 	camera          *Camera
 
+	// FOV transition
+	targetFOV  float32
+	currentFOV float32
+
 	// OpenGL objects
 	blockVAO     uint32
 	blockVBO     uint32
@@ -155,12 +159,17 @@ func NewRenderer() (*Renderer, error) {
 	// Create camera
 	camera := NewCamera(WinWidth, WinHeight)
 
+	// Default FOV value
+	defaultFOV := float32(60.0)
+
 	renderer := &Renderer{
 		mainShader:      mainShader,
 		simpleShader:    simpleShader,
 		crosshairShader: crosshairShader,
 		directionShader: directionShader,
 		camera:          camera,
+		targetFOV:       defaultFOV,
+		currentFOV:      defaultFOV,
 	}
 
 	// Initialize VAOs and VBOs
@@ -243,10 +252,46 @@ func (r *Renderer) setupLetterVAO() {
 	gl.VertexAttribPointer(0, 2, gl.FLOAT, false, 2*4, gl.PtrOffset(0))
 }
 
-func (r *Renderer) Render(w *world.World, p *player.Player) {
+func (r *Renderer) Render(w *world.World, p *player.Player, dt float64) {
 	// Clear the screen
 	gl.ClearColor(0.53, 0.81, 0.92, 1.0)
 	gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+
+	// Adjust FOV based on player sprint state
+	normalFOV := float32(60.0)
+	sprintFOV := float32(70.0)
+
+	// Set target FOV based on sprint state
+	if p.IsSprinting {
+		r.targetFOV = sprintFOV
+	} else {
+		r.targetFOV = normalFOV
+	}
+
+	// Smooth interpolation between current and target FOV
+	// Adjust this value to control the speed of the transition
+	transitionSpeed := float32(100.0)
+
+	// Calculate the interpolation step based on delta time
+	step := float32(dt) * transitionSpeed
+
+	// Smoothly interpolate towards the target FOV
+	if r.currentFOV < r.targetFOV {
+		// Increase current FOV but don't exceed target
+		r.currentFOV += step
+		if r.currentFOV > r.targetFOV {
+			r.currentFOV = r.targetFOV
+		}
+	} else if r.currentFOV > r.targetFOV {
+		// Decrease current FOV but don't go below target
+		r.currentFOV -= step
+		if r.currentFOV < r.targetFOV {
+			r.currentFOV = r.targetFOV
+		}
+	}
+
+	// Apply the interpolated FOV
+	r.camera.FOV = r.currentFOV
 
 	// Get view and projection matrices
 	view := p.GetViewMatrix()

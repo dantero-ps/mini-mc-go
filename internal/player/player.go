@@ -11,42 +11,48 @@ import (
 )
 
 const (
-	PlayerHeight    = 2.5
-	PlayerEyeHeight = 1.5
-	PlayerSpeed     = 5.0
-	PlayerJumpSpeed = 6.0
-	Gravity         = 15.0
+	PlayerEyeHeight  = 1.62
+	PlayerHeight     = 1.8 // Player collision height
+	BaseMoveSpeed    = 4.317
+	SprintMultiplier = 1.5
+	SneakMultiplier  = 0.3
+	Gravity          = 32.0
+	JumpVelocity     = 9.4
+	TerminalVelocity = -78.4 // Maximum fall speed
 )
 
 type Player struct {
-	Position   mgl32.Vec3
-	VelocityY  float32
-	OnGround   bool
-	CamYaw     float64
-	CamPitch   float64
-	LastMouseX float64
-	LastMouseY float64
-	FirstMouse bool
+	Position    mgl32.Vec3
+	Velocity    mgl32.Vec3
+	OnGround    bool
+	IsSprinting bool
+	IsSneaking  bool
+	CamYaw      float64
+	CamPitch    float64
+	LastMouseX  float64
+	LastMouseY  float64
+	FirstMouse  bool
 
 	// Interaction
 	HoveredBlock    [3]int
 	HasHoveredBlock bool
 
-	// Reference to world
 	World *world.World
 }
 
 func New(world *world.World) *Player {
 	return &Player{
-		Position:   mgl32.Vec3{0, 2.8, 0},
-		VelocityY:  0,
-		OnGround:   false,
-		CamYaw:     -90.0,
-		CamPitch:   -20.0,
-		LastMouseX: 0,
-		LastMouseY: 0,
-		FirstMouse: true,
-		World:      world,
+		Position:    mgl32.Vec3{0, 2.8, 0},
+		Velocity:    mgl32.Vec3{0, 0, 0},
+		OnGround:    false,
+		IsSprinting: false,
+		IsSneaking:  false,
+		CamYaw:      -90.0,
+		CamPitch:    -20.0,
+		LastMouseX:  0,
+		LastMouseY:  0,
+		FirstMouse:  true,
+		World:       world,
 	}
 }
 
@@ -86,7 +92,7 @@ func (p *Player) HandleMouseButton(button glfw.MouseButton, action glfw.Action, 
 			p.World.Set(p.HoveredBlock[0], p.HoveredBlock[1], p.HoveredBlock[2], world.BlockTypeAir)
 		}
 		if button == glfw.MouseButtonRight {
-			// Place block at the adjacent position
+			// Place block
 			front := p.GetFrontVector()
 			rayStart := p.GetEyePosition()
 			result := physics.Raycast(rayStart, front, physics.MinReachDistance, physics.MaxReachDistance, p.World)
@@ -117,65 +123,164 @@ func (p *Player) UpdateHoveredBlock() {
 }
 
 func (p *Player) UpdatePosition(dt float64, window *glfw.Window) {
-	speed := float32(PlayerSpeed * dt)
-	front := p.GetFrontVector()
+	// Handle sprint and sneak
+	if window.GetKey(glfw.KeyLeftControl) == glfw.Press {
+		p.IsSprinting = true
+		p.IsSneaking = false
+	} else if window.GetKey(glfw.KeyLeftShift) == glfw.Press {
+		p.IsSneaking = true
+		p.IsSprinting = false
+	} else {
+		p.IsSprinting = false
+		p.IsSneaking = false
+	}
 
-	// Project front vector to horizontal plane for consistent movement speed
-	frontHorizontal := mgl32.Vec3{front.X(), 0, front.Z()}.Normalize()
-	right := frontHorizontal.Cross(mgl32.Vec3{0, 1, 0}).Normalize()
+	// Get input direction
+	forward := float32(0)
+	strafe := float32(0)
 
-	// Calculate movement direction based on input
-	moveDir := mgl32.Vec3{0, 0, 0}
 	if window.GetKey(glfw.KeyW) == glfw.Press {
-		moveDir = moveDir.Add(frontHorizontal)
+		forward += 1
 	}
 	if window.GetKey(glfw.KeyS) == glfw.Press {
-		moveDir = moveDir.Sub(frontHorizontal)
+		forward -= 1
 	}
 	if window.GetKey(glfw.KeyA) == glfw.Press {
-		moveDir = moveDir.Sub(right)
+		strafe -= 1
 	}
 	if window.GetKey(glfw.KeyD) == glfw.Press {
-		moveDir = moveDir.Add(right)
+		strafe += 1
 	}
 
-	// Normalize and scale movement
-	if moveDir.Len() > 0 {
-		moveDir = moveDir.Normalize().Mul(speed)
+	// Normalize diagonal movement
+	if forward != 0 && strafe != 0 {
+		forward *= 0.98
+		strafe *= 0.98
 	}
 
-	// Handle jumping
-	if p.OnGround && window.GetKey(glfw.KeySpace) == glfw.Press {
-		p.VelocityY = PlayerJumpSpeed
+	// Calculate movement based on camera direction
+	yaw := mgl32.DegToRad(float32(p.CamYaw))
+
+	// Calculate forward/backward movement vector
+	frontX := float32(math.Cos(float64(yaw)))
+	frontZ := float32(math.Sin(float64(yaw)))
+
+	// Calculate strafe movement vector (perpendicular to front)
+	strafeX := float32(math.Cos(float64(yaw + math.Pi/2)))
+	strafeZ := float32(math.Sin(float64(yaw + math.Pi/2)))
+
+	moveSpeed := float32(BaseMoveSpeed)
+
+	if p.OnGround {
+		if p.IsSprinting {
+			moveSpeed *= SprintMultiplier
+		} else if p.IsSneaking {
+			moveSpeed *= SneakMultiplier
+		}
+
+		// Calculate target velocity
+		targetVelX := (frontX*forward + strafeX*strafe) * moveSpeed
+		targetVelZ := (frontZ*forward + strafeZ*strafe) * moveSpeed
+
+		// Smooth acceleration
+		blendFactor := float32(0.2)
+
+		p.Velocity[0] = p.Velocity[0]*(1-blendFactor) + targetVelX*blendFactor
+		p.Velocity[2] = p.Velocity[2]*(1-blendFactor) + targetVelZ*blendFactor
+
+		// Apply friction when no input
+		if forward == 0 && strafe == 0 {
+			frictionFactor := float32(math.Pow(0.6, dt*20))
+			p.Velocity[0] *= frictionFactor
+			p.Velocity[2] *= frictionFactor
+
+			// Stop completely if very slow
+			if math.Abs(float64(p.Velocity[0])) < 0.005 {
+				p.Velocity[0] = 0
+			}
+			if math.Abs(float64(p.Velocity[2])) < 0.005 {
+				p.Velocity[2] = 0
+			}
+		}
+	} else {
+		// In air - only apply small air control, don't change existing velocity much
+		if forward != 0 || strafe != 0 {
+			// Air control acceleration (much smaller than ground)
+			airControl := float32(0.8)
+			airAccelX := (frontX*forward + strafeX*strafe) * airControl
+			airAccelZ := (frontZ*forward + strafeZ*strafe) * airControl
+
+			p.Velocity[0] += airAccelX * float32(dt)
+			p.Velocity[2] += airAccelZ * float32(dt)
+		}
+
+		// Very light air drag
+		airDragFactor := float32(math.Pow(0.98, dt*20))
+		p.Velocity[0] *= airDragFactor
+		p.Velocity[2] *= airDragFactor
+	}
+
+	// Jump
+	if window.GetKey(glfw.KeySpace) == glfw.Press && p.OnGround {
+		p.Velocity[1] = JumpVelocity
 		p.OnGround = false
+
+		// Sprint jump boost
+		if p.IsSprinting && (forward != 0 || strafe != 0) {
+			jumpBoostX := (frontX*forward + strafeX*strafe) * 2.0
+			jumpBoostZ := (frontZ*forward + strafeZ*strafe) * 2.0
+			p.Velocity[0] += jumpBoostX
+			p.Velocity[2] += jumpBoostZ
+		}
 	}
 
 	// Apply gravity
-	p.VelocityY -= Gravity * float32(dt)
-	moveY := p.VelocityY * float32(dt)
-
-	// Try horizontal movement first
-	newPosH := p.Position.Add(mgl32.Vec3{moveDir.X(), 0, moveDir.Z()})
-	if !physics.Collides(newPosH, PlayerHeight, p.World) {
-		p.Position = newPosH
+	if !p.OnGround {
+		p.Velocity[1] -= Gravity * float32(dt)
+		if p.Velocity[1] < TerminalVelocity {
+			p.Velocity[1] = TerminalVelocity
+		}
 	}
 
-	// Try vertical movement
-	newPosV := p.Position.Add(mgl32.Vec3{0, moveY, 0})
-	if !physics.Collides(newPosV, PlayerHeight, p.World) {
-		p.Position = newPosV
+	// Calculate new position
+	newPos := p.Position.Add(p.Velocity.Mul(float32(dt)))
+
+	// Collision detection for X axis
+	testPosX := mgl32.Vec3{newPos[0], p.Position[1], p.Position[2]}
+	if !physics.Collides(testPosX, PlayerHeight, p.World) {
+		p.Position[0] = newPos[0]
+	} else {
+		p.Velocity[0] = 0
+	}
+
+	// Collision detection for Z axis
+	testPosZ := mgl32.Vec3{p.Position[0], p.Position[1], newPos[2]}
+	if !physics.Collides(testPosZ, PlayerHeight, p.World) {
+		p.Position[2] = newPos[2]
+	} else {
+		p.Velocity[2] = 0
+	}
+
+	// Collision detection for Y axis
+	testPosY := mgl32.Vec3{p.Position[0], newPos[1], p.Position[2]}
+	if !physics.Collides(testPosY, PlayerHeight, p.World) {
+		p.Position[1] = newPos[1]
 		p.OnGround = false
 	} else {
-		// Collision on vertical movement
-		if p.VelocityY < 0 {
-			// Falling - find ground level
-			groundY := physics.FindGroundLevel(p.Position.X(), p.Position.Z(), p.Position, p.World)
-			p.Position = mgl32.Vec3{p.Position.X(), groundY, p.Position.Z()}
+		if p.Velocity[1] < 0 {
+			// Landing on ground
 			p.OnGround = true
-			p.VelocityY = 0
-		} else {
-			// Hitting ceiling
-			p.VelocityY = 0
+			groundLevel := physics.FindGroundLevel(p.Position[0], p.Position[2], p.Position, p.World)
+			p.Position[1] = groundLevel
+		}
+		p.Velocity[1] = 0
+	}
+
+	// Double check if on ground
+	if p.OnGround {
+		checkPos := mgl32.Vec3{p.Position[0], p.Position[1] - 0.01, p.Position[2]}
+		if !physics.Collides(checkPos, PlayerHeight, p.World) {
+			p.OnGround = false
 		}
 	}
 }
@@ -190,7 +295,11 @@ func (p *Player) GetFrontVector() mgl32.Vec3 {
 }
 
 func (p *Player) GetEyePosition() mgl32.Vec3 {
-	return p.Position.Add(mgl32.Vec3{0, PlayerEyeHeight, 0})
+	eyeOffset := PlayerEyeHeight
+	if p.IsSneaking {
+		eyeOffset -= 0.08
+	}
+	return p.Position.Add(mgl32.Vec3{0, float32(eyeOffset), 0})
 }
 
 func (p *Player) GetViewMatrix() mgl32.Mat4 {

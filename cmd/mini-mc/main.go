@@ -91,7 +91,7 @@ func runGameLoop(window *glfw.Window, renderer *graphics.Renderer, p *player.Pla
 		lastTime = now
 
 		p.Update(dt, window)
-		renderer.Render(w, p)
+		renderer.Render(w, p, dt)
 		frames++
 
 		if time.Since(lastFPSCheckTime) >= time.Second {

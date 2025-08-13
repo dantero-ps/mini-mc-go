@@ -2,7 +2,7 @@ package graphics
 
 import (
 	"fmt"
-	"io/ioutil"
+	"os"
 	"strings"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
@@ -15,19 +15,16 @@ type Shader struct {
 
 // NewShader creates a new shader program from vertex and fragment shader source files
 func NewShader(vertexPath, fragmentPath string) (*Shader, error) {
-	// Read vertex shader from file
-	vertexSource, err := ioutil.ReadFile(vertexPath)
+	vertexSource, err := os.ReadFile(vertexPath)
 	if err != nil {
 		return nil, fmt.Errorf("could not read vertex shader file: %v", err)
 	}
 
-	// Read fragment shader from file
-	fragmentSource, err := ioutil.ReadFile(fragmentPath)
+	fragmentSource, err := os.ReadFile(fragmentPath)
 	if err != nil {
 		return nil, fmt.Errorf("could not read fragment shader file: %v", err)
 	}
 
-	// Compile shaders
 	program, err := compileProgram(string(vertexSource), string(fragmentSource))
 	if err != nil {
 		return nil, err
