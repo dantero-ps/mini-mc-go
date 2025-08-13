@@ -252,6 +252,9 @@ func (r *Renderer) setupLetterVAO() {
 	gl.VertexAttribPointer(0, 2, gl.FLOAT, false, 2*4, gl.PtrOffset(0))
 }
 
+// ShowChunkBoundaries controls whether chunk boundaries are rendered
+var ShowChunkBoundaries = false
+
 func (r *Renderer) Render(w *world.World, p *player.Player, dt float64) {
 	// Clear the screen
 	gl.ClearColor(0.53, 0.81, 0.92, 1.0)
@@ -306,6 +309,11 @@ func (r *Renderer) Render(w *world.World, p *player.Player, dt float64) {
 	r.renderBlocks(w, view, projection)
 
 	gl.PolygonMode(gl.FRONT_AND_BACK, gl.FILL)
+
+	// Render chunk boundaries if enabled
+	if ShowChunkBoundaries {
+		r.renderChunkBoundaries(w, view, projection)
+	}
 
 	// Render highlighted block
 	if p.HasHoveredBlock {
@@ -374,6 +382,49 @@ func (r *Renderer) renderHighlightedBlock(blockPos [3]int, view, projection mgl3
 	gl.BindVertexArray(r.wireframeVAO)
 	gl.LineWidth(2.0)
 	gl.DrawArrays(gl.LINES, 0, int32(len(world.CubeWireframeVertices)/3))
+}
+
+// Render chunk boundaries
+func (r *Renderer) renderChunkBoundaries(w *world.World, view, projection mgl32.Mat4) {
+	r.simpleShader.Use()
+
+	r.simpleShader.SetMatrix4("proj", &projection[0])
+	r.simpleShader.SetMatrix4("view", &view[0])
+
+	// Set color for chunk boundaries
+	r.simpleShader.SetVector3("color", 1.0, 0.0, 1.0) // Magenta for chunk boundaries
+
+	// Get all chunks from the world
+	chunks := w.GetAllChunks()
+
+	// Draw a wireframe box for each chunk
+	for _, chunkWithCoord := range chunks {
+		// Get chunk coordinates
+		coord := chunkWithCoord.Coord
+
+		// Calculate chunk position in world coordinates
+		chunkX := float32(coord.X * world.ChunkSizeX)
+		chunkY := float32(coord.Y * world.ChunkSizeY)
+		chunkZ := float32(coord.Z * world.ChunkSizeZ)
+
+		// Create model matrix for the chunk boundary
+		// Position at the center of the chunk and scale to chunk size
+		model := mgl32.Translate3D(
+			chunkX+float32(world.ChunkSizeX)/2.0-0.5,
+			chunkY+float32(world.ChunkSizeY)/2.0-0.5,
+			chunkZ+float32(world.ChunkSizeZ)/2.0-0.5,
+		).Mul4(mgl32.Scale3D(
+			float32(world.ChunkSizeX),
+			float32(world.ChunkSizeY),
+			float32(world.ChunkSizeZ),
+		))
+
+		r.simpleShader.SetMatrix4("model", &model[0])
+
+		gl.BindVertexArray(r.wireframeVAO)
+		gl.LineWidth(1.0)
+		gl.DrawArrays(gl.LINES, 0, int32(len(world.CubeWireframeVertices)/3))
+	}
 }
 
 func (r *Renderer) renderCrosshair() {

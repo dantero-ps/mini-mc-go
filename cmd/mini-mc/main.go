@@ -77,6 +77,11 @@ func setupInputHandlers(window *glfw.Window, p *player.Player, w *world.World) {
 		if key == glfw.KeyF && action == glfw.Press {
 			p.ToggleWireframeMode()
 		}
+		if key == glfw.KeyC && action == glfw.Press {
+			// Toggle chunk boundaries
+			graphics.ShowChunkBoundaries = !graphics.ShowChunkBoundaries
+			fmt.Printf("Chunk boundaries: %v\n", graphics.ShowChunkBoundaries)
+		}
 	})
 }
 
