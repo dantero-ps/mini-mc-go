@@ -122,6 +122,9 @@ type Renderer struct {
 
 	// Greedy meshing cache per chunk
 	chunkMeshes map[world.ChunkCoord]*chunkMesh
+
+	// Frustum culling margin in blocks (inflates AABBs before testing)
+	frustumMargin float32
 }
 
 type chunkMesh struct {
@@ -185,6 +188,7 @@ func NewRenderer() (*Renderer, error) {
 		camera:          camera,
 		targetFOV:       defaultFOV,
 		currentFOV:      defaultFOV,
+		frustumMargin:   1.0, // one block margin
 	}
 
 	// Initialize VAOs and VBOs
@@ -362,12 +366,26 @@ func (r *Renderer) renderBlocks(w *world.World, view, projection mgl32.Mat4) {
 	r.mainShader.SetVector3("faceColorBottom", bottomColor.X(), bottomColor.Y(), bottomColor.Z())
 	r.mainShader.SetVector3("faceColorDefault", defaultColor.X(), defaultColor.Y(), defaultColor.Z())
 
-	// Draw greedy-meshed chunks
+	// Draw greedy-meshed chunks that intersect the camera frustum
 	chunks := w.GetAllChunks()
+	clip := projection.Mul4(view)
 	for _, cc := range chunks {
 		coord := cc.Coord
 		ch := cc.Chunk
-		mesh := r.ensureChunkMesh(w, coord, ch)
+		if ch == nil {
+			continue
+		}
+		min, max := r.computeChunkAABB(coord)
+		if !r.aabbIntersectsFrustum(min, max, clip) {
+			continue
+		}
+		/*faceFilter := func(fmin, fmax mgl32.Vec3) bool {
+			m := r.frustumMargin
+			fmin = mgl32.Vec3{fmin.X() - m, fmin.Y() - m, fmin.Z() - m}
+			fmax = mgl32.Vec3{fmax.X() + m, fmax.Y() + m, fmax.Z() + m}
+			return r.aabbIntersectsFrustum(fmin, fmax, clip)
+		}*/
+		mesh := r.ensureChunkMesh(w, coord, ch, nil)
 		if mesh == nil || mesh.vertexCount == 0 {
 			continue
 		}
@@ -376,14 +394,15 @@ func (r *Renderer) renderBlocks(w *world.World, view, projection mgl32.Mat4) {
 	}
 }
 
-func (r *Renderer) ensureChunkMesh(w *world.World, coord world.ChunkCoord, ch *world.Chunk) *chunkMesh {
+func (r *Renderer) ensureChunkMesh(w *world.World, coord world.ChunkCoord, ch *world.Chunk, faceFilter func(min, max mgl32.Vec3) bool) *chunkMesh {
 	if ch == nil {
 		return nil
 	}
 	existing := r.chunkMeshes[coord]
 	// Rebuild if missing or dirty
-	if existing == nil || ch.IsDirty() {
-		verts := meshing.BuildGreedyMeshForChunk(w, ch)
+	// Note: faceFilter depends on camera; rebuild per frame for visible chunks
+	if existing == nil || ch.IsDirty() || faceFilter != nil {
+		verts := meshing.BuildGreedyMeshForChunkFiltered(w, ch, faceFilter)
 		// Create or update GL resources
 		if existing == nil {
 			existing = &chunkMesh{}
@@ -521,4 +540,115 @@ func (r *Renderer) renderDirection(p *player.Player) {
 
 	// Draw the direction letter
 	r.drawDirectionLetter(directionLetter)
+}
+
+// computeChunkAABB returns the axis-aligned bounding box in world space for a chunk
+func (r *Renderer) computeChunkAABB(coord world.ChunkCoord) (mgl32.Vec3, mgl32.Vec3) {
+	min := mgl32.Vec3{
+		float32(coord.X * world.ChunkSizeX),
+		float32(coord.Y * world.ChunkSizeY),
+		float32(coord.Z * world.ChunkSizeZ),
+	}
+	max := mgl32.Vec3{
+		min.X() + float32(world.ChunkSizeX),
+		min.Y() + float32(world.ChunkSizeY),
+		min.Z() + float32(world.ChunkSizeZ),
+	}
+	// Inflate by frustumMargin (in blocks)
+	m := r.frustumMargin
+	min = mgl32.Vec3{min.X() - m, min.Y() - m, min.Z() - m}
+	max = mgl32.Vec3{max.X() + m, max.Y() + m, max.Z() + m}
+	return min, max
+}
+
+// aabbIntersectsFrustum tests AABB against the camera frustum using clip-space half-space tests.
+// clip is projection * view.
+func (r *Renderer) aabbIntersectsFrustum(min, max mgl32.Vec3, clip mgl32.Mat4) bool {
+	// build 8 corners
+	corners := [8]mgl32.Vec4{
+		{min.X(), min.Y(), min.Z(), 1.0},
+		{max.X(), min.Y(), min.Z(), 1.0},
+		{min.X(), max.Y(), min.Z(), 1.0},
+		{max.X(), max.Y(), min.Z(), 1.0},
+		{min.X(), min.Y(), max.Z(), 1.0},
+		{max.X(), min.Y(), max.Z(), 1.0},
+		{min.X(), max.Y(), max.Z(), 1.0},
+		{max.X(), max.Y(), max.Z(), 1.0},
+	}
+
+	// Transform corners to clip space
+	var v [8]mgl32.Vec4
+	for i := 0; i < 8; i++ {
+		v[i] = clip.Mul4x1(corners[i])
+	}
+
+	// For each frustum plane, if all corners are outside, cull
+	// Right plane:  x - w <= 0  -> outside if x - w > 0
+	allOutside := true
+	for i := 0; i < 8; i++ {
+		if v[i].X()-v[i].W() <= 0 {
+			allOutside = false
+			break
+		}
+	}
+	if allOutside {
+		return false
+	}
+	// Left plane: -x - w <= 0
+	allOutside = true
+	for i := 0; i < 8; i++ {
+		if -v[i].X()-v[i].W() <= 0 {
+			allOutside = false
+			break
+		}
+	}
+	if allOutside {
+		return false
+	}
+	// Top plane: y - w <= 0
+	allOutside = true
+	for i := 0; i < 8; i++ {
+		if v[i].Y()-v[i].W() <= 0 {
+			allOutside = false
+			break
+		}
+	}
+	if allOutside {
+		return false
+	}
+	// Bottom plane: -y - w <= 0
+	allOutside = true
+	for i := 0; i < 8; i++ {
+		if -v[i].Y()-v[i].W() <= 0 {
+			allOutside = false
+			break
+		}
+	}
+	if allOutside {
+		return false
+	}
+	// Far plane: z - w <= 0
+	allOutside = true
+	for i := 0; i < 8; i++ {
+		if v[i].Z()-v[i].W() <= 0 {
+			allOutside = false
+			break
+		}
+	}
+	if allOutside {
+		return false
+	}
+	// Near plane: -z - w <= 0
+	allOutside = true
+	for i := 0; i < 8; i++ {
+		if -v[i].Z()-v[i].W() <= 0 {
+			allOutside = false
+			break
+		}
+	}
+	if allOutside {
+		return false
+	}
+
+	return !allOutside
 }

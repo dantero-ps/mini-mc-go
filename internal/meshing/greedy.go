@@ -2,6 +2,8 @@ package meshing
 
 import (
 	"mini-mc/internal/world"
+
+	"github.com/go-gl/mathgl/mgl32"
 )
 
 // VertexStride is number of float32 per vertex (pos.xyz + normal.xyz)
@@ -9,7 +11,14 @@ const VertexStride = 6
 
 // BuildGreedyMeshForChunk builds a greedy-meshed triangle list (pos+normal interleaved)
 // for the given chunk using world coordinates to decide face visibility across chunk borders.
+// Backwards-compatible helper that emits all visible faces (no per-face filtering).
 func BuildGreedyMeshForChunk(w *world.World, c *world.Chunk) []float32 {
+	return BuildGreedyMeshForChunkFiltered(w, c, nil)
+}
+
+// BuildGreedyMeshForChunkFiltered is the filtered variant. If faceFilter is non-nil,
+// each potential face (as a thin AABB) is tested and only emitted when the filter returns true.
+func BuildGreedyMeshForChunkFiltered(w *world.World, c *world.Chunk, faceFilter func(min, max mgl32.Vec3) bool) []float32 {
 	if c == nil {
 		return nil
 	}
@@ -22,17 +31,17 @@ func BuildGreedyMeshForChunk(w *world.World, c *world.Chunk) []float32 {
 	baseZ := c.Z * world.ChunkSizeZ
 
 	// +X faces (east)
-	vertices = append(vertices, buildGreedyForDirection(w, c, baseX, baseY, baseZ, +1, 0, 0)...)
+	vertices = append(vertices, buildGreedyForDirection(w, c, baseX, baseY, baseZ, +1, 0, 0, faceFilter)...)
 	// -X faces (west)
-	vertices = append(vertices, buildGreedyForDirection(w, c, baseX, baseY, baseZ, -1, 0, 0)...)
+	vertices = append(vertices, buildGreedyForDirection(w, c, baseX, baseY, baseZ, -1, 0, 0, faceFilter)...)
 	// +Y faces (top)
-	vertices = append(vertices, buildGreedyForDirection(w, c, baseX, baseY, baseZ, 0, +1, 0)...)
+	vertices = append(vertices, buildGreedyForDirection(w, c, baseX, baseY, baseZ, 0, +1, 0, faceFilter)...)
 	// -Y faces (bottom)
-	vertices = append(vertices, buildGreedyForDirection(w, c, baseX, baseY, baseZ, 0, -1, 0)...)
+	vertices = append(vertices, buildGreedyForDirection(w, c, baseX, baseY, baseZ, 0, -1, 0, faceFilter)...)
 	// +Z faces (north)
-	vertices = append(vertices, buildGreedyForDirection(w, c, baseX, baseY, baseZ, 0, 0, +1)...)
+	vertices = append(vertices, buildGreedyForDirection(w, c, baseX, baseY, baseZ, 0, 0, +1, faceFilter)...)
 	// -Z faces (south)
-	vertices = append(vertices, buildGreedyForDirection(w, c, baseX, baseY, baseZ, 0, 0, -1)...)
+	vertices = append(vertices, buildGreedyForDirection(w, c, baseX, baseY, baseZ, 0, 0, -1, faceFilter)...)
 
 	return vertices
 }
@@ -40,7 +49,7 @@ func BuildGreedyMeshForChunk(w *world.World, c *world.Chunk) []float32 {
 // buildGreedyForDirection performs 2D greedy meshing for one face direction.
 // The direction is specified by a normal (nx,ny,nz) where exactly one component is -1 or +1 and the others are 0.
 // It returns interleaved vertices (pos+normal) forming triangles.
-func buildGreedyForDirection(w *world.World, c *world.Chunk, baseX, baseY, baseZ int, nx, ny, nz int) []float32 {
+func buildGreedyForDirection(w *world.World, c *world.Chunk, baseX, baseY, baseZ int, nx, ny, nz int, faceFilter func(min, max mgl32.Vec3) bool) []float32 {
 	// Determine the axis fixed by the face normal and the two in-plane axes (u,v)
 	// We will iterate layers along the normal axis, and build a UxV mask for each layer.
 	var (
@@ -88,7 +97,23 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, baseX, baseY, baseZ
 					nyw := wy
 					nzw := wz
 					if w.IsAir(nxw, nyw, nzw) {
-						mask[y*sz+z] = 1
+						if faceFilter == nil {
+							mask[y*sz+z] = 1
+						} else {
+							fx := float32(baseX + x)
+							if nx > 0 {
+								fx = float32(baseX + x + 1)
+							}
+							fy := float32(baseY + y)
+							fz := float32(baseZ + z)
+							// thin AABB around the face
+							eps := float32(0.001)
+							min := mgl32.Vec3{fx - eps, fy, fz}
+							max := mgl32.Vec3{fx + eps, fy + 1, fz + 1}
+							if faceFilter(min, max) {
+								mask[y*sz+z] = 1
+							}
+						}
 					}
 				}
 			}
@@ -174,7 +199,22 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, baseX, baseY, baseZ
 					nyw := wy + ny
 					nzw := wz
 					if w.IsAir(nxw, nyw, nzw) {
-						mask[x*sz+z] = 1
+						if faceFilter == nil {
+							mask[x*sz+z] = 1
+						} else {
+							fy := float32(baseY + y)
+							if ny > 0 {
+								fy = float32(baseY + y + 1)
+							}
+							fx := float32(baseX + x)
+							fz := float32(baseZ + z)
+							eps := float32(0.001)
+							min := mgl32.Vec3{fx, fy - eps, fz}
+							max := mgl32.Vec3{fx + 1, fy + eps, fz + 1}
+							if faceFilter(min, max) {
+								mask[x*sz+z] = 1
+							}
+						}
 					}
 				}
 			}
@@ -255,7 +295,22 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, baseX, baseY, baseZ
 				nyw := wy
 				nzw := wz + nz
 				if w.IsAir(nxw, nyw, nzw) {
-					mask[x*sy+y] = 1
+					if faceFilter == nil {
+						mask[x*sy+y] = 1
+					} else {
+						fz := float32(baseZ + z)
+						if nz > 0 {
+							fz = float32(baseZ + z + 1)
+						}
+						fx := float32(baseX + x)
+						fy := float32(baseY + y)
+						eps := float32(0.001)
+						min := mgl32.Vec3{fx, fy, fz - eps}
+						max := mgl32.Vec3{fx + 1, fy + 1, fz + eps}
+						if faceFilter(min, max) {
+							mask[x*sy+y] = 1
+						}
+					}
 				}
 			}
 		}
