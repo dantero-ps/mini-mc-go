@@ -54,6 +54,13 @@ func New() *World {
 	return w
 }
 
+// NewEmpty creates an empty world with no pre-filled terrain (for tests/tools).
+func NewEmpty() *World {
+	return &World{
+		chunks: make(map[ChunkCoord]*Chunk),
+	}
+}
+
 // abs returns the absolute value of an integer
 func abs(x int) int {
 	if x < 0 {

@@ -1,11 +1,13 @@
 package graphics
 
 import (
-	"github.com/go-gl/gl/v4.1-core/gl"
-	"github.com/go-gl/mathgl/mgl32"
+	"mini-mc/internal/meshing"
 	"mini-mc/internal/player"
 	"mini-mc/internal/world"
 	"path/filepath"
+
+	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/mathgl/mgl32"
 )
 
 const (
@@ -117,6 +119,15 @@ type Renderer struct {
 	directionVBO uint32
 	letterVAO    uint32
 	letterVBO    uint32
+
+	// Greedy meshing cache per chunk
+	chunkMeshes map[world.ChunkCoord]*chunkMesh
+}
+
+type chunkMesh struct {
+	vao         uint32
+	vbo         uint32
+	vertexCount int32
 }
 
 func NewRenderer() (*Renderer, error) {
@@ -126,6 +137,10 @@ func NewRenderer() (*Renderer, error) {
 
 	// Configure OpenGL
 	gl.Enable(gl.DEPTH_TEST)
+	// Enable back-face culling (meshing emits CCW front faces)
+	gl.Enable(gl.CULL_FACE)
+	gl.CullFace(gl.BACK)
+	gl.FrontFace(gl.CW)
 
 	// Create shaders from files
 	mainVertPath := filepath.Join(ShadersDir, MainVertShader)
@@ -178,6 +193,7 @@ func NewRenderer() (*Renderer, error) {
 	renderer.setupCrosshairVAO()
 	renderer.setupDirectionVAO()
 	renderer.setupLetterVAO()
+	renderer.chunkMeshes = make(map[world.ChunkCoord]*chunkMesh)
 
 	return renderer, nil
 }
@@ -354,13 +370,56 @@ func (r *Renderer) renderBlocks(w *world.World, view, projection mgl32.Mat4) {
 	r.mainShader.SetVector3("faceColorBottom", bottomColor.X(), bottomColor.Y(), bottomColor.Z())
 	r.mainShader.SetVector3("faceColorDefault", defaultColor.X(), defaultColor.Y(), defaultColor.Z())
 
-	gl.BindVertexArray(r.blockVAO)
-	positions := w.GetActiveBlocks()
-	if len(positions) > 0 {
-		gl.BindBuffer(gl.ARRAY_BUFFER, r.instanceVBO)
-		gl.BufferData(gl.ARRAY_BUFFER, len(positions)*3*4, gl.Ptr(positions), gl.DYNAMIC_DRAW)
-		gl.DrawArraysInstanced(gl.TRIANGLES, 0, int32(len(world.CubeVertices)/6), int32(len(positions)))
+	// Draw greedy-meshed chunks
+	chunks := w.GetAllChunks()
+	for _, cc := range chunks {
+		coord := cc.Coord
+		ch := cc.Chunk
+		mesh := r.ensureChunkMesh(w, coord, ch)
+		if mesh == nil || mesh.vertexCount == 0 {
+			continue
+		}
+		gl.BindVertexArray(mesh.vao)
+		gl.DrawArrays(gl.TRIANGLES, 0, mesh.vertexCount)
 	}
+}
+
+func (r *Renderer) ensureChunkMesh(w *world.World, coord world.ChunkCoord, ch *world.Chunk) *chunkMesh {
+	if ch == nil {
+		return nil
+	}
+	existing := r.chunkMeshes[coord]
+	// Rebuild if missing or dirty
+	if existing == nil || ch.IsDirty() {
+		verts := meshing.BuildGreedyMeshForChunk(w, ch)
+		// Create or update GL resources
+		if existing == nil {
+			existing = &chunkMesh{}
+			gl.GenVertexArrays(1, &existing.vao)
+			gl.GenBuffers(1, &existing.vbo)
+			// Setup VAO attribute layout (pos.xyz, normal.xyz)
+			gl.BindVertexArray(existing.vao)
+			gl.BindBuffer(gl.ARRAY_BUFFER, existing.vbo)
+			gl.EnableVertexAttribArray(0)
+			gl.VertexAttribPointer(0, 3, gl.FLOAT, false, 6*4, gl.PtrOffset(0))
+			gl.EnableVertexAttribArray(1)
+			gl.VertexAttribPointer(1, 3, gl.FLOAT, false, 6*4, gl.PtrOffset(3*4))
+		} else {
+			gl.BindVertexArray(existing.vao)
+			gl.BindBuffer(gl.ARRAY_BUFFER, existing.vbo)
+		}
+		if len(verts) > 0 {
+			gl.BufferData(gl.ARRAY_BUFFER, len(verts)*4, gl.Ptr(verts), gl.DYNAMIC_DRAW)
+			existing.vertexCount = int32(len(verts) / 6)
+		} else {
+			existing.vertexCount = 0
+			// Still upload zero to keep state valid
+			gl.BufferData(gl.ARRAY_BUFFER, 0, nil, gl.DYNAMIC_DRAW)
+		}
+		r.chunkMeshes[coord] = existing
+		ch.SetClean()
+	}
+	return existing
 }
 
 func (r *Renderer) renderHighlightedBlock(blockPos [3]int, view, projection mgl32.Mat4) {
