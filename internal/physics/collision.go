@@ -3,8 +3,9 @@ package physics
 import (
 	"math"
 
-	"github.com/go-gl/mathgl/mgl32"
 	"mini-mc/internal/world"
+
+	"github.com/go-gl/mathgl/mgl32"
 )
 
 // Checks if a position collides with any block in the world
@@ -46,10 +47,24 @@ func FindGroundLevel(x, z float32, playerPos mgl32.Vec3, world *world.World) flo
 	minZ := int(math.Floor(float64(z - 0.3 + 0.5)))
 	maxZ := int(math.Floor(float64(z + 0.3 + 0.5)))
 
-	maxGroundY := float32(-10)
+	// Player horizontal AABB (XZ)
+	playerMinX := x - 0.3
+	playerMaxX := x + 0.3
+	playerMinZ := z - 0.3
+	playerMaxZ := z + 0.3
+
+	maxGroundY := float32(0)
 	for bx := minX; bx <= maxX; bx++ {
 		for bz := minZ; bz <= maxZ; bz++ {
-			for by := int(math.Floor(float64(playerPos.Y()) + 0.5)); by >= -10; by-- {
+			// Only consider blocks that overlap horizontally with player footprint
+			blockMinX := float32(bx) - 0.5
+			blockMaxX := float32(bx) + 0.5
+			blockMinZ := float32(bz) - 0.5
+			blockMaxZ := float32(bz) + 0.5
+			if !(playerMinX < blockMaxX && playerMaxX > blockMinX && playerMinZ < blockMaxZ && playerMaxZ > blockMinZ) {
+				continue
+			}
+			for by := int(math.Floor(float64(playerPos.Y()) + 0.5)); by >= 0; by-- {
 				if !world.IsAir(bx, by, bz) {
 					groundY := float32(by) + 0.5 // Top of block
 					if groundY > maxGroundY {
@@ -60,8 +75,72 @@ func FindGroundLevel(x, z float32, playerPos mgl32.Vec3, world *world.World) flo
 			}
 		}
 	}
-	if maxGroundY == -10 {
-		return 1.0 // Safe default
-	}
 	return maxGroundY
+}
+
+// IntersectsBlock checks if the player's AABB would intersect with the given block coordinates
+func IntersectsBlock(playerPos mgl32.Vec3, playerHeight float32, bx, by, bz int) bool {
+	blockMinX := float32(bx) - 0.5
+	blockMaxX := float32(bx) + 0.5
+	blockMinY := float32(by) - 0.5
+	blockMaxY := float32(by) + 0.5
+	blockMinZ := float32(bz) - 0.5
+	blockMaxZ := float32(bz) + 0.5
+
+	// Player half-width around X/Z and height along Y
+	playerMinX := playerPos.X() - 0.3
+	playerMaxX := playerPos.X() + 0.3
+	playerMinY := playerPos.Y()
+	playerMaxY := playerPos.Y() + playerHeight
+	playerMinZ := playerPos.Z() - 0.3
+	playerMaxZ := playerPos.Z() + 0.3
+
+	return playerMinX < blockMaxX && playerMaxX > blockMinX &&
+		playerMinY < blockMaxY && playerMaxY > blockMinY &&
+		playerMinZ < blockMaxZ && playerMaxZ > blockMinZ
+}
+
+// FindCeilingLevel finds the lowest ceiling (bottom face of a block) above the player's head
+func FindCeilingLevel(x, z float32, playerPos mgl32.Vec3, playerHeight float32, world *world.World) float32 {
+	minX := int(math.Floor(float64(x - 0.3 + 0.5)))
+	maxX := int(math.Floor(float64(x + 0.3 + 0.5)))
+	minZ := int(math.Floor(float64(z - 0.3 + 0.5)))
+	maxZ := int(math.Floor(float64(z + 0.3 + 0.5)))
+
+	// Player horizontal AABB (XZ)
+	playerMinX := x - 0.3
+	playerMaxX := x + 0.3
+	playerMinZ := z - 0.3
+	playerMaxZ := z + 0.3
+
+	minCeilingY := float32(256)
+	startY := int(math.Floor(float64(playerPos.Y()+playerHeight) + 0.5))
+	if startY < 0 {
+		startY = 0
+	}
+	if startY > 255 {
+		startY = 255
+	}
+	for bx := minX; bx <= maxX; bx++ {
+		for bz := minZ; bz <= maxZ; bz++ {
+			// Only consider blocks that overlap horizontally with player footprint
+			blockMinX := float32(bx) - 0.5
+			blockMaxX := float32(bx) + 0.5
+			blockMinZ := float32(bz) - 0.5
+			blockMaxZ := float32(bz) + 0.5
+			if !(playerMinX < blockMaxX && playerMaxX > blockMinX && playerMinZ < blockMaxZ && playerMaxZ > blockMinZ) {
+				continue
+			}
+			for by := startY; by <= 255; by++ {
+				if !world.IsAir(bx, by, bz) {
+					ceilingY := float32(by) - 0.5 // bottom of block
+					if ceilingY < minCeilingY {
+						minCeilingY = ceilingY
+					}
+					break
+				}
+			}
+		}
+	}
+	return minCeilingY
 }

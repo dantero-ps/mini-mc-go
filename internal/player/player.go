@@ -4,10 +4,11 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/go-gl/glfw/v3.3/glfw"
-	"github.com/go-gl/mathgl/mgl32"
 	"mini-mc/internal/physics"
 	"mini-mc/internal/world"
+
+	"github.com/go-gl/glfw/v3.3/glfw"
+	"github.com/go-gl/mathgl/mgl32"
 )
 
 const (
@@ -97,7 +98,14 @@ func (p *Player) HandleMouseButton(button glfw.MouseButton, action glfw.Action, 
 			rayStart := p.GetEyePosition()
 			result := physics.Raycast(rayStart, front, physics.MinReachDistance, physics.MaxReachDistance, p.World)
 			if result.Hit {
-				p.World.Set(result.AdjacentPosition[0], result.AdjacentPosition[1], result.AdjacentPosition[2], world.BlockTypeGrass)
+				// Clamp Y placement into [0,255]
+				if result.AdjacentPosition[1] >= 0 && result.AdjacentPosition[1] <= 255 {
+					ax, ay, az := result.AdjacentPosition[0], result.AdjacentPosition[1], result.AdjacentPosition[2]
+					// Only place if empty and does not intersect player
+					if p.World.IsAir(ax, ay, az) && !physics.IntersectsBlock(p.Position, PlayerHeight, ax, ay, az) {
+						p.World.Set(ax, ay, az, world.BlockTypeGrass)
+					}
+				}
 			}
 		}
 	}
@@ -245,7 +253,37 @@ func (p *Player) UpdatePosition(dt float64, window *glfw.Window) {
 	// Calculate new position
 	newPos := p.Position.Add(p.Velocity.Mul(float32(dt)))
 
-	// Collision detection for X axis
+	// Resolve Y first to avoid stepping up vertical walls
+	testPosY := mgl32.Vec3{p.Position[0], newPos[1], p.Position[2]}
+	if !physics.Collides(testPosY, PlayerHeight, p.World) {
+		p.Position[1] = newPos[1]
+		if p.Velocity[1] > 0 {
+			// Clamp to ceiling if head intersects
+			ceiling := physics.FindCeilingLevel(p.Position[0], p.Position[2], p.Position, PlayerHeight, p.World)
+			if p.Position[1]+PlayerHeight > ceiling {
+				p.Position[1] = ceiling - PlayerHeight
+				p.Velocity[1] = 0
+				p.OnGround = false
+			}
+		} else {
+			p.OnGround = false
+		}
+	} else {
+		if p.Velocity[1] <= 0 {
+			// Landing on ground
+			p.OnGround = true
+			groundLevel := physics.FindGroundLevel(p.Position[0], p.Position[2], p.Position, p.World)
+			p.Position[1] = groundLevel
+		} else {
+			// Hitting ceiling
+			ceiling := physics.FindCeilingLevel(p.Position[0], p.Position[2], p.Position, PlayerHeight, p.World)
+			p.Position[1] = ceiling - PlayerHeight
+			p.OnGround = false
+		}
+		p.Velocity[1] = 0
+	}
+
+	// Then resolve X at updated Y
 	testPosX := mgl32.Vec3{newPos[0], p.Position[1], p.Position[2]}
 	if !physics.Collides(testPosX, PlayerHeight, p.World) {
 		p.Position[0] = newPos[0]
@@ -253,7 +291,7 @@ func (p *Player) UpdatePosition(dt float64, window *glfw.Window) {
 		p.Velocity[0] = 0
 	}
 
-	// Collision detection for Z axis
+	// Finally resolve Z at updated Y
 	testPosZ := mgl32.Vec3{p.Position[0], p.Position[1], newPos[2]}
 	if !physics.Collides(testPosZ, PlayerHeight, p.World) {
 		p.Position[2] = newPos[2]
@@ -261,19 +299,23 @@ func (p *Player) UpdatePosition(dt float64, window *glfw.Window) {
 		p.Velocity[2] = 0
 	}
 
-	// Collision detection for Y axis
-	testPosY := mgl32.Vec3{p.Position[0], newPos[1], p.Position[2]}
-	if !physics.Collides(testPosY, PlayerHeight, p.World) {
-		p.Position[1] = newPos[1]
-		p.OnGround = false
-	} else {
-		if p.Velocity[1] < 0 {
-			// Landing on ground
-			p.OnGround = true
-			groundLevel := physics.FindGroundLevel(p.Position[0], p.Position[2], p.Position, p.World)
+	// Final ground settle to avoid micro fall/jitter when hugging walls
+	groundLevel := physics.FindGroundLevel(p.Position[0], p.Position[2], p.Position, p.World)
+	delta := p.Position[1] - groundLevel
+	if p.Velocity[1] <= 0 {
+		if delta < -0.001 {
+			// We're slightly inside ground due to numerical issues
 			p.Position[1] = groundLevel
+			p.Velocity[1] = 0
+			p.OnGround = true
+		} else if delta <= 0.08 {
+			// Close enough to ground: stick
+			p.Position[1] = groundLevel
+			p.Velocity[1] = 0
+			p.OnGround = true
 		}
-		p.Velocity[1] = 0
+	} else if delta > 0.1 {
+		p.OnGround = false
 	}
 
 	// Double check if on ground

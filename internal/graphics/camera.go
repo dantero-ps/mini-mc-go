@@ -1,8 +1,9 @@
 package graphics
 
 import (
-	"github.com/go-gl/mathgl/mgl32"
 	"mini-mc/internal/player"
+
+	"github.com/go-gl/mathgl/mgl32"
 )
 
 // Camera handles the view and projection matrices

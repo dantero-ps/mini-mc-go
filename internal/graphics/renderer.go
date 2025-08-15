@@ -98,7 +98,7 @@ var LetterW = []float32{
 
 type Renderer struct {
 	mainShader      *Shader
-	simpleShader    *Shader
+	wireframeShader *Shader
 	crosshairShader *Shader
 	directionShader *Shader
 	camera          *Camera
@@ -152,7 +152,7 @@ func NewRenderer() (*Renderer, error) {
 
 	wireframeVertPath := filepath.Join(ShadersDir, WireframeVertShader)
 	wireframeFragPath := filepath.Join(ShadersDir, WireframeFragShader)
-	simpleShader, err := NewShader(wireframeVertPath, wireframeFragPath)
+	wireframeShader, err := NewShader(wireframeVertPath, wireframeFragPath)
 	if err != nil {
 		return nil, err
 	}
@@ -179,7 +179,7 @@ func NewRenderer() (*Renderer, error) {
 
 	renderer := &Renderer{
 		mainShader:      mainShader,
-		simpleShader:    simpleShader,
+		wireframeShader: wireframeShader,
 		crosshairShader: crosshairShader,
 		directionShader: directionShader,
 		camera:          camera,
@@ -208,15 +208,15 @@ func (r *Renderer) setupBlockVAO() {
 
 	stride := int32(6 * 4)
 	gl.EnableVertexAttribArray(0)
-	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, stride, gl.PtrOffset(0))
+	gl.VertexAttribPointerWithOffset(0, 3, gl.FLOAT, false, stride, 0)
 	gl.EnableVertexAttribArray(1)
-	gl.VertexAttribPointer(1, 3, gl.FLOAT, false, stride, gl.PtrOffset(3*4))
+	gl.VertexAttribPointerWithOffset(1, 3, gl.FLOAT, false, stride, 3*4)
 
 	// Instance buffer
 	gl.GenBuffers(1, &r.instanceVBO)
 	gl.BindBuffer(gl.ARRAY_BUFFER, r.instanceVBO)
 	gl.EnableVertexAttribArray(2)
-	gl.VertexAttribPointer(2, 3, gl.FLOAT, false, 3*4, gl.PtrOffset(0))
+	gl.VertexAttribPointerWithOffset(2, 3, gl.FLOAT, false, 3*4, 0)
 	gl.VertexAttribDivisor(2, 1)
 }
 
@@ -229,7 +229,7 @@ func (r *Renderer) setupWireframeVAO() {
 	gl.BufferData(gl.ARRAY_BUFFER, len(world.CubeWireframeVertices)*4, gl.Ptr(world.CubeWireframeVertices), gl.STATIC_DRAW)
 
 	gl.EnableVertexAttribArray(0)
-	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, 3*4, gl.PtrOffset(0))
+	gl.VertexAttribPointerWithOffset(0, 3, gl.FLOAT, false, 3*4, 0)
 }
 
 func (r *Renderer) setupCrosshairVAO() {
@@ -241,7 +241,7 @@ func (r *Renderer) setupCrosshairVAO() {
 	gl.BufferData(gl.ARRAY_BUFFER, len(CrosshairVertices)*4, gl.Ptr(CrosshairVertices), gl.STATIC_DRAW)
 
 	gl.EnableVertexAttribArray(0)
-	gl.VertexAttribPointer(0, 2, gl.FLOAT, false, 2*4, gl.PtrOffset(0))
+	gl.VertexAttribPointerWithOffset(0, 2, gl.FLOAT, false, 2*4, 0)
 }
 
 func (r *Renderer) setupDirectionVAO() {
@@ -267,9 +267,6 @@ func (r *Renderer) setupLetterVAO() {
 	gl.EnableVertexAttribArray(0)
 	gl.VertexAttribPointer(0, 2, gl.FLOAT, false, 2*4, gl.PtrOffset(0))
 }
-
-// ShowChunkBoundaries controls whether chunk boundaries are rendered
-var ShowChunkBoundaries = false
 
 func (r *Renderer) Render(w *world.World, p *player.Player, dt float64) {
 	// Clear the screen
@@ -325,11 +322,6 @@ func (r *Renderer) Render(w *world.World, p *player.Player, dt float64) {
 	r.renderBlocks(w, view, projection)
 
 	gl.PolygonMode(gl.FRONT_AND_BACK, gl.FILL)
-
-	// Render chunk boundaries if enabled
-	if ShowChunkBoundaries {
-		r.renderChunkBoundaries(w, view, projection)
-	}
 
 	// Render highlighted block
 	if p.HasHoveredBlock {
@@ -423,10 +415,10 @@ func (r *Renderer) ensureChunkMesh(w *world.World, coord world.ChunkCoord, ch *w
 }
 
 func (r *Renderer) renderHighlightedBlock(blockPos [3]int, view, projection mgl32.Mat4) {
-	r.simpleShader.Use()
+	r.wireframeShader.Use()
 
-	r.simpleShader.SetMatrix4("proj", &projection[0])
-	r.simpleShader.SetMatrix4("view", &view[0])
+	r.wireframeShader.SetMatrix4("proj", &projection[0])
+	r.wireframeShader.SetMatrix4("view", &view[0])
 
 	// Create model matrix for the highlighted block
 	model := mgl32.Translate3D(
@@ -435,55 +427,12 @@ func (r *Renderer) renderHighlightedBlock(blockPos [3]int, view, projection mgl3
 		float32(blockPos[2]),
 	).Mul4(mgl32.Scale3D(1.01, 1.01, 1.01))
 
-	r.simpleShader.SetMatrix4("model", &model[0])
-	r.simpleShader.SetVector3("color", 0.0, 0.0, 0.0) // Black outline
+	r.wireframeShader.SetMatrix4("model", &model[0])
+	r.wireframeShader.SetVector3("color", 0.0, 0.0, 0.0) // Black outline
 
 	gl.BindVertexArray(r.wireframeVAO)
 	gl.LineWidth(2.0)
 	gl.DrawArrays(gl.LINES, 0, int32(len(world.CubeWireframeVertices)/3))
-}
-
-// Render chunk boundaries
-func (r *Renderer) renderChunkBoundaries(w *world.World, view, projection mgl32.Mat4) {
-	r.simpleShader.Use()
-
-	r.simpleShader.SetMatrix4("proj", &projection[0])
-	r.simpleShader.SetMatrix4("view", &view[0])
-
-	// Set color for chunk boundaries
-	r.simpleShader.SetVector3("color", 1.0, 0.0, 1.0) // Magenta for chunk boundaries
-
-	// Get all chunks from the world
-	chunks := w.GetAllChunks()
-
-	// Draw a wireframe box for each chunk
-	for _, chunkWithCoord := range chunks {
-		// Get chunk coordinates
-		coord := chunkWithCoord.Coord
-
-		// Calculate chunk position in world coordinates
-		chunkX := float32(coord.X * world.ChunkSizeX)
-		chunkY := float32(coord.Y * world.ChunkSizeY)
-		chunkZ := float32(coord.Z * world.ChunkSizeZ)
-
-		// Create model matrix for the chunk boundary
-		// Position at the center of the chunk and scale to chunk size
-		model := mgl32.Translate3D(
-			chunkX+float32(world.ChunkSizeX)/2.0-0.5,
-			chunkY+float32(world.ChunkSizeY)/2.0-0.5,
-			chunkZ+float32(world.ChunkSizeZ)/2.0-0.5,
-		).Mul4(mgl32.Scale3D(
-			float32(world.ChunkSizeX),
-			float32(world.ChunkSizeY),
-			float32(world.ChunkSizeZ),
-		))
-
-		r.simpleShader.SetMatrix4("model", &model[0])
-
-		gl.BindVertexArray(r.wireframeVAO)
-		gl.LineWidth(1.0)
-		gl.DrawArrays(gl.LINES, 0, int32(len(world.CubeWireframeVertices)/3))
-	}
 }
 
 func (r *Renderer) renderCrosshair() {

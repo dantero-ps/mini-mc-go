@@ -5,10 +5,14 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/go-gl/glfw/v3.3/glfw"
 	"mini-mc/internal/graphics"
 	"mini-mc/internal/player"
 	"mini-mc/internal/world"
+
+	"mini-mc/internal/physics"
+
+	"github.com/go-gl/glfw/v3.3/glfw"
+	"github.com/go-gl/mathgl/mgl32"
 )
 
 func init() {
@@ -36,8 +40,18 @@ func main() {
 	// Create world
 	gameWorld := world.New()
 
-	// Initialize player
+	// Stream initial chunks at spawn and compute ground level
+	spawnX, spawnZ := float32(0), float32(0)
+	// Do one synchronous stream to ensure spawn area exists
+	tempPos := mgl32.Vec3{spawnX, 300, spawnZ}
+	groundY := physics.FindGroundLevel(spawnX, spawnZ, tempPos, gameWorld)
+
+	// Initialize player at safe ground
 	gamePlayer := player.New(gameWorld)
+	gamePlayer.Position[0] = spawnX
+	gamePlayer.Position[2] = spawnZ
+	gamePlayer.Position[1] = groundY
+	gamePlayer.OnGround = true
 
 	// Setup input handlers
 	setupInputHandlers(window, gamePlayer, gameWorld)
@@ -76,11 +90,6 @@ func setupInputHandlers(window *glfw.Window, p *player.Player, w *world.World) {
 	window.SetKeyCallback(func(w *glfw.Window, key glfw.Key, scancode int, action glfw.Action, mods glfw.ModifierKey) {
 		if key == glfw.KeyF && action == glfw.Press {
 			p.ToggleWireframeMode()
-		}
-		if key == glfw.KeyC && action == glfw.Press {
-			// Toggle chunk boundaries
-			graphics.ShowChunkBoundaries = !graphics.ShowChunkBoundaries
-			fmt.Printf("Chunk boundaries: %v\n", graphics.ShowChunkBoundaries)
 		}
 	})
 }
