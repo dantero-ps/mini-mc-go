@@ -1,6 +1,7 @@
 package meshing
 
 import (
+	"mini-mc/internal/profiling"
 	"mini-mc/internal/world"
 )
 
@@ -10,6 +11,7 @@ const VertexStride = 6
 // BuildGreedyMeshForChunk builds a greedy-meshed triangle list (pos+normal interleaved)
 // for the given chunk using world coordinates to decide face visibility across chunk borders.
 func BuildGreedyMeshForChunk(w *world.World, c *world.Chunk) []float32 {
+	defer profiling.Track("meshing.BuildGreedyMeshForChunk")()
 	if c == nil {
 		return nil
 	}
@@ -41,6 +43,7 @@ func BuildGreedyMeshForChunk(w *world.World, c *world.Chunk) []float32 {
 // The direction is specified by a normal (nx,ny,nz) where exactly one component is -1 or +1 and the others are 0.
 // It returns interleaved vertices (pos+normal) forming triangles.
 func buildGreedyForDirection(w *world.World, c *world.Chunk, baseX, baseY, baseZ int, nx, ny, nz int) []float32 {
+	defer profiling.Track("meshing.buildGreedyForDirection")()
 	// Determine the axis fixed by the face normal and the two in-plane axes (u,v)
 	// We will iterate layers along the normal axis, and build a UxV mask for each layer.
 	var (

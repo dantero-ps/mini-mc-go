@@ -2,9 +2,11 @@ package physics
 
 import (
 	"math"
+	"mini-mc/internal/profiling"
+
+	"mini-mc/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
-	"mini-mc/internal/world"
 )
 
 const (
@@ -22,6 +24,7 @@ type RaycastResult struct {
 
 // Raycast performs a ray casting operation from a starting point in a given direction
 func Raycast(start mgl32.Vec3, direction mgl32.Vec3, minDist, maxDist float32, world *world.World) RaycastResult {
+	defer profiling.Track("physics.Raycast")()
 	stepSize := float32(0.02)
 	steps := int(maxDist / stepSize)
 

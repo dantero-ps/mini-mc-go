@@ -7,6 +7,7 @@ import (
 
 	"mini-mc/internal/graphics"
 	"mini-mc/internal/player"
+	"mini-mc/internal/profiling"
 	"mini-mc/internal/world"
 
 	"mini-mc/internal/physics"
@@ -102,20 +103,28 @@ func runGameLoop(window *glfw.Window, renderer *graphics.Renderer, p *player.Pla
 	lastTime := time.Now()
 
 	for !window.ShouldClose() {
+		profiling.ResetFrame()
 		now := time.Now()
 		dt := now.Sub(lastTime).Seconds()
 		lastTime = now
 
-		p.Update(dt, window)
+		func() { defer profiling.Track("player.Update")(); p.Update(dt, window) }()
 
 		// Enqueue async streaming around player every frame (idempotent due to pending dedup)
-		w.StreamChunksAroundAsync(p.Position[0], p.Position[2], 30)
-		renderer.Render(w, p, dt)
+		func() {
+			defer profiling.Track("world.StreamChunksAroundAsync")()
+			w.StreamChunksAroundAsync(p.Position[0], p.Position[2], 30)
+		}()
+		func() { defer profiling.Track("renderer.Render")(); renderer.Render(w, p, dt) }()
 		frames++
 
 		if time.Since(lastFPSCheckTime) >= time.Second {
-			window.SetTitle(fmt.Sprintf("mini-mc | FPS: %d",
-				frames))
+			top := profiling.TopN(3)
+			if top != "" {
+				window.SetTitle(fmt.Sprintf("mini-mc | FPS: %d | %s", frames, top))
+			} else {
+				window.SetTitle(fmt.Sprintf("mini-mc | FPS: %d", frames))
+			}
 
 			frames = 0
 			lastFPSCheckTime = time.Now()

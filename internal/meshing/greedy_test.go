@@ -58,3 +58,18 @@ func TestCrossChunkFaceCulling(t *testing.T) {
 		t.Fatalf("cross-chunk culling: got %d floats, want %d", len(verts), expectedFloats)
 	}
 }
+
+func BenchmarkBuildGreedyMeshForChunk_FullSurface(b *testing.B) {
+	w := world.NewEmpty()
+	ch := world.NewChunk(0, 0, 0)
+	// Fill a full top surface
+	for x := 0; x < world.ChunkSizeX; x++ {
+		for z := 0; z < world.ChunkSizeZ; z++ {
+			ch.SetBlock(x, world.ChunkSizeY-1, z, world.BlockTypeGrass)
+		}
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = BuildGreedyMeshForChunk(w, ch)
+	}
+}

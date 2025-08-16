@@ -2,6 +2,7 @@ package world
 
 import (
 	"math"
+	"mini-mc/internal/profiling"
 	"runtime"
 	"sync"
 
@@ -27,6 +28,10 @@ type World struct {
 	octaves     int
 	persistence float64
 	lacunarity  float64
+
+	// Production caps
+	maxJobsPerCall int
+	maxPending     int
 }
 
 // ChunkCoord is a unique identifier for a chunk based on its position
@@ -37,16 +42,18 @@ type ChunkCoord struct {
 // New creates a new world with async noise generation workers
 func New() *World {
 	w := &World{
-		chunks:      make(map[ChunkCoord]*Chunk),
-		jobs:        make(chan ChunkCoord, 1024),
-		pending:     make(map[ChunkCoord]struct{}),
-		seed:        1337,
-		scale:       1.0 / 64.0,
-		baseHeight:  32,
-		amp:         32,
-		octaves:     4,
-		persistence: 0.5,
-		lacunarity:  2.0,
+		chunks:         make(map[ChunkCoord]*Chunk),
+		jobs:           make(chan ChunkCoord, 1024),
+		pending:        make(map[ChunkCoord]struct{}),
+		seed:           1337,
+		scale:          1.0 / 64.0,
+		baseHeight:     32,
+		amp:            32,
+		octaves:        4,
+		persistence:    0.5,
+		lacunarity:     2.0,
+		maxJobsPerCall: 256,
+		maxPending:     8192,
 	}
 
 	workers := runtime.NumCPU()
@@ -182,6 +189,7 @@ func (w *World) GetAllChunks() []ChunkWithCoord {
 
 // StreamChunksAroundSync synchronously generates chunks around a world position (x,z) within radius (in chunks)
 func (w *World) StreamChunksAroundSync(x, z float32, radius int) {
+	defer profiling.Track("world.StreamChunksAroundSync")()
 	cx := floorDiv(int(math.Floor(float64(x))), ChunkSizeX)
 	cz := floorDiv(int(math.Floor(float64(z))), ChunkSizeZ)
 	for dx := -radius; dx <= radius; dx++ {
@@ -195,60 +203,119 @@ func (w *World) StreamChunksAroundSync(x, z float32, radius int) {
 			if maxChunkY < 0 {
 				maxChunkY = 0
 			}
-			for cy := 0; cy <= maxChunkY; cy++ {
-				w.generateChunkSync(ChunkCoord{X: chunkX, Y: cy, Z: chunkZ})
-			}
+			// Generate only the surface chunk
+			w.generateChunkSync(ChunkCoord{X: chunkX, Y: maxChunkY, Z: chunkZ})
 		}
 	}
 }
 
 // StreamChunksAroundAsync enqueues async generation around a world position (x,z) within radius (in chunks)
 func (w *World) StreamChunksAroundAsync(x, z float32, radius int) {
+	defer profiling.Track("world.StreamChunksAroundAsync")()
 	cx := floorDiv(int(math.Floor(float64(x))), ChunkSizeX)
 	cz := floorDiv(int(math.Floor(float64(z))), ChunkSizeZ)
-	for dx := -radius; dx <= radius; dx++ {
-		for dz := -radius; dz <= radius; dz++ {
-			chunkX := cx + dx
-			chunkZ := cz + dz
-			worldX := chunkX*ChunkSizeX + ChunkSizeX/2
-			worldZ := chunkZ*ChunkSizeZ + ChunkSizeZ/2
-			h := w.heightAt(worldX, worldZ)
-			maxChunkY := floorDiv(h, ChunkSizeY)
-			if maxChunkY < 0 {
-				maxChunkY = 0
+
+	jobsPushed := 0
+
+	for r := 0; r <= radius; r++ {
+		if jobsPushed >= w.maxJobsPerCall {
+			break
+		}
+
+		if r == 0 {
+			jobsPushed += w.enqueueColumn(cx, cz)
+			continue
+		}
+
+		x0 := cx - r
+		x1 := cx + r
+		z0 := cz - r
+		z1 := cz + r
+
+		for xk := x0; xk <= x1; xk++ {
+			jobsPushed += w.enqueueColumn(xk, z0)
+			if jobsPushed >= w.maxJobsPerCall {
+				return
 			}
-			for cy := 0; cy <= maxChunkY; cy++ {
-				w.requestChunk(ChunkCoord{X: chunkX, Y: cy, Z: chunkZ})
+		}
+		for zk := z0 + 1; zk <= z1-1; zk++ {
+			jobsPushed += w.enqueueColumn(x1, zk)
+			if jobsPushed >= w.maxJobsPerCall {
+				return
+			}
+		}
+		for xk := x1; xk >= x0; xk-- {
+			jobsPushed += w.enqueueColumn(xk, z1)
+			if jobsPushed >= w.maxJobsPerCall {
+				return
+			}
+		}
+		for zk := z1 - 1; zk >= z0+1; zk-- {
+			jobsPushed += w.enqueueColumn(x0, zk)
+			if jobsPushed >= w.maxJobsPerCall {
+				return
 			}
 		}
 	}
 }
 
-// requestChunk schedules a chunk for async generation if missing
-func (w *World) requestChunk(coord ChunkCoord) {
-	// skip if already present
+// enqueueColumn enqueues all needed Y-chunks for a column, respecting pending cap
+func (w *World) enqueueColumn(chunkX, chunkZ int) int {
+	// check pending cap
+	w.pendingMu.Lock()
+	if w.maxPending > 0 && len(w.pending) >= w.maxPending {
+		w.pendingMu.Unlock()
+		return 0
+	}
+	w.pendingMu.Unlock()
+
+	worldX := chunkX*ChunkSizeX + ChunkSizeX/2
+	worldZ := chunkZ*ChunkSizeZ + ChunkSizeZ/2
+	h := w.heightAt(worldX, worldZ)
+	maxChunkY := floorDiv(h, ChunkSizeY)
+	if maxChunkY < 0 {
+		maxChunkY = 0
+	}
+
+	// Enqueue only the surface chunk
+	if w.requestChunkLimited(ChunkCoord{X: chunkX, Y: maxChunkY, Z: chunkZ}) {
+		return 1
+	}
+	return 0
+}
+
+// requestChunkLimited respects pending cap and returns true if enqueued
+func (w *World) requestChunkLimited(coord ChunkCoord) bool {
+	// already present?
 	w.mu.RLock()
 	_, exists := w.chunks[coord]
 	w.mu.RUnlock()
 	if exists {
-		return
+		return false
 	}
-	// skip if already pending
+
+	// pending check + cap
 	w.pendingMu.Lock()
 	if _, ok := w.pending[coord]; ok {
 		w.pendingMu.Unlock()
-		return
+		return false
+	}
+	if w.maxPending > 0 && len(w.pending) >= w.maxPending {
+		w.pendingMu.Unlock()
+		return false
 	}
 	w.pending[coord] = struct{}{}
 	w.pendingMu.Unlock()
 
 	select {
 	case w.jobs <- coord:
+		return true
 	default:
-		// queue full: drop and clear pending marker
+		// queue full: rollback
 		w.pendingMu.Lock()
 		delete(w.pending, coord)
 		w.pendingMu.Unlock()
+		return false
 	}
 }
 
@@ -263,6 +330,7 @@ func (w *World) worker() {
 
 // generateChunkSync builds and installs a chunk if missing
 func (w *World) generateChunkSync(coord ChunkCoord) {
+	defer profiling.Track("world.generateChunkSync")()
 	// quick check
 	w.mu.RLock()
 	_, exists := w.chunks[coord]
@@ -301,6 +369,7 @@ func (w *World) generateChunkSync(coord ChunkCoord) {
 
 // populateChunk fills a chunk using noise heightmap
 func (w *World) populateChunk(c *Chunk) {
+	defer profiling.Track("world.populateChunk")()
 	chunkBaseY := c.Y * ChunkSizeY
 	for lx := 0; lx < ChunkSizeX; lx++ {
 		for lz := 0; lz < ChunkSizeZ; lz++ {
@@ -314,9 +383,8 @@ func (w *World) populateChunk(c *Chunk) {
 			if topLocal >= ChunkSizeY {
 				topLocal = ChunkSizeY - 1
 			}
-			for ly := 0; ly <= topLocal; ly++ {
-				c.blocks[lx][ly][lz] = BlockTypeGrass
-			}
+			// Place only the surface block
+			c.blocks[lx][topLocal][lz] = BlockTypeGrass
 		}
 	}
 	c.dirty = true
@@ -324,6 +392,7 @@ func (w *World) populateChunk(c *Chunk) {
 
 // heightAt computes world surface height (block Y) at world X,Z
 func (w *World) heightAt(worldX, worldZ int) int {
+	defer profiling.Track("world.heightAt")()
 	x := float64(worldX) * w.scale
 	z := float64(worldZ) * w.scale
 	n := octaveNoise2D(x, z, w.seed, w.octaves, w.persistence, w.lacunarity)

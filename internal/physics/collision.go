@@ -3,6 +3,7 @@ package physics
 import (
 	"math"
 
+	"mini-mc/internal/profiling"
 	"mini-mc/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -10,6 +11,7 @@ import (
 
 // Checks if a position collides with any block in the world
 func Collides(pos mgl32.Vec3, playerHeight float32, world *world.World) bool {
+	defer profiling.Track("physics.Collides")()
 	minX := int(math.Floor(float64(pos.X() - 0.3 + 0.5)))
 	maxX := int(math.Floor(float64(pos.X() + 0.3 + 0.5)))
 	minY := int(math.Floor(float64(pos.Y() + 0.5)))
@@ -42,6 +44,7 @@ func Collides(pos mgl32.Vec3, playerHeight float32, world *world.World) bool {
 
 // FindGroundLevel finds the highest block below the player
 func FindGroundLevel(x, z float32, playerPos mgl32.Vec3, world *world.World) float32 {
+	defer profiling.Track("physics.FindGroundLevel")()
 	minX := int(math.Floor(float64(x - 0.3 + 0.5)))
 	maxX := int(math.Floor(float64(x + 0.3 + 0.5)))
 	minZ := int(math.Floor(float64(z - 0.3 + 0.5)))
@@ -102,6 +105,7 @@ func IntersectsBlock(playerPos mgl32.Vec3, playerHeight float32, bx, by, bz int)
 
 // FindCeilingLevel finds the lowest ceiling (bottom face of a block) above the player's head
 func FindCeilingLevel(x, z float32, playerPos mgl32.Vec3, playerHeight float32, world *world.World) float32 {
+	defer profiling.Track("physics.FindCeilingLevel")()
 	minX := int(math.Floor(float64(x - 0.3 + 0.5)))
 	maxX := int(math.Floor(float64(x + 0.3 + 0.5)))
 	minZ := int(math.Floor(float64(z - 0.3 + 0.5)))

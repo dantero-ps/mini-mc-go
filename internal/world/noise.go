@@ -1,6 +1,9 @@
 package world
 
-import "math"
+import (
+	"math"
+	"mini-mc/internal/profiling"
+)
 
 // Simple deterministic 2D value noise with multiple octaves.
 // No external deps; uses integer hashing for lattice values.
@@ -50,6 +53,7 @@ func valueNoise2D(x float64, z float64, seed int64) float64 {
 }
 
 func octaveNoise2D(x float64, z float64, seed int64, octaves int, persistence, lacunarity float64) float64 {
+	defer profiling.Track("world.octaveNoise2D")()
 	amplitude := 1.0
 	frequency := 1.0
 	sum := 0.0

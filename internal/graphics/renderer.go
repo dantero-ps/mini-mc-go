@@ -4,6 +4,7 @@ import (
 	"math"
 	"mini-mc/internal/meshing"
 	"mini-mc/internal/player"
+	"mini-mc/internal/profiling"
 	"mini-mc/internal/world"
 	"path/filepath"
 
@@ -274,6 +275,7 @@ func (r *Renderer) setupLetterVAO() {
 }
 
 func (r *Renderer) Render(w *world.World, p *player.Player, dt float64) {
+	defer profiling.Track("renderer.Render.total")()
 	// Clear the screen
 	gl.ClearColor(0.53, 0.81, 0.92, 1.0)
 	gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
@@ -327,23 +329,27 @@ func (r *Renderer) Render(w *world.World, p *player.Player, dt float64) {
 	} else {
 		gl.PolygonMode(gl.FRONT_AND_BACK, gl.FILL)
 	}
-	r.renderBlocks(w, view, projection)
+	func() { defer profiling.Track("renderer.renderBlocks")(); r.renderBlocks(w, p, view, projection) }()
 
 	gl.PolygonMode(gl.FRONT_AND_BACK, gl.FILL)
 
 	// Render highlighted block
 	if p.HasHoveredBlock {
-		r.renderHighlightedBlock(p.HoveredBlock, view, projection)
+		func() {
+			defer profiling.Track("renderer.renderHighlightedBlock")()
+			r.renderHighlightedBlock(p.HoveredBlock, view, projection)
+		}()
 	}
 
 	// Render crosshair
-	r.renderCrosshair()
+	func() { defer profiling.Track("renderer.renderCrosshair")(); r.renderCrosshair() }()
 
 	// Render direction indicator
-	r.renderDirection(p)
+	func() { defer profiling.Track("renderer.renderDirection")(); r.renderDirection(p) }()
 }
 
-func (r *Renderer) renderBlocks(w *world.World, view, projection mgl32.Mat4) {
+func (r *Renderer) renderBlocks(w *world.World, p *player.Player, view, projection mgl32.Mat4) {
+	defer profiling.Track("renderer.renderBlocks.total")()
 	r.mainShader.Use()
 
 	r.mainShader.SetMatrix4("proj", &projection[0])
@@ -373,6 +379,15 @@ func (r *Renderer) renderBlocks(w *world.World, view, projection mgl32.Mat4) {
 	// Draw greedy-meshed chunks that intersect the camera frustum
 	chunks := w.GetAllChunks()
 	clip := projection.Mul4(view)
+
+	nearRadiusChunks := 12
+	farBuildBudget := 12
+
+	px := int(math.Floor(float64(p.Position[0])))
+	pz := int(math.Floor(float64(p.Position[2])))
+	pcx := px / world.ChunkSizeX
+	pcz := pz / world.ChunkSizeZ
+
 	for _, cc := range chunks {
 		coord := cc.Coord
 		ch := cc.Chunk
@@ -383,7 +398,33 @@ func (r *Renderer) renderBlocks(w *world.World, view, projection mgl32.Mat4) {
 		if !r.aabbIntersectsFrustum(min, max, clip) {
 			continue
 		}
-		mesh := r.ensureChunkMesh(w, coord, ch)
+
+		dx := coord.X - pcx
+		dz := coord.Z - pcz
+		near := dx*dx+dz*dz <= nearRadiusChunks*nearRadiusChunks
+
+		existing := r.chunkMeshes[coord]
+		var mesh *chunkMesh
+		if near {
+			mesh = func() *chunkMesh {
+				defer profiling.Track("meshing.ensureChunkMesh.near")()
+				return r.ensureChunkMesh(w, coord, ch)
+			}()
+		} else {
+			if existing == nil || ch.IsDirty() {
+				if farBuildBudget > 0 {
+					mesh = func() *chunkMesh {
+						defer profiling.Track("meshing.ensureChunkMesh.far")()
+						return r.ensureChunkMesh(w, coord, ch)
+					}()
+					farBuildBudget--
+				} else {
+					mesh = existing
+				}
+			} else {
+				mesh = existing
+			}
+		}
 		if mesh == nil || mesh.vertexCount == 0 {
 			continue
 		}

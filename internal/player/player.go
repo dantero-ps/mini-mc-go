@@ -5,6 +5,7 @@ import (
 	"math"
 
 	"mini-mc/internal/physics"
+	"mini-mc/internal/profiling"
 	"mini-mc/internal/world"
 
 	"github.com/go-gl/glfw/v3.3/glfw"
@@ -112,6 +113,7 @@ func (p *Player) HandleMouseButton(button glfw.MouseButton, action glfw.Action, 
 }
 
 func (p *Player) Update(dt float64, window *glfw.Window) {
+	defer profiling.Track("player.Update.total")()
 	// Update hovered block
 	p.UpdateHoveredBlock()
 
