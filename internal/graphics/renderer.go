@@ -1,6 +1,7 @@
 package graphics
 
 import (
+	"math"
 	"mini-mc/internal/meshing"
 	"mini-mc/internal/player"
 	"mini-mc/internal/world"
@@ -143,7 +144,7 @@ func NewRenderer() (*Renderer, error) {
 	// Enable back-face culling (meshing emits CCW front faces)
 	gl.Enable(gl.CULL_FACE)
 	gl.CullFace(gl.BACK)
-	gl.FrontFace(gl.CW)
+	gl.FrontFace(gl.CCW)
 
 	// Create shaders from files
 	mainVertPath := filepath.Join(ShadersDir, MainVertShader)
@@ -281,8 +282,11 @@ func (r *Renderer) Render(w *world.World, p *player.Player, dt float64) {
 	normalFOV := float32(60.0)
 	sprintFOV := float32(70.0)
 
-	// Set target FOV based on sprint state
-	if p.IsSprinting {
+	// Set target FOV based on sprint state and actual horizontal movement
+	// Only increase FOV if sprinting AND moving horizontally above a small threshold
+	horizontalSpeed := float32(math.Hypot(float64(p.Velocity[0]), float64(p.Velocity[2])))
+	isActivelySprinting := p.IsSprinting && horizontalSpeed > 0.01
+	if isActivelySprinting {
 		r.targetFOV = sprintFOV
 	} else {
 		r.targetFOV = normalFOV
@@ -379,13 +383,7 @@ func (r *Renderer) renderBlocks(w *world.World, view, projection mgl32.Mat4) {
 		if !r.aabbIntersectsFrustum(min, max, clip) {
 			continue
 		}
-		/*faceFilter := func(fmin, fmax mgl32.Vec3) bool {
-			m := r.frustumMargin
-			fmin = mgl32.Vec3{fmin.X() - m, fmin.Y() - m, fmin.Z() - m}
-			fmax = mgl32.Vec3{fmax.X() + m, fmax.Y() + m, fmax.Z() + m}
-			return r.aabbIntersectsFrustum(fmin, fmax, clip)
-		}*/
-		mesh := r.ensureChunkMesh(w, coord, ch, nil)
+		mesh := r.ensureChunkMesh(w, coord, ch)
 		if mesh == nil || mesh.vertexCount == 0 {
 			continue
 		}
@@ -394,15 +392,14 @@ func (r *Renderer) renderBlocks(w *world.World, view, projection mgl32.Mat4) {
 	}
 }
 
-func (r *Renderer) ensureChunkMesh(w *world.World, coord world.ChunkCoord, ch *world.Chunk, faceFilter func(min, max mgl32.Vec3) bool) *chunkMesh {
+func (r *Renderer) ensureChunkMesh(w *world.World, coord world.ChunkCoord, ch *world.Chunk) *chunkMesh {
 	if ch == nil {
 		return nil
 	}
 	existing := r.chunkMeshes[coord]
 	// Rebuild if missing or dirty
-	// Note: faceFilter depends on camera; rebuild per frame for visible chunks
-	if existing == nil || ch.IsDirty() || faceFilter != nil {
-		verts := meshing.BuildGreedyMeshForChunkFiltered(w, ch, faceFilter)
+	if existing == nil || ch.IsDirty() {
+		verts := meshing.BuildGreedyMeshForChunk(w, ch)
 		// Create or update GL resources
 		if existing == nil {
 			existing = &chunkMesh{}

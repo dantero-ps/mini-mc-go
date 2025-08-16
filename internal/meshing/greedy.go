@@ -2,8 +2,6 @@ package meshing
 
 import (
 	"mini-mc/internal/world"
-
-	"github.com/go-gl/mathgl/mgl32"
 )
 
 // VertexStride is number of float32 per vertex (pos.xyz + normal.xyz)
@@ -11,14 +9,7 @@ const VertexStride = 6
 
 // BuildGreedyMeshForChunk builds a greedy-meshed triangle list (pos+normal interleaved)
 // for the given chunk using world coordinates to decide face visibility across chunk borders.
-// Backwards-compatible helper that emits all visible faces (no per-face filtering).
 func BuildGreedyMeshForChunk(w *world.World, c *world.Chunk) []float32 {
-	return BuildGreedyMeshForChunkFiltered(w, c, nil)
-}
-
-// BuildGreedyMeshForChunkFiltered is the filtered variant. If faceFilter is non-nil,
-// each potential face (as a thin AABB) is tested and only emitted when the filter returns true.
-func BuildGreedyMeshForChunkFiltered(w *world.World, c *world.Chunk, faceFilter func(min, max mgl32.Vec3) bool) []float32 {
 	if c == nil {
 		return nil
 	}
@@ -31,17 +22,17 @@ func BuildGreedyMeshForChunkFiltered(w *world.World, c *world.Chunk, faceFilter 
 	baseZ := c.Z * world.ChunkSizeZ
 
 	// +X faces (east)
-	vertices = append(vertices, buildGreedyForDirection(w, c, baseX, baseY, baseZ, +1, 0, 0, faceFilter)...)
+	vertices = append(vertices, buildGreedyForDirection(w, c, baseX, baseY, baseZ, +1, 0, 0)...)
 	// -X faces (west)
-	vertices = append(vertices, buildGreedyForDirection(w, c, baseX, baseY, baseZ, -1, 0, 0, faceFilter)...)
+	vertices = append(vertices, buildGreedyForDirection(w, c, baseX, baseY, baseZ, -1, 0, 0)...)
 	// +Y faces (top)
-	vertices = append(vertices, buildGreedyForDirection(w, c, baseX, baseY, baseZ, 0, +1, 0, faceFilter)...)
+	vertices = append(vertices, buildGreedyForDirection(w, c, baseX, baseY, baseZ, 0, +1, 0)...)
 	// -Y faces (bottom)
-	vertices = append(vertices, buildGreedyForDirection(w, c, baseX, baseY, baseZ, 0, -1, 0, faceFilter)...)
+	vertices = append(vertices, buildGreedyForDirection(w, c, baseX, baseY, baseZ, 0, -1, 0)...)
 	// +Z faces (north)
-	vertices = append(vertices, buildGreedyForDirection(w, c, baseX, baseY, baseZ, 0, 0, +1, faceFilter)...)
+	vertices = append(vertices, buildGreedyForDirection(w, c, baseX, baseY, baseZ, 0, 0, +1)...)
 	// -Z faces (south)
-	vertices = append(vertices, buildGreedyForDirection(w, c, baseX, baseY, baseZ, 0, 0, -1, faceFilter)...)
+	vertices = append(vertices, buildGreedyForDirection(w, c, baseX, baseY, baseZ, 0, 0, -1)...)
 
 	return vertices
 }
@@ -49,7 +40,7 @@ func BuildGreedyMeshForChunkFiltered(w *world.World, c *world.Chunk, faceFilter 
 // buildGreedyForDirection performs 2D greedy meshing for one face direction.
 // The direction is specified by a normal (nx,ny,nz) where exactly one component is -1 or +1 and the others are 0.
 // It returns interleaved vertices (pos+normal) forming triangles.
-func buildGreedyForDirection(w *world.World, c *world.Chunk, baseX, baseY, baseZ int, nx, ny, nz int, faceFilter func(min, max mgl32.Vec3) bool) []float32 {
+func buildGreedyForDirection(w *world.World, c *world.Chunk, baseX, baseY, baseZ int, nx, ny, nz int) []float32 {
 	// Determine the axis fixed by the face normal and the two in-plane axes (u,v)
 	// We will iterate layers along the normal axis, and build a UxV mask for each layer.
 	var (
@@ -81,7 +72,7 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, baseX, baseY, baseZ
 	if nx != 0 { // Faces perpendicular to X axis, plane is Y-Z
 		// Layers along X
 		for x := 0; x < sx; x++ {
-			// Mask size sy x sz, store 0 or 1 (face visible) and optionally future block IDs
+			// Mask size sy x sz, store 0 or 1 (face visible)
 			mask := make([]int, sy*sz)
 			for y := 0; y < sy; y++ {
 				for z := 0; z < sz; z++ {
@@ -89,30 +80,22 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, baseX, baseY, baseZ
 					if bt == world.BlockTypeAir {
 						continue
 					}
-					wx := baseX + x
-					wy := baseY + y
-					wz := baseZ + z
-					// neighbor along normal
-					nxw := wx + nx
-					nyw := wy
-					nzw := wz
-					if w.IsAir(nxw, nyw, nzw) {
-						if faceFilter == nil {
+					// Prefer local neighbor when within this chunk; only query world across chunk borders
+					localNX := x + nx
+					if localNX >= 0 && localNX < sx {
+						if c.IsAir(localNX, y, z) {
 							mask[y*sz+z] = 1
-						} else {
-							fx := float32(baseX + x)
-							if nx > 0 {
-								fx = float32(baseX + x + 1)
-							}
-							fy := float32(baseY + y)
-							fz := float32(baseZ + z)
-							// thin AABB around the face
-							eps := float32(0.001)
-							min := mgl32.Vec3{fx - eps, fy, fz}
-							max := mgl32.Vec3{fx + eps, fy + 1, fz + 1}
-							if faceFilter(min, max) {
-								mask[y*sz+z] = 1
-							}
+						}
+					} else {
+						wx := baseX + x
+						wy := baseY + y
+						wz := baseZ + z
+						nxw := wx + nx
+						nyw := wy
+						nzw := wz
+						// If neighbor chunk missing, treat as air so outward faces render until neighbor arrives
+						if w.GetChunkFromBlockCoords(nxw, nyw, nzw, false) == nil || w.IsAir(nxw, nyw, nzw) {
+							mask[y*sz+z] = 1
 						}
 					}
 				}
@@ -154,21 +137,21 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, baseX, baseY, baseZ
 				fnx := float32(nx)
 				fny := float32(0)
 				fnz := float32(0)
-				// Order vertices so front-face is CCW with normal pointing outward
+				// CCW winding for outward normal
 				if nx > 0 { // +X
 					emitQuad(
 						fx, fy0, fz0,
-						fx, fy0, fz1,
-						fx, fy1, fz1,
 						fx, fy1, fz0,
+						fx, fy1, fz1,
+						fx, fy0, fz1,
 						fnx, fny, fnz,
 					)
 				} else { // -X
 					emitQuad(
 						fx, fy0, fz0,
-						fx, fy1, fz0,
-						fx, fy1, fz1,
 						fx, fy0, fz1,
+						fx, fy1, fz1,
+						fx, fy1, fz0,
 						fnx, fny, fnz,
 					)
 				}
@@ -192,28 +175,23 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, baseX, baseY, baseZ
 					if bt == world.BlockTypeAir {
 						continue
 					}
-					wx := baseX + x
-					wy := baseY + y
-					wz := baseZ + z
-					nxw := wx
-					nyw := wy + ny
-					nzw := wz
-					if w.IsAir(nxw, nyw, nzw) {
-						if faceFilter == nil {
+					// Prefer local neighbor when within this chunk; only query world across chunk borders
+					localNY := y + ny
+					if localNY >= 0 && localNY < sy {
+						if c.IsAir(x, localNY, z) {
 							mask[x*sz+z] = 1
-						} else {
-							fy := float32(baseY + y)
-							if ny > 0 {
-								fy = float32(baseY + y + 1)
-							}
-							fx := float32(baseX + x)
-							fz := float32(baseZ + z)
-							eps := float32(0.001)
-							min := mgl32.Vec3{fx, fy - eps, fz}
-							max := mgl32.Vec3{fx + 1, fy + eps, fz + 1}
-							if faceFilter(min, max) {
-								mask[x*sz+z] = 1
-							}
+						}
+					} else {
+						// Crossing into neighbor chunk along Y. Treat missing neighbor as AIR so top/bottom
+						// surfaces at the world boundary are rendered.
+						wx := baseX + x
+						wy := baseY + y
+						wz := baseZ + z
+						nxw := wx
+						nyw := wy + ny
+						nzw := wz
+						if w.GetChunkFromBlockCoords(nxw, nyw, nzw, false) == nil || w.IsAir(nxw, nyw, nzw) {
+							mask[x*sz+z] = 1
 						}
 					}
 				}
@@ -252,20 +230,20 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, baseX, baseY, baseZ
 				fnx := float32(0)
 				fny := float32(ny)
 				fnz := float32(0)
-				if ny > 0 { // +Y (top)
+				if ny > 0 { // +Y (top) — CCW
 					emitQuad(
 						fx0, fy, fz0,
-						fx1, fy, fz0,
-						fx1, fy, fz1,
 						fx0, fy, fz1,
+						fx1, fy, fz1,
+						fx1, fy, fz0,
 						fnx, fny, fnz,
 					)
-				} else { // -Y (bottom)
+				} else { // -Y (bottom) — CCW
 					emitQuad(
 						fx0, fy, fz0,
-						fx0, fy, fz1,
-						fx1, fy, fz1,
 						fx1, fy, fz0,
+						fx1, fy, fz1,
+						fx0, fy, fz1,
 						fnx, fny, fnz,
 					)
 				}
@@ -288,28 +266,22 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, baseX, baseY, baseZ
 				if bt == world.BlockTypeAir {
 					continue
 				}
-				wx := baseX + x
-				wy := baseY + y
-				wz := baseZ + z
-				nxw := wx
-				nyw := wy
-				nzw := wz + nz
-				if w.IsAir(nxw, nyw, nzw) {
-					if faceFilter == nil {
+				// Prefer local neighbor when within this chunk; only query world across chunk borders
+				localNZ := z + nz
+				if localNZ >= 0 && localNZ < sz {
+					if c.IsAir(x, y, localNZ) {
 						mask[x*sy+y] = 1
-					} else {
-						fz := float32(baseZ + z)
-						if nz > 0 {
-							fz = float32(baseZ + z + 1)
-						}
-						fx := float32(baseX + x)
-						fy := float32(baseY + y)
-						eps := float32(0.001)
-						min := mgl32.Vec3{fx, fy, fz - eps}
-						max := mgl32.Vec3{fx + 1, fy + 1, fz + eps}
-						if faceFilter(min, max) {
-							mask[x*sy+y] = 1
-						}
+					}
+				} else {
+					wx := baseX + x
+					wy := baseY + y
+					wz := baseZ + z
+					nxw := wx
+					nyw := wy
+					nzw := wz + nz
+					// If neighbor chunk missing, treat as air so outward faces render until neighbor arrives
+					if w.GetChunkFromBlockCoords(nxw, nyw, nzw, false) == nil || w.IsAir(nxw, nyw, nzw) {
+						mask[x*sy+y] = 1
 					}
 				}
 			}
@@ -348,20 +320,20 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, baseX, baseY, baseZ
 			fnx := float32(0)
 			fny := float32(0)
 			fnz := float32(nz)
-			if nz > 0 { // +Z (north) — make winding CW for outward normal
+			if nz > 0 { // +Z (north) — CCW outward (matches gl.FrontFace(CCW))
 				emitQuad(
 					fx0, fy0, fz,
-					fx0, fy1, fz,
-					fx1, fy1, fz,
 					fx1, fy0, fz,
+					fx1, fy1, fz,
+					fx0, fy1, fz,
 					fnx, fny, fnz,
 				)
-			} else { // -Z (south)
+			} else { // -Z (south) — CCW outward
 				emitQuad(
 					fx0, fy0, fz,
-					fx1, fy0, fz,
-					fx1, fy1, fz,
 					fx0, fy1, fz,
+					fx1, fy1, fz,
+					fx1, fy0, fz,
 					fnx, fny, fnz,
 				)
 			}

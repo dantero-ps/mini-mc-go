@@ -121,6 +121,35 @@ func (w *World) Set(x, y, z int, val BlockType) {
 	localZ := mod(z, ChunkSizeZ)
 
 	chunk.SetBlock(localX, localY, localZ, val)
+
+	// Mark neighbor chunks dirty if we touched a border block
+	if localX == 0 {
+		if nb := w.GetChunkFromBlockCoords(x-1, y, z, false); nb != nil {
+			nb.dirty = true
+		}
+	} else if localX == ChunkSizeX-1 {
+		if nb := w.GetChunkFromBlockCoords(x+1, y, z, false); nb != nil {
+			nb.dirty = true
+		}
+	}
+	if localY == 0 {
+		if nb := w.GetChunkFromBlockCoords(x, y-1, z, false); nb != nil {
+			nb.dirty = true
+		}
+	} else if localY == ChunkSizeY-1 {
+		if nb := w.GetChunkFromBlockCoords(x, y+1, z, false); nb != nil {
+			nb.dirty = true
+		}
+	}
+	if localZ == 0 {
+		if nb := w.GetChunkFromBlockCoords(x, y, z-1, false); nb != nil {
+			nb.dirty = true
+		}
+	} else if localZ == ChunkSizeZ-1 {
+		if nb := w.GetChunkFromBlockCoords(x, y, z+1, false); nb != nil {
+			nb.dirty = true
+		}
+	}
 }
 
 // GetActiveBlocks returns a list of positions of all non-air blocks in the world
@@ -250,6 +279,24 @@ func (w *World) generateChunkSync(coord ChunkCoord) {
 		w.chunks[coord] = chunk
 	}
 	w.mu.Unlock()
+
+	// Mark adjacent chunks dirty so their meshes rebuild and drop temporary border faces
+	neighbors := []ChunkCoord{
+		{X: coord.X + 1, Y: coord.Y, Z: coord.Z},
+		{X: coord.X - 1, Y: coord.Y, Z: coord.Z},
+		{X: coord.X, Y: coord.Y + 1, Z: coord.Z},
+		{X: coord.X, Y: coord.Y - 1, Z: coord.Z},
+		{X: coord.X, Y: coord.Y, Z: coord.Z + 1},
+		{X: coord.X, Y: coord.Y, Z: coord.Z - 1},
+	}
+	for _, n := range neighbors {
+		w.mu.RLock()
+		nb := w.chunks[n]
+		w.mu.RUnlock()
+		if nb != nil {
+			nb.dirty = true
+		}
+	}
 }
 
 // populateChunk fills a chunk using noise heightmap
@@ -285,6 +332,12 @@ func (w *World) heightAt(worldX, worldZ int) int {
 		height = 0
 	}
 	return int(math.Floor(height))
+}
+
+// SurfaceHeightAt exposes the terrain surface height used for generation at world (x,z).
+// This is useful for estimating occupancy when adjacent chunks are not yet generated.
+func (w *World) SurfaceHeightAt(x, z int) int {
+	return w.heightAt(x, z)
 }
 
 // Helper functions for coordinate conversion
