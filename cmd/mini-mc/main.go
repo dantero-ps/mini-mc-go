@@ -40,9 +40,9 @@ func main() {
 	// Create world
 	gameWorld := world.New()
 
-	// Generate initial spawn area synchronously so we can place the player safely
+	// Generate a smaller initial spawn area synchronously to keep startup smooth
 	spawnX, spawnZ := float32(0), float32(0)
-	gameWorld.StreamChunksAroundSync(spawnX, spawnZ, 4)
+	gameWorld.StreamChunksAroundSync(spawnX, spawnZ, 2)
 
 	// Compute ground level at spawn
 	tempPos := mgl32.Vec3{spawnX, 300, spawnZ}
@@ -112,7 +112,8 @@ func runGameLoop(window *glfw.Window, renderer *graphics.Renderer, p *player.Pla
 		// Enqueue async streaming around player every frame (idempotent due to pending dedup)
 		func() {
 			defer profiling.Track("world.StreamChunksAroundAsync")()
-			w.StreamChunksAroundAsync(p.Position[0], p.Position[2], 30)
+			// Lower initial pressure; far chunks will fill over time
+			w.StreamChunksAroundAsync(p.Position[0], p.Position[2], 24)
 		}()
 		func() { defer profiling.Track("renderer.Render")(); renderer.Render(w, p, dt) }()
 		frames++

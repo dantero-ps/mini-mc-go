@@ -8,6 +8,7 @@ import (
 	"mini-mc/internal/profiling"
 	"mini-mc/internal/world"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -420,10 +421,12 @@ func (r *Renderer) renderBlocks(w *world.World, p *player.Player, view, projecti
 	r.mainShader.SetVector3("faceColorDefault", defaultColor.X(), defaultColor.Y(), defaultColor.Z())
 
 	// Draw greedy-meshed chunks that intersect the camera frustum
-	chunks := w.GetAllChunks()
+	all := w.GetAllChunks()
 	clip := projection.Mul4(view)
 
 	nearRadiusChunks := 12
+	// Per-frame build budgets to avoid long stalls on first frames
+	nearBuildBudget := 8
 	farBuildBudget := 12
 
 	px := int(math.Floor(float64(p.Position[0])))
@@ -431,14 +434,27 @@ func (r *Renderer) renderBlocks(w *world.World, p *player.Player, view, projecti
 	pcx := px / world.ChunkSizeX
 	pcz := pz / world.ChunkSizeZ
 
-	for _, cc := range chunks {
+	// Collect visible chunks and sort by distance from player first
+	visible := make([]world.ChunkWithCoord, 0, len(all))
+	for _, cc := range all {
+		coord := cc.Coord
+		min, max := r.computeChunkAABB(coord)
+		if r.aabbIntersectsFrustum(min, max, clip) {
+			visible = append(visible, cc)
+		}
+	}
+	sort.Slice(visible, func(i, j int) bool {
+		diX := visible[i].Coord.X - pcx
+		diZ := visible[i].Coord.Z - pcz
+		djX := visible[j].Coord.X - pcx
+		djZ := visible[j].Coord.Z - pcz
+		return diX*diX+diZ*diZ < djX*djX+djZ*djZ
+	})
+
+	for _, cc := range visible {
 		coord := cc.Coord
 		ch := cc.Chunk
 		if ch == nil {
-			continue
-		}
-		min, max := r.computeChunkAABB(coord)
-		if !r.aabbIntersectsFrustum(min, max, clip) {
 			continue
 		}
 
@@ -449,10 +465,19 @@ func (r *Renderer) renderBlocks(w *world.World, p *player.Player, view, projecti
 		existing := r.chunkMeshes[coord]
 		var mesh *chunkMesh
 		if near {
-			mesh = func() *chunkMesh {
-				defer profiling.Track("meshing.ensureChunkMesh.near")()
-				return r.ensureChunkMesh(w, coord, ch)
-			}()
+			if existing == nil || ch.IsDirty() {
+				if nearBuildBudget > 0 {
+					mesh = func() *chunkMesh {
+						defer profiling.Track("meshing.ensureChunkMesh.near")()
+						return r.ensureChunkMesh(w, coord, ch)
+					}()
+					nearBuildBudget--
+				} else {
+					mesh = existing
+				}
+			} else {
+				mesh = existing
+			}
 		} else {
 			if existing == nil || ch.IsDirty() {
 				if farBuildBudget > 0 {
