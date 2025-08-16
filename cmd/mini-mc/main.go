@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"runtime"
 	"time"
 
@@ -119,13 +118,6 @@ func runGameLoop(window *glfw.Window, renderer *graphics.Renderer, p *player.Pla
 		frames++
 
 		if time.Since(lastFPSCheckTime) >= time.Second {
-			top := profiling.TopN(3)
-			if top != "" {
-				window.SetTitle(fmt.Sprintf("mini-mc | FPS: %d | %s", frames, top))
-			} else {
-				window.SetTitle(fmt.Sprintf("mini-mc | FPS: %d", frames))
-			}
-
 			frames = 0
 			lastFPSCheckTime = time.Now()
 		}

@@ -8,6 +8,8 @@ import (
 	"mini-mc/internal/profiling"
 	"mini-mc/internal/world"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
@@ -132,6 +134,11 @@ type Renderer struct {
 
 	// Frustum culling margin in blocks (inflates AABBs before testing)
 	frustumMargin float32
+
+	// FPS tracking
+	frames       int
+	lastFPSCheck time.Time
+	currentFPS   int
 }
 
 type chunkMesh struct {
@@ -196,6 +203,9 @@ func NewRenderer() (*Renderer, error) {
 		targetFOV:       defaultFOV,
 		currentFOV:      defaultFOV,
 		frustumMargin:   1.0, // one block margin
+		frames:          0,
+		lastFPSCheck:    time.Now(),
+		currentFPS:      0,
 	}
 
 	// Initialize VAOs and VBOs
@@ -294,6 +304,15 @@ func (r *Renderer) setupLetterVAO() {
 
 func (r *Renderer) Render(w *world.World, p *player.Player, dt float64) {
 	defer profiling.Track("renderer.Render.total")()
+
+	// Update FPS tracking
+	r.frames++
+	if time.Since(r.lastFPSCheck) >= time.Second {
+		r.currentFPS = r.frames
+		r.lastFPSCheck = time.Now()
+		r.frames = 0
+	}
+
 	// Clear the screen
 	gl.ClearColor(0.53, 0.81, 0.92, 1.0)
 	gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
@@ -367,6 +386,9 @@ func (r *Renderer) Render(w *world.World, p *player.Player, dt float64) {
 
 	// Render player position (HUD)
 	func() { defer profiling.Track("renderer.renderPlayerPos")(); r.renderPlayerPosition(p) }()
+
+	// Render profiling information (HUD)
+	func() { defer profiling.Track("renderer.renderProfiling")(); r.renderProfilingInfo() }()
 }
 
 func (r *Renderer) renderBlocks(w *world.World, p *player.Player, view, projection mgl32.Mat4) {
@@ -607,9 +629,8 @@ func (r *Renderer) renderPlayerPosition(p *player.Player) {
 	}
 	// Build text and draw at top-left
 	text := fmt.Sprintf("Pos: %.2f, %.2f, %.2f", p.Position[0], p.Position[1], p.Position[2])
-	// 10px from left, 20px down from top
-	x := float32(WinWidth/2 - 400)
-	y := float32(WinHeight / 2)
+	x := float32(10)
+	y := float32(30)
 	color := mgl32.Vec3{1.0, 1.0, 1.0}
 	r.fontRenderer.Render(text, x, y, 0.7, color)
 
@@ -724,4 +745,33 @@ func (r *Renderer) aabbIntersectsFrustum(min, max mgl32.Vec3, clip mgl32.Mat4) b
 	}
 
 	return !allOutside
+}
+
+// renderProfilingInfo renders the current profiling information on screen
+func (r *Renderer) renderProfilingInfo() {
+	// Get current profiling data
+	top := profiling.TopN(3)
+
+	// Set text color (white)
+	textColor := mgl32.Vec3{1.0, 1.0, 1.0}
+
+	// Render FPS and profiling info at top-left corner
+	yPos := float32(60)
+
+	// Render FPS
+	fpsText := fmt.Sprintf("FPS: %d", r.currentFPS)
+	r.fontRenderer.Render(fpsText, 10, yPos, 0.7, textColor)
+	yPos += 30
+
+	// Render profiling info if available
+	if top != "" {
+		// Split profiling info into lines for better readability
+		lines := strings.Split(top, ", ")
+		for _, line := range lines {
+			if line != "" {
+				r.fontRenderer.Render(line, 10, yPos, 0.7, textColor)
+				yPos += 25
+			}
+		}
+	}
 }
