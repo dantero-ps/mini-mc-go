@@ -1,6 +1,7 @@
 package graphics
 
 import (
+	"fmt"
 	"math"
 	"mini-mc/internal/meshing"
 	"mini-mc/internal/player"
@@ -122,6 +123,10 @@ type Renderer struct {
 	letterVAO    uint32
 	letterVBO    uint32
 
+	// Font rendering
+	fontAtlas    *FontAtlasInfo
+	fontRenderer *FontRenderer
+
 	// Greedy meshing cache per chunk
 	chunkMeshes map[world.ChunkCoord]*chunkMesh
 
@@ -200,6 +205,19 @@ func NewRenderer() (*Renderer, error) {
 	renderer.setupDirectionVAO()
 	renderer.setupLetterVAO()
 	renderer.chunkMeshes = make(map[world.ChunkCoord]*chunkMesh)
+
+	// Load font atlas and renderer for HUD text
+	fontPath := filepath.Join("assets", "fonts", "OpenSans-LightItalic.ttf")
+	atlas, err := BuildFontAtlas(fontPath, 24)
+	if err != nil {
+		return nil, err
+	}
+	fontRenderer, err := NewFontRenderer(atlas)
+	if err != nil {
+		return nil, err
+	}
+	renderer.fontAtlas = atlas
+	renderer.fontRenderer = fontRenderer
 
 	return renderer, nil
 }
@@ -346,6 +364,9 @@ func (r *Renderer) Render(w *world.World, p *player.Player, dt float64) {
 
 	// Render direction indicator
 	func() { defer profiling.Track("renderer.renderDirection")(); r.renderDirection(p) }()
+
+	// Render player position (HUD)
+	func() { defer profiling.Track("renderer.renderPlayerPos")(); r.renderPlayerPosition(p) }()
 }
 
 func (r *Renderer) renderBlocks(w *world.World, p *player.Player, view, projection mgl32.Mat4) {
@@ -578,6 +599,20 @@ func (r *Renderer) renderDirection(p *player.Player) {
 
 	// Draw the direction letter
 	r.drawDirectionLetter(directionLetter)
+}
+
+func (r *Renderer) renderPlayerPosition(p *player.Player) {
+	if r.fontRenderer == nil {
+		return
+	}
+	// Build text and draw at top-left
+	text := fmt.Sprintf("Pos: %.2f, %.2f, %.2f", p.Position[0], p.Position[1], p.Position[2])
+	// 10px from left, 20px down from top
+	x := float32(WinWidth/2 - 400)
+	y := float32(WinHeight / 2)
+	color := mgl32.Vec3{1.0, 1.0, 1.0}
+	r.fontRenderer.Render(text, x, y, 0.7, color)
+
 }
 
 // computeChunkAABB returns the axis-aligned bounding box in world space for a chunk
