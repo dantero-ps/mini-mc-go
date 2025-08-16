@@ -203,8 +203,9 @@ func (w *World) StreamChunksAroundSync(x, z float32, radius int) {
 			if maxChunkY < 0 {
 				maxChunkY = 0
 			}
-			// Generate only the surface chunk
-			w.generateChunkSync(ChunkCoord{X: chunkX, Y: maxChunkY, Z: chunkZ})
+			for cy := 0; cy <= maxChunkY; cy++ {
+				w.generateChunkSync(ChunkCoord{X: chunkX, Y: cy, Z: chunkZ})
+			}
 		}
 	}
 }
@@ -277,11 +278,13 @@ func (w *World) enqueueColumn(chunkX, chunkZ int) int {
 		maxChunkY = 0
 	}
 
-	// Enqueue only the surface chunk
-	if w.requestChunkLimited(ChunkCoord{X: chunkX, Y: maxChunkY, Z: chunkZ}) {
-		return 1
+	enq := 0
+	for cy := 0; cy <= maxChunkY; cy++ {
+		if w.requestChunkLimited(ChunkCoord{X: chunkX, Y: cy, Z: chunkZ}) {
+			enq++
+		}
 	}
-	return 0
+	return enq
 }
 
 // requestChunkLimited respects pending cap and returns true if enqueued
@@ -383,8 +386,9 @@ func (w *World) populateChunk(c *Chunk) {
 			if topLocal >= ChunkSizeY {
 				topLocal = ChunkSizeY - 1
 			}
-			// Place only the surface block
-			c.blocks[lx][topLocal][lz] = BlockTypeGrass
+			for ly := 0; ly <= topLocal; ly++ {
+				c.blocks[lx][ly][lz] = BlockTypeGrass
+			}
 		}
 	}
 	c.dirty = true
