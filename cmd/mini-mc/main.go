@@ -40,9 +40,11 @@ func main() {
 	// Create world
 	gameWorld := world.New()
 
-	// Stream initial chunks at spawn and compute ground level
+	// Generate initial spawn area synchronously so we can place the player safely
 	spawnX, spawnZ := float32(0), float32(0)
-	// Do one synchronous stream to ensure spawn area exists
+	gameWorld.StreamChunksAroundSync(spawnX, spawnZ, 4)
+
+	// Compute ground level at spawn
 	tempPos := mgl32.Vec3{spawnX, 300, spawnZ}
 	groundY := physics.FindGroundLevel(spawnX, spawnZ, tempPos, gameWorld)
 
@@ -105,6 +107,9 @@ func runGameLoop(window *glfw.Window, renderer *graphics.Renderer, p *player.Pla
 		lastTime = now
 
 		p.Update(dt, window)
+
+		// Enqueue async streaming around player every frame (idempotent due to pending dedup)
+		w.StreamChunksAroundAsync(p.Position[0], p.Position[2], 30)
 		renderer.Render(w, p, dt)
 		frames++
 

@@ -19,7 +19,7 @@ func NewCamera(width, height int) *Camera {
 		AspectRatio: float32(width) / float32(height),
 		FOV:         60.0,
 		NearPlane:   0.1,
-		FarPlane:    100.0,
+		FarPlane:    1000.0,
 	}
 }
 
