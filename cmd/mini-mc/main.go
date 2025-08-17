@@ -100,6 +100,7 @@ func runGameLoop(window *glfw.Window, renderer *graphics.Renderer, p *player.Pla
 	frames := 0
 	lastFPSCheckTime := time.Now()
 	lastTime := time.Now()
+	lastPrune := time.Now()
 
 	for !window.ShouldClose() {
 		profiling.ResetFrame()
@@ -107,7 +108,15 @@ func runGameLoop(window *glfw.Window, renderer *graphics.Renderer, p *player.Pla
 		dt := now.Sub(lastTime).Seconds()
 		lastTime = now
 
+		updateStart := time.Now()
 		func() { defer profiling.Track("player.Update")(); p.Update(dt, window) }()
+		updateDur := time.Since(updateStart)
+
+		// Measure non-render buckets for HUD breakdown
+		playerDur := profiling.SumWithPrefix("player.")
+		worldDur := profiling.SumWithPrefix("world.")
+		glfwDur := profiling.SumWithPrefix("glfw.")
+		physicsDur := profiling.SumWithPrefix("physics.")
 
 		// Enqueue async streaming around player every frame (idempotent due to pending dedup)
 		func() {
@@ -115,7 +124,21 @@ func runGameLoop(window *glfw.Window, renderer *graphics.Renderer, p *player.Pla
 			// Lower initial pressure; far chunks will fill over time
 			w.StreamChunksAroundAsync(p.Position[0], p.Position[2], 24)
 		}()
-		func() { defer profiling.Track("renderer.Render")(); renderer.Render(w, p, dt) }()
+
+		// Periodically evict far chunks and prune renderer meshes
+		if time.Since(lastPrune) > 750*time.Millisecond {
+			func() {
+				defer profiling.Track("world.EvictFarChunks")()
+				w.EvictFarChunks(p.Position[0], p.Position[2], 40)
+			}()
+			func() {
+				defer profiling.Track("renderer.PruneMeshesByWorld")()
+				renderer.PruneMeshesByWorld(w, p.Position, 40)
+			}()
+			lastPrune = time.Now()
+		}
+
+		renderer.Render(w, p, dt)
 		frames++
 
 		if time.Since(lastFPSCheckTime) >= time.Second {
@@ -123,7 +146,28 @@ func runGameLoop(window *glfw.Window, renderer *graphics.Renderer, p *player.Pla
 			lastFPSCheckTime = time.Now()
 		}
 
-		window.SwapBuffers()
-		glfw.PollEvents()
+		renderer.RenderProfilingInfo()
+
+		// Present and pump events
+		func() { defer profiling.Track("glfw.SwapBuffers")(); window.SwapBuffers() }()
+		func() { defer profiling.Track("glfw.PollEvents")(); glfw.PollEvents() }()
+
+		// After presenting, record durations for next frame's HUD
+		totalFrameDur := time.Since(now)
+		swapEventsDur := profiling.SumWithPrefix("glfw.")
+		preRenderDur := totalFrameDur - swapEventsDur - time.Duration(float64(renderer.GetProfilingStats()["frameDuration"].(time.Duration)))
+		if preRenderDur < 0 {
+			preRenderDur = 0
+		}
+		renderer.ProfilingSetLastTotalFrameDuration(totalFrameDur)
+		renderer.ProfilingSetLastUpdateDuration(updateDur)
+		// Update breakdown fields (main thread only)
+		renderer.ProfilingSetBreakdown(playerDur, worldDur, glfwDur, 0, profiling.SumWithPrefix("renderer.PruneMeshesByWorld"))
+		renderer.ProfilingSetPhysics(physicsDur)
+		// store physics separately
+		stats := renderer.GetProfilingStats()
+		_ = stats
+		renderer.ProfilingSetPhases(preRenderDur, swapEventsDur)
+		// Console timing after swap
 	}
 }

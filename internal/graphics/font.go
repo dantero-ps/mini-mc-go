@@ -252,6 +252,70 @@ func (fr *FontRenderer) Render(text string, x, y, scale float32, color mgl32.Vec
 	gl.Enable(gl.CULL_FACE)
 }
 
+// RenderLines draws multiple lines of text in a single pass to minimize GL state changes.
+// All lines share the same color and scale. Lines are rendered starting at (x, yStart),
+// with each subsequent line offset by lineStep pixels vertically.
+func (fr *FontRenderer) RenderLines(lines []string, x, yStart, lineStep, scale float32, color mgl32.Vec3) {
+	if len(lines) == 0 {
+		return
+	}
+
+	gl.Disable(gl.DEPTH_TEST)
+	gl.Disable(gl.CULL_FACE)
+
+	fr.shader.Use()
+	fr.shader.SetVector3("textColor", color.X(), color.Y(), color.Z())
+	fr.shader.SetMatrix4("projection", &fr.projection[0])
+	fr.shader.SetInt("text", 0)
+
+	gl.Enable(gl.BLEND)
+	gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+	gl.ActiveTexture(gl.TEXTURE0)
+	gl.BindTexture(gl.TEXTURE_2D, fr.atlas.TextureID)
+	gl.BindVertexArray(fr.vao)
+	gl.BindBuffer(gl.ARRAY_BUFFER, fr.vbo)
+
+	// Build vertex data for all lines
+	totalChars := 0
+	for i := 0; i < len(lines); i++ {
+		totalChars += len([]rune(lines[i]))
+	}
+	// Preallocate reasonably: 6 verts per char, 4 floats per vert
+	vertices := make([]float32, 0, totalChars*6*4)
+	y := yStart
+	for _, line := range lines {
+		if line == "" {
+			y += lineStep
+			continue
+		}
+		verts := fr.buildVertices([]rune(line), x, y, scale)
+		vertices = append(vertices, verts...)
+		y += lineStep
+	}
+
+	needed := len(vertices) * 4
+	if needed > fr.maxCharsCap*6*4 {
+		// Grow capacity to fit all vertices
+		requiredChars := len(vertices) / (6 * 4)
+		if requiredChars == 0 {
+			requiredChars = 1
+		}
+		// Double until enough
+		for fr.maxCharsCap < requiredChars {
+			fr.maxCharsCap *= 2
+		}
+		gl.BufferData(gl.ARRAY_BUFFER, fr.maxCharsCap*6*4*4, nil, gl.DYNAMIC_DRAW)
+	}
+	if len(vertices) > 0 {
+		gl.BufferSubData(gl.ARRAY_BUFFER, 0, len(vertices)*4, gl.Ptr(vertices))
+		gl.DrawArrays(gl.TRIANGLES, 0, int32(len(vertices)/4))
+	}
+
+	gl.Disable(gl.BLEND)
+	gl.Enable(gl.DEPTH_TEST)
+	gl.Enable(gl.CULL_FACE)
+}
+
 func (fr *FontRenderer) buildVertices(chars []rune, x, y, scale float32) []float32 {
 	vertices := make([]float32, 0, len(chars)*6*4)
 	for _, r := range chars {

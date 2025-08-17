@@ -140,6 +140,58 @@ type Renderer struct {
 	frames       int
 	lastFPSCheck time.Time
 	currentFPS   int
+
+	// Enhanced profiling metrics
+	profilingStats struct {
+		// Frame timing
+		frameStartTime    time.Time
+		frameEndTime      time.Time
+		frameDuration     time.Duration
+		lastFrameDuration time.Duration
+
+		// Rendering statistics
+		totalDrawCalls int
+		totalVertices  int
+		totalTriangles int
+		visibleChunks  int
+		culledChunks   int
+		meshedChunks   int
+
+		// GPU memory usage
+		gpuMemoryUsage     int64
+		textureMemoryUsage int64
+		bufferMemoryUsage  int64
+
+		// Performance counters
+		frustumCullTime time.Duration
+		meshingTime     time.Duration
+		shaderBindTime  time.Duration
+		vaoBindTime     time.Duration
+
+		// Historical data for averaging
+		frameTimeHistory []time.Duration
+		maxFrameTime     time.Duration
+		minFrameTime     time.Duration
+		avgFrameTime     time.Duration
+
+		// Total frame duration measured externally (prev frame)
+		lastTotalFrameDuration time.Duration
+		// Update phase duration measured in main (prev frame)
+		lastUpdateDuration time.Duration
+
+		// Non-render breakdown from previous frame
+		lastPlayerDuration  time.Duration
+		lastWorldDuration   time.Duration
+		lastGlfwDuration    time.Duration
+		lastHudDuration     time.Duration
+		lastPruneDuration   time.Duration
+		lastOtherDuration   time.Duration
+		lastPhysicsDuration time.Duration
+
+		// Phase durations (prev frame)
+		lastPreRenderDuration  time.Duration // from frame start to Render() call
+		lastSwapEventsDuration time.Duration // SwapBuffers + PollEvents actual time
+	}
 }
 
 type chunkMesh struct {
@@ -304,7 +356,8 @@ func (r *Renderer) setupLetterVAO() {
 }
 
 func (r *Renderer) Render(w *world.World, p *player.Player, dt float64) {
-	defer profiling.Track("renderer.Render.total")()
+	// Start frame profiling
+	r.startFrameProfiling()
 
 	// Update FPS tracking
 	r.frames++
@@ -315,51 +368,64 @@ func (r *Renderer) Render(w *world.World, p *player.Player, dt float64) {
 	}
 
 	// Clear the screen
-	gl.ClearColor(0.53, 0.81, 0.92, 1.0)
-	gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+	func() {
+		defer profiling.Track("renderer.clear")()
+		gl.ClearColor(0.53, 0.81, 0.92, 1.0)
+		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+	}()
 
-	// Adjust FOV based on player sprint state
-	normalFOV := float32(60.0)
-	sprintFOV := float32(70.0)
+	func() {
+		defer profiling.Track("renderer.updateFOV")()
+		// Adjust FOV based on player sprint state
+		normalFOV := float32(60.0)
+		sprintFOV := float32(70.0)
 
-	// Set target FOV based on sprint state and actual horizontal movement
-	// Only increase FOV if sprinting AND moving horizontally above a small threshold
-	horizontalSpeed := float32(math.Hypot(float64(p.Velocity[0]), float64(p.Velocity[2])))
-	isActivelySprinting := p.IsSprinting && horizontalSpeed > 0.01
-	if isActivelySprinting {
-		r.targetFOV = sprintFOV
-	} else {
-		r.targetFOV = normalFOV
-	}
-
-	// Smooth interpolation between current and target FOV
-	// Adjust this value to control the speed of the transition
-	transitionSpeed := float32(100.0)
-
-	// Calculate the interpolation step based on delta time
-	step := float32(dt) * transitionSpeed
-
-	// Smoothly interpolate towards the target FOV
-	if r.currentFOV < r.targetFOV {
-		// Increase current FOV but don't exceed target
-		r.currentFOV += step
-		if r.currentFOV > r.targetFOV {
-			r.currentFOV = r.targetFOV
+		// Set target FOV based on sprint state and actual horizontal movement
+		// Only increase FOV if sprinting AND moving horizontally above a small threshold
+		horizontalSpeed := float32(math.Hypot(float64(p.Velocity[0]), float64(p.Velocity[2])))
+		isActivelySprinting := p.IsSprinting && horizontalSpeed > 0.01
+		if isActivelySprinting {
+			r.targetFOV = sprintFOV
+		} else {
+			r.targetFOV = normalFOV
 		}
-	} else if r.currentFOV > r.targetFOV {
-		// Decrease current FOV but don't go below target
-		r.currentFOV -= step
+
+		// Smooth interpolation between current and target FOV
+		// Adjust this value to control the speed of the transition
+		transitionSpeed := float32(100.0)
+
+		// Calculate the interpolation step based on delta time
+		step := float32(dt) * transitionSpeed
+
+		// Smoothly interpolate towards the target FOV
 		if r.currentFOV < r.targetFOV {
-			r.currentFOV = r.targetFOV
+			// Increase current FOV but don't exceed target
+			r.currentFOV += step
+			if r.currentFOV > r.targetFOV {
+				r.currentFOV = r.targetFOV
+			}
+		} else if r.currentFOV > r.targetFOV {
+			// Decrease current FOV but don't go below target
+			r.currentFOV -= step
+			if r.currentFOV < r.targetFOV {
+				r.currentFOV = r.targetFOV
+			}
 		}
-	}
 
-	// Apply the interpolated FOV
-	r.camera.FOV = r.currentFOV
+		// Apply the interpolated FOV
+		r.camera.FOV = r.currentFOV
+	}()
 
 	// Get view and projection matrices
-	view := p.GetViewMatrix()
-	projection := r.camera.GetProjectionMatrix()
+	var view, projection mgl32.Mat4
+	func() {
+		defer profiling.Track("renderer.computeMatrices")()
+		view = p.GetViewMatrix()
+		projection = r.camera.GetProjectionMatrix()
+	}()
+
+	// Reset profiling counters for this frame
+	r.resetFrameCounters()
 
 	// Render blocks
 	if player.WireframeMode {
@@ -388,13 +454,159 @@ func (r *Renderer) Render(w *world.World, p *player.Player, dt float64) {
 	// Render player position (HUD)
 	func() { defer profiling.Track("renderer.renderPlayerPos")(); r.renderPlayerPosition(p) }()
 
-	// Render profiling information (HUD)
-	func() { defer profiling.Track("renderer.renderProfiling")(); r.renderProfilingInfo() }()
+	// HUD is rendered from main after frame profiling is finalized
+
+	// End frame profiling
+	r.endFrameProfiling()
+}
+
+// startFrameProfiling initializes profiling for a new frame
+func (r *Renderer) startFrameProfiling() {
+	r.profilingStats.frameStartTime = time.Now()
+}
+
+// endFrameProfiling finalizes profiling for the current frame
+func (r *Renderer) endFrameProfiling() {
+	r.profilingStats.frameEndTime = time.Now()
+	r.profilingStats.frameDuration = r.profilingStats.frameEndTime.Sub(r.profilingStats.frameStartTime)
+
+	// Update frame time history (keep last 60 frames for averaging)
+	if len(r.profilingStats.frameTimeHistory) >= 60 {
+		r.profilingStats.frameTimeHistory = r.profilingStats.frameTimeHistory[1:]
+	}
+	r.profilingStats.frameTimeHistory = append(r.profilingStats.frameTimeHistory, r.profilingStats.frameDuration)
+
+	// Calculate statistics
+	r.calculateFrameTimeStats()
+
+	// Update GPU memory usage
+	r.updateGPUMemoryUsage()
+
+	// Store last frame duration for next frame
+	r.profilingStats.lastFrameDuration = r.profilingStats.frameDuration
+
+	// Unaccounted is computed at HUD time from renderer-local tracked buckets
+}
+
+// resetFrameCounters resets per-frame counters
+func (r *Renderer) resetFrameCounters() {
+	r.profilingStats.totalDrawCalls = 0
+	r.profilingStats.totalVertices = 0
+	r.profilingStats.totalTriangles = 0
+	r.profilingStats.visibleChunks = 0
+	r.profilingStats.culledChunks = 0
+	r.profilingStats.meshedChunks = 0
+	r.profilingStats.frustumCullTime = 0
+	r.profilingStats.meshingTime = 0
+	r.profilingStats.shaderBindTime = 0
+	r.profilingStats.vaoBindTime = 0
+}
+
+// calculateFrameTimeStats calculates frame time statistics
+func (r *Renderer) calculateFrameTimeStats() {
+	if len(r.profilingStats.frameTimeHistory) == 0 {
+		return
+	}
+
+	var total time.Duration
+	r.profilingStats.maxFrameTime = 0
+	r.profilingStats.minFrameTime = r.profilingStats.frameTimeHistory[0]
+
+	for _, duration := range r.profilingStats.frameTimeHistory {
+		total += duration
+		if duration > r.profilingStats.maxFrameTime {
+			r.profilingStats.maxFrameTime = duration
+		}
+		if duration < r.profilingStats.minFrameTime {
+			r.profilingStats.minFrameTime = duration
+		}
+	}
+
+	r.profilingStats.avgFrameTime = total / time.Duration(len(r.profilingStats.frameTimeHistory))
+}
+
+// updateGPUMemoryUsage queries OpenGL for current memory usage
+func (r *Renderer) updateGPUMemoryUsage() {
+	// Note: These extensions may not be available on all systems
+	// We'll use safe fallbacks if they're not supported
+
+	// Try to get GPU memory info (NVidia)
+	if gl.GetString(gl.EXTENSIONS) != nil {
+		extensions := gl.GoStr(gl.GetString(gl.EXTENSIONS))
+		if strings.Contains(extensions, "GL_NVX_gpu_memory_info") {
+			var totalMemory int32
+			gl.GetIntegerv(0x9048, &totalMemory)                        // GL_GPU_MEMORY_INFO_TOTAL_AVAILABLE_MEMORY_NVX
+			r.profilingStats.gpuMemoryUsage = int64(totalMemory) * 1024 // Convert KB to bytes
+		}
+	}
+
+	// For now, we'll estimate based on our buffers and textures
+	r.profilingStats.bufferMemoryUsage = r.estimateBufferMemoryUsage()
+	r.profilingStats.textureMemoryUsage = r.estimateTextureMemoryUsage()
+}
+
+// estimateBufferMemoryUsage estimates memory used by OpenGL buffers
+func (r *Renderer) estimateBufferMemoryUsage() int64 {
+	var total int64
+
+	// Estimate chunk mesh buffers
+	for _, mesh := range r.chunkMeshes {
+		if mesh != nil && mesh.vertexCount > 0 {
+			// Each vertex has 6 floats (pos + normal) * 4 bytes per float
+			total += int64(mesh.vertexCount) * 6 * 4
+		}
+	}
+
+	// Add static buffers
+	total += int64(len(world.CubeVertices)) * 4
+	total += int64(len(world.CubeWireframeVertices)) * 4
+	total += int64(len(CrosshairVertices)) * 4
+	total += int64(len(DirectionVertices)) * 4
+
+	return total
+}
+
+// estimateTextureMemoryUsage estimates memory used by textures
+func (r *Renderer) estimateTextureMemoryUsage() int64 {
+	var total int64
+
+	// Font atlas texture
+	if r.fontAtlas != nil {
+		// Estimate based on atlas dimensions
+		total += int64(r.fontAtlas.AtlasW * r.fontAtlas.AtlasH * 4) // RGBA
+	}
+
+	return total
+}
+
+// trackDrawCall increments draw call counter and tracks vertex count
+func (r *Renderer) trackDrawCall(vertexCount int) {
+	r.profilingStats.totalDrawCalls++
+	r.profilingStats.totalVertices += vertexCount
+	r.profilingStats.totalTriangles += vertexCount / 3
+}
+
+// trackShaderBind tracks shader binding time
+func (r *Renderer) trackShaderBind() func() {
+	start := time.Now()
+	return func() {
+		r.profilingStats.shaderBindTime += time.Since(start)
+	}
+}
+
+// trackVAOBind tracks VAO binding time
+func (r *Renderer) trackVAOBind() func() {
+	start := time.Now()
+	return func() {
+		r.profilingStats.vaoBindTime += time.Since(start)
+	}
 }
 
 func (r *Renderer) renderBlocks(w *world.World, p *player.Player, view, projection mgl32.Mat4) {
-	defer profiling.Track("renderer.renderBlocks.total")()
+	// Track shader binding time (only the Use() call)
+	sbStart := time.Now()
 	r.mainShader.Use()
+	r.profilingStats.shaderBindTime += time.Since(sbStart)
 
 	r.mainShader.SetMatrix4("proj", &projection[0])
 	r.mainShader.SetMatrix4("view", &view[0])
@@ -423,6 +635,7 @@ func (r *Renderer) renderBlocks(w *world.World, p *player.Player, view, projecti
 	// Draw greedy-meshed chunks that intersect the camera frustum
 	all := w.GetAllChunks()
 	clip := projection.Mul4(view)
+	planes := extractFrustumPlanes(clip)
 
 	nearRadiusChunks := 12
 	// Per-frame build budgets to avoid long stalls on first frames
@@ -434,15 +647,23 @@ func (r *Renderer) renderBlocks(w *world.World, p *player.Player, view, projecti
 	pcx := px / world.ChunkSizeX
 	pcz := pz / world.ChunkSizeZ
 
+	// Track frustum culling time
+	frustumStart := time.Now()
+
 	// Collect visible chunks and sort by distance from player first
 	visible := make([]world.ChunkWithCoord, 0, len(all))
 	for _, cc := range all {
 		coord := cc.Coord
 		min, max := r.computeChunkAABB(coord)
-		if r.aabbIntersectsFrustum(min, max, clip) {
+		if aabbIntersectsFrustumPlanes(min, max, planes) {
 			visible = append(visible, cc)
 		}
 	}
+
+	// Update frustum culling statistics
+	r.profilingStats.frustumCullTime = time.Since(frustumStart)
+	r.profilingStats.visibleChunks = len(visible)
+	r.profilingStats.culledChunks = len(all) - len(visible)
 	sort.Slice(visible, func(i, j int) bool {
 		diX := visible[i].Coord.X - pcx
 		diZ := visible[i].Coord.Z - pcz
@@ -496,9 +717,112 @@ func (r *Renderer) renderBlocks(w *world.World, p *player.Player, view, projecti
 		if mesh == nil || mesh.vertexCount == 0 {
 			continue
 		}
+
+		// Track VAO binding time (only the BindVertexArray call)
+		vbStart := time.Now()
 		gl.BindVertexArray(mesh.vao)
+		r.profilingStats.vaoBindTime += time.Since(vbStart)
+
+		// Track draw call and vertices
+		r.trackDrawCall(int(mesh.vertexCount))
 		gl.DrawArrays(gl.TRIANGLES, 0, mesh.vertexCount)
 	}
+}
+
+// plane represents a normalized frustum plane ax + by + cz + d = 0
+type plane struct {
+	a, b, c, d float32
+}
+
+// extractFrustumPlanes builds six planes from the combined projection*view matrix.
+// Planes are returned in order: left, right, bottom, top, near, far.
+func extractFrustumPlanes(clip mgl32.Mat4) [6]plane {
+	// Matrix is in column-major order in mgl32
+	m00, m01, m02, m03 := clip[0], clip[4], clip[8], clip[12]
+	m10, m11, m12, m13 := clip[1], clip[5], clip[9], clip[13]
+	m20, m21, m22, m23 := clip[2], clip[6], clip[10], clip[14]
+	m30, m31, m32, m33 := clip[3], clip[7], clip[11], clip[15]
+
+	pl := [6]plane{}
+	// Left  = m3 + m0
+	pl[0] = normalizePlane(plane{m30 + m00, m31 + m01, m32 + m02, m33 + m03})
+	// Right = m3 - m0
+	pl[1] = normalizePlane(plane{m30 - m00, m31 - m01, m32 - m02, m33 - m03})
+	// Bottom = m3 + m1
+	pl[2] = normalizePlane(plane{m30 + m10, m31 + m11, m32 + m12, m33 + m13})
+	// Top = m3 - m1
+	pl[3] = normalizePlane(plane{m30 - m10, m31 - m11, m32 - m12, m33 - m13})
+	// Near = m3 + m2
+	pl[4] = normalizePlane(plane{m30 + m20, m31 + m21, m32 + m22, m33 + m23})
+	// Far = m3 - m2
+	pl[5] = normalizePlane(plane{m30 - m20, m31 - m21, m32 - m22, m33 - m23})
+	return pl
+}
+
+func normalizePlane(p plane) plane {
+	len := float32(math.Sqrt(float64(p.a*p.a + p.b*p.b + p.c*p.c)))
+	if len == 0 {
+		return p
+	}
+	return plane{p.a / len, p.b / len, p.c / len, p.d / len}
+}
+
+// aabbIntersectsFrustumPlanes tests AABB against precomputed planes.
+func aabbIntersectsFrustumPlanes(min, max mgl32.Vec3, planes [6]plane) bool {
+	for i := 0; i < 6; i++ {
+		p := planes[i]
+		// Select the positive vertex for this plane normal
+		px := max.X()
+		if p.a < 0 {
+			px = min.X()
+		}
+		py := max.Y()
+		if p.b < 0 {
+			py = min.Y()
+		}
+		pz := max.Z()
+		if p.c < 0 {
+			pz = min.Z()
+		}
+		// If positive vertex is outside, AABB is outside
+		if p.a*px+p.b*py+p.c*pz+p.d < 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// PruneMeshesByWorld removes cached meshes that are not in the world anymore or beyond a radius from center.
+// Returns number of meshes freed.
+func (r *Renderer) PruneMeshesByWorld(w *world.World, center mgl32.Vec3, radiusChunks int) int {
+	retain := make(map[world.ChunkCoord]struct{})
+	all := w.GetAllChunks()
+	for _, cc := range all {
+		retain[cc.Coord] = struct{}{}
+	}
+	cx := int(math.Floor(float64(center[0]))) / world.ChunkSizeX
+	cz := int(math.Floor(float64(center[2]))) / world.ChunkSizeZ
+
+	freed := 0
+	for coord, m := range r.chunkMeshes {
+		// Keep if present and within radius
+		_, present := retain[coord]
+		dx := coord.X - cx
+		dz := coord.Z - cz
+		if !present || dx*dx+dz*dz > radiusChunks*radiusChunks {
+			if m != nil {
+				if m.vbo != 0 {
+					gl.DeleteBuffers(1, &m.vbo)
+				}
+				if m.vao != 0 {
+					gl.DeleteVertexArrays(1, &m.vao)
+				}
+			}
+			delete(r.chunkMeshes, coord)
+			freed++
+		}
+	}
+	return freed
 }
 
 func (r *Renderer) ensureChunkMesh(w *world.World, coord world.ChunkCoord, ch *world.Chunk) *chunkMesh {
@@ -508,7 +832,11 @@ func (r *Renderer) ensureChunkMesh(w *world.World, coord world.ChunkCoord, ch *w
 	existing := r.chunkMeshes[coord]
 	// Rebuild if missing or dirty
 	if existing == nil || ch.IsDirty() {
+		// Track meshing time
+		meshingStart := time.Now()
 		verts := meshing.BuildGreedyMeshForChunk(w, ch)
+		r.profilingStats.meshingTime += time.Since(meshingStart)
+		r.profilingStats.meshedChunks++
 		// Create or update GL resources
 		if existing == nil {
 			existing = &chunkMesh{}
@@ -526,12 +854,12 @@ func (r *Renderer) ensureChunkMesh(w *world.World, coord world.ChunkCoord, ch *w
 			gl.BindBuffer(gl.ARRAY_BUFFER, existing.vbo)
 		}
 		if len(verts) > 0 {
-			gl.BufferData(gl.ARRAY_BUFFER, len(verts)*4, gl.Ptr(verts), gl.DYNAMIC_DRAW)
+			gl.BufferData(gl.ARRAY_BUFFER, len(verts)*4, gl.Ptr(verts), gl.STATIC_DRAW)
 			existing.vertexCount = int32(len(verts) / 6)
 		} else {
 			existing.vertexCount = 0
 			// Still upload zero to keep state valid
-			gl.BufferData(gl.ARRAY_BUFFER, 0, nil, gl.DYNAMIC_DRAW)
+			gl.BufferData(gl.ARRAY_BUFFER, 0, nil, gl.STATIC_DRAW)
 		}
 		r.chunkMeshes[coord] = existing
 		ch.SetClean()
@@ -540,7 +868,10 @@ func (r *Renderer) ensureChunkMesh(w *world.World, coord world.ChunkCoord, ch *w
 }
 
 func (r *Renderer) renderHighlightedBlock(blockPos [3]int, view, projection mgl32.Mat4) {
+	// Track shader binding time (only the Use() call)
+	sbStart := time.Now()
 	r.wireframeShader.Use()
+	r.profilingStats.shaderBindTime += time.Since(sbStart)
 
 	r.wireframeShader.SetMatrix4("proj", &projection[0])
 	r.wireframeShader.SetMatrix4("view", &view[0])
@@ -555,20 +886,35 @@ func (r *Renderer) renderHighlightedBlock(blockPos [3]int, view, projection mgl3
 	r.wireframeShader.SetMatrix4("model", &model[0])
 	r.wireframeShader.SetVector3("color", 0.0, 0.0, 0.0) // Black outline
 
+	// Track VAO binding time (only the BindVertexArray call)
+	vbStart := time.Now()
 	gl.BindVertexArray(r.wireframeVAO)
+	r.profilingStats.vaoBindTime += time.Since(vbStart)
 	gl.LineWidth(2.0)
+
+	// Track draw call
+	r.trackDrawCall(len(world.CubeWireframeVertices))
 	gl.DrawArrays(gl.LINES, 0, int32(len(world.CubeWireframeVertices)/3))
 }
 
 func (r *Renderer) renderCrosshair() {
+	// Track shader binding time (only the Use() call)
+	sbStart := time.Now()
 	r.crosshairShader.Use()
+	r.profilingStats.shaderBindTime += time.Since(sbStart)
 
 	aspectRatio := r.camera.AspectRatio
 
 	r.crosshairShader.SetFloat("aspectRatio", aspectRatio)
 
+	// Track VAO binding time (only the BindVertexArray call)
+	vbStart := time.Now()
 	gl.BindVertexArray(r.crosshairVAO)
+	r.profilingStats.vaoBindTime += time.Since(vbStart)
 	gl.LineWidth(2.0)
+
+	// Track draw call
+	r.trackDrawCall(4)
 	gl.DrawArrays(gl.LINES, 0, 4)
 }
 
@@ -594,13 +940,22 @@ func (r *Renderer) drawDirectionLetter(letter string) {
 	gl.BufferData(gl.ARRAY_BUFFER, len(vertices)*4, gl.Ptr(vertices), gl.DYNAMIC_DRAW)
 
 	// Draw the letter
+	// Track VAO binding time (only the BindVertexArray call)
+	vbStart := time.Now()
 	gl.BindVertexArray(r.letterVAO)
+	r.profilingStats.vaoBindTime += time.Since(vbStart)
 	gl.LineWidth(2.0)
+
+	// Track draw call
+	r.trackDrawCall(len(vertices))
 	gl.DrawArrays(gl.LINES, 0, int32(len(vertices)/2))
 }
 
 func (r *Renderer) renderDirection(p *player.Player) {
+	// Track shader binding time (only the Use() call)
+	sbStart := time.Now()
 	r.directionShader.Use()
+	r.profilingStats.shaderBindTime += time.Since(sbStart)
 
 	aspectRatio := r.camera.AspectRatio
 	r.directionShader.SetFloat("aspectRatio", aspectRatio)
@@ -618,9 +973,16 @@ func (r *Renderer) renderDirection(p *player.Player) {
 	r.directionShader.SetFloat("rotation", yawRadians)
 
 	// Draw the direction indicator
+	// Track VAO binding time (only the BindVertexArray call)
+	vbStart := time.Now()
 	gl.BindVertexArray(r.directionVAO)
+	r.profilingStats.vaoBindTime += time.Since(vbStart)
 	gl.LineWidth(2.0)
+
+	// Track draw calls
+	r.trackDrawCall(4)                // Arrow body
 	gl.DrawArrays(gl.LINE_LOOP, 0, 4) // Draw arrow body (rectangle)
+	r.trackDrawCall(3)                // Arrow head
 	gl.DrawArrays(gl.LINE_LOOP, 4, 3) // Draw arrow head (triangle)
 
 	// Determine cardinal direction based on player's yaw
@@ -772,31 +1134,170 @@ func (r *Renderer) aabbIntersectsFrustum(min, max mgl32.Vec3, clip mgl32.Mat4) b
 	return !allOutside
 }
 
+func (r *Renderer) RenderText(text string, x, y float32, size float32, color mgl32.Vec3) {
+	r.fontRenderer.Render(text, x, y, size, color)
+}
+
+// ProfilingSetLastTotalFrameDuration updates the previous frame's total CPU frame duration
+// including render, SwapBuffers, and event polling. Read and written only on the main thread.
+func (r *Renderer) ProfilingSetLastTotalFrameDuration(d time.Duration) {
+	r.profilingStats.lastTotalFrameDuration = d
+}
+
+// ProfilingSetLastUpdateDuration sets the previous frame's update duration
+func (r *Renderer) ProfilingSetLastUpdateDuration(d time.Duration) {
+	r.profilingStats.lastUpdateDuration = d
+}
+
+// ProfilingSetBreakdown stores last-frame non-render breakdown values
+func (r *Renderer) ProfilingSetBreakdown(player, world, glfw, hud, prune time.Duration) {
+	r.profilingStats.lastPlayerDuration = player
+	r.profilingStats.lastWorldDuration = world
+	r.profilingStats.lastGlfwDuration = glfw
+	r.profilingStats.lastHudDuration = hud
+	r.profilingStats.lastPruneDuration = prune
+}
+
+// ProfilingSetPhases stores phase durations from the main loop
+func (r *Renderer) ProfilingSetPhases(preRender, swapEvents time.Duration) {
+	r.profilingStats.lastPreRenderDuration = preRender
+	r.profilingStats.lastSwapEventsDuration = swapEvents
+}
+
+// ProfilingSetPhysics stores last-frame physics duration
+func (r *Renderer) ProfilingSetPhysics(physics time.Duration) {
+	r.profilingStats.lastPhysicsDuration = physics
+}
+
 // renderProfilingInfo renders the current profiling information on screen
-func (r *Renderer) renderProfilingInfo() {
-	// Get current profiling data
-	top := profiling.TopN(3)
+func (r *Renderer) RenderProfilingInfo() {
+	defer profiling.Track("renderer.hud")()
+	lines := make([]string, 0, 32)
 
-	// Set text color (white)
-	textColor := mgl32.Vec3{1.0, 1.0, 1.0}
+	// FPS
+	lines = append(lines, fmt.Sprintf("FPS: %d", r.currentFPS))
 
-	// Render FPS and profiling info at top-left corner
-	yPos := float32(60)
+	// Frame timing (renderer-local)
+	tracked := profiling.SumWithPrefix("renderer.")
+	frameMs := float64(r.profilingStats.frameDuration.Microseconds()) / 1000.0
+	trackedMs := float64(tracked.Microseconds()) / 1000.0
+	lines = append(lines, fmt.Sprintf("Frame(render): %.2fms (%.2fms avg) | Tracked(render): %.2fms",
+		frameMs,
+		float64(r.profilingStats.avgFrameTime.Microseconds())/1000.0,
+		trackedMs))
 
-	// Render FPS
-	fpsText := fmt.Sprintf("FPS: %d", r.currentFPS)
-	r.fontRenderer.Render(fpsText, 10, yPos, 0.7, textColor)
-	yPos += 30
+	// Frame(update) from previous frame's main-loop update duration
+	if r.profilingStats.lastUpdateDuration > 0 {
+		updateMs := float64(r.profilingStats.lastUpdateDuration.Microseconds()) / 1000.0
+		lines = append(lines, fmt.Sprintf("Frame(update): %.2fms", updateMs))
+	}
 
-	// Render profiling info if available
-	if top != "" {
-		// Split profiling info into lines for better readability
-		lines := strings.Split(top, ", ")
-		for _, line := range lines {
+	// Previous frame total and overhead
+	if r.profilingStats.lastTotalFrameDuration > 0 {
+		totalMs := float64(r.profilingStats.lastTotalFrameDuration.Microseconds()) / 1000.0
+		overheadMs := totalMs - frameMs
+		if overheadMs < 0 {
+			overheadMs = 0
+		}
+		lines = append(lines, fmt.Sprintf("Frame(total): %.2fms | Overhead(non-render): %.2fms", totalMs, overheadMs))
+
+		// Minimal overhead breakdown
+		playerMs := float64(r.profilingStats.lastPlayerDuration.Microseconds()) / 1000.0
+		worldMs := float64(r.profilingStats.lastWorldDuration.Microseconds()) / 1000.0
+		glfwMs := float64(r.profilingStats.lastGlfwDuration.Microseconds()) / 1000.0
+		hudMs := float64(r.profilingStats.lastHudDuration.Microseconds()) / 1000.0
+		pruneMs := float64(r.profilingStats.lastPruneDuration.Microseconds()) / 1000.0
+		physicsMs := float64(r.profilingStats.lastPhysicsDuration.Microseconds()) / 1000.0
+		otherMs := overheadMs - (playerMs + worldMs + glfwMs + hudMs + pruneMs + physicsMs)
+		if otherMs < 0 {
+			otherMs = 0
+		}
+		lines = append(lines, fmt.Sprintf("Overhead breakdown -> player: %.2fms, world: %.2fms, glfw: %.2fms, hud: %.2fms, prune: %.2fms, physics: %.2fms, other: %.2fms", playerMs, worldMs, glfwMs, hudMs, pruneMs, physicsMs, otherMs))
+
+		// Phase durations (prev)
+		preRenderMs := float64(r.profilingStats.lastPreRenderDuration.Microseconds()) / 1000.0
+		swapEventsMs := float64(r.profilingStats.lastSwapEventsDuration.Microseconds()) / 1000.0
+		lines = append(lines, fmt.Sprintf("Phases -> preRender: %.2fms, swap+events: %.2fms", preRenderMs, swapEventsMs))
+	}
+
+	// Rendering statistics
+	lines = append(lines, fmt.Sprintf("Draw Calls: %d", r.profilingStats.totalDrawCalls))
+	lines = append(lines, fmt.Sprintf("Vertices: %d (%.1fK)", r.profilingStats.totalVertices, float64(r.profilingStats.totalVertices)/1000.0))
+	lines = append(lines, fmt.Sprintf("Triangles: %d (%.1fK)", r.profilingStats.totalTriangles, float64(r.profilingStats.totalTriangles)/1000.0))
+
+	// Chunk statistics
+	lines = append(lines, fmt.Sprintf("Chunks: %d visible, %d culled", r.profilingStats.visibleChunks, r.profilingStats.culledChunks))
+
+	// Meshing stats
+	lines = append(lines, fmt.Sprintf("Meshed (this frame): %d", r.profilingStats.meshedChunks))
+	// Cached mesh count with geometry
+	cached := 0
+	for _, m := range r.chunkMeshes {
+		if m != nil && m.vertexCount > 0 {
+			cached++
+		}
+	}
+	lines = append(lines, fmt.Sprintf("Meshes cached: %d", cached))
+
+	// Detailed renderer breakdown
+	lines = append(lines, fmt.Sprintf("Frustum: %.2fms", float64(r.profilingStats.frustumCullTime.Microseconds())/1000.0))
+	lines = append(lines, fmt.Sprintf("Meshing: %.2fms", float64(r.profilingStats.meshingTime.Microseconds())/1000.0))
+	lines = append(lines, fmt.Sprintf("Shader Bind: %.2fms", float64(r.profilingStats.shaderBindTime.Microseconds())/1000.0))
+	lines = append(lines, fmt.Sprintf("VAO Bind: %.2fms", float64(r.profilingStats.vaoBindTime.Microseconds())/1000.0))
+
+	// Top profiling lines
+	if top := profiling.TopN(10); top != "" {
+		for _, line := range strings.Split(top, ", ") {
 			if line != "" {
-				r.fontRenderer.Render(line, 10, yPos, 0.7, textColor)
-				yPos += 25
+				lines = append(lines, line)
 			}
 		}
 	}
+
+	textColor := mgl32.Vec3{1.0, 1.0, 1.0}
+	startY := float32(60)
+	lineStep := float32(14)
+	r.fontRenderer.RenderLines(lines, 10, startY, lineStep, 0.5, textColor)
+}
+
+// GetProfilingStats returns a copy of the current profiling statistics
+func (r *Renderer) GetProfilingStats() map[string]interface{} {
+	stats := make(map[string]interface{})
+
+	// Frame timing
+	stats["fps"] = r.currentFPS
+	stats["frameDuration"] = r.profilingStats.frameDuration
+	stats["avgFrameTime"] = r.profilingStats.avgFrameTime
+	stats["maxFrameTime"] = r.profilingStats.maxFrameTime
+	stats["minFrameTime"] = r.profilingStats.minFrameTime
+
+	// Rendering statistics
+	stats["drawCalls"] = r.profilingStats.totalDrawCalls
+	stats["vertices"] = r.profilingStats.totalVertices
+	stats["triangles"] = r.profilingStats.totalTriangles
+	stats["visibleChunks"] = r.profilingStats.visibleChunks
+	stats["culledChunks"] = r.profilingStats.culledChunks
+	stats["meshedChunks"] = r.profilingStats.meshedChunks
+
+	// Performance breakdown
+	stats["frustumCullTime"] = r.profilingStats.frustumCullTime
+	stats["meshingTime"] = r.profilingStats.meshingTime
+	stats["shaderBindTime"] = r.profilingStats.shaderBindTime
+	stats["vaoBindTime"] = r.profilingStats.vaoBindTime
+
+	// Memory usage
+	stats["bufferMemory"] = r.profilingStats.bufferMemoryUsage
+	stats["textureMemory"] = r.profilingStats.textureMemoryUsage
+	stats["totalGPUMemory"] = r.profilingStats.gpuMemoryUsage
+
+	return stats
+}
+
+// ResetProfilingStats resets all profiling statistics to zero
+func (r *Renderer) ResetProfilingStats() {
+	r.profilingStats.frameTimeHistory = r.profilingStats.frameTimeHistory[:0]
+	r.profilingStats.maxFrameTime = 0
+	r.profilingStats.minFrameTime = 0
+	r.profilingStats.avgFrameTime = 0
+	r.profilingStats.lastFrameDuration = 0
 }

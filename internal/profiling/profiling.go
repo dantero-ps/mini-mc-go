@@ -46,6 +46,41 @@ func Snapshot() map[string]time.Duration {
 	return out
 }
 
+// Total returns the sum of all tracked durations this frame.
+func Total() time.Duration {
+	ss := Snapshot()
+	var sum time.Duration
+	for _, v := range ss {
+		sum += v
+	}
+	return sum
+}
+
+// SumWithPrefix returns the sum of durations whose names start with any of the given prefixes.
+func SumWithPrefix(prefixes ...string) time.Duration {
+	ss := Snapshot()
+	var sum time.Duration
+	for k, v := range ss {
+		for _, p := range prefixes {
+			if strings.HasPrefix(k, p) {
+				sum += v
+				break
+			}
+		}
+	}
+	return sum
+}
+
+// Add adds an arbitrary duration under the given name to the current frame totals.
+func Add(name string, d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	mu.Lock()
+	frameTotals[name] += d
+	mu.Unlock()
+}
+
 // TopN formats top N durations from the current frame totals.
 // Example: "renderer.Render:4.2ms, meshing.BuildGreedyMeshForChunk:2.1ms"
 func TopN(n int) string {

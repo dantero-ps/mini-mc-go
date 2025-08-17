@@ -32,6 +32,10 @@ type World struct {
 	// Production caps
 	maxJobsPerCall int
 	maxPending     int
+
+	// Cached terrain heights per column (chunkX, chunkZ) -> maxChunkY
+	heightCache   map[[2]int]int
+	heightCacheMu sync.RWMutex
 }
 
 // ChunkCoord is a unique identifier for a chunk based on its position
@@ -54,6 +58,7 @@ func New() *World {
 		lacunarity:     2.0,
 		maxJobsPerCall: 256,
 		maxPending:     8192,
+		heightCache:    make(map[[2]int]int),
 	}
 
 	workers := runtime.NumCPU()
@@ -270,10 +275,23 @@ func (w *World) enqueueColumn(chunkX, chunkZ int) int {
 	}
 	w.pendingMu.Unlock()
 
-	worldX := chunkX*ChunkSizeX + ChunkSizeX/2
-	worldZ := chunkZ*ChunkSizeZ + ChunkSizeZ/2
-	h := w.heightAt(worldX, worldZ)
-	maxChunkY := floorDiv(h, ChunkSizeY)
+	// Use cached column height to avoid repeated noise work
+	key := [2]int{chunkX, chunkZ}
+	w.heightCacheMu.RLock()
+	cached, ok := w.heightCache[key]
+	w.heightCacheMu.RUnlock()
+	maxChunkY := -1
+	if ok {
+		maxChunkY = cached
+	} else {
+		worldX := chunkX*ChunkSizeX + ChunkSizeX/2
+		worldZ := chunkZ*ChunkSizeZ + ChunkSizeZ/2
+		h := w.heightAt(worldX, worldZ)
+		maxChunkY = floorDiv(h, ChunkSizeY)
+		w.heightCacheMu.Lock()
+		w.heightCache[key] = maxChunkY
+		w.heightCacheMu.Unlock()
+	}
 	if maxChunkY < 0 {
 		maxChunkY = 0
 	}
@@ -285,6 +303,39 @@ func (w *World) enqueueColumn(chunkX, chunkZ int) int {
 		}
 	}
 	return enq
+}
+
+// EvictFarChunks removes chunks outside the given radius (in chunks) from the center (world x,z).
+// It also clears related height cache entries. Returns number of evicted chunks.
+func (w *World) EvictFarChunks(x, z float32, radius int) int {
+	defer profiling.Track("world.EvictFarChunks")()
+	cx := floorDiv(int(math.Floor(float64(x))), ChunkSizeX)
+	cz := floorDiv(int(math.Floor(float64(z))), ChunkSizeZ)
+
+	removed := 0
+	w.mu.Lock()
+	for coord := range w.chunks {
+		dx := coord.X - cx
+		dz := coord.Z - cz
+		if dx*dx+dz*dz > radius*radius {
+			delete(w.chunks, coord)
+			removed++
+		}
+	}
+	w.mu.Unlock()
+
+	// Prune height cache entries outside radius as well
+	w.heightCacheMu.Lock()
+	for key := range w.heightCache {
+		dx := key[0] - cx
+		dz := key[1] - cz
+		if dx*dx+dz*dz > radius*radius {
+			delete(w.heightCache, key)
+		}
+	}
+	w.heightCacheMu.Unlock()
+
+	return removed
 }
 
 // requestChunkLimited respects pending cap and returns true if enqueued
