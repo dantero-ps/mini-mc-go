@@ -1,0 +1,82 @@
+############################
+# Go / Build artifacts
+############################
+/bin/
+/build/
+/dist/
+/out/
+
+# Go outputs
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.a
+*.o
+
+# Coverage / profiling / traces
+coverage*
+*.coverprofile
+*.pprof
+*.prof
+cpu.prof
+mem.prof
+block.prof
+mutex.prof
+trace.out
+*.out
+
+# Logs and runtime
+*.log
+logs/
+tmp/
+temp/
+*.pid
+
+# Go tooling caches (if created in repo)
+.cache/
+
+############################
+# OS files
+############################
+.DS_Store
+._*
+.AppleDouble
+.LSOverride
+Icon?
+.Spotlight-V100/
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+############################
+# Editors/IDEs
+############################
+.vscode/
+.idea/
+.fleet/
+*.iml
+*.code-workspace
+.history/
+*.swp
+*.swo
+*~
+
+############################
+# Env / secrets (keep examples)
+############################
+.env
+.env.*
+!*.example
+
+############################
+# Project-specific
+############################
+# Root binary produced by `go build ./cmd/mini-mc`
+/mini-mc
+
+# Keep assets in version control
+!assets/
+
