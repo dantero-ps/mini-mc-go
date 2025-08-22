@@ -55,11 +55,14 @@ func main() {
 	gamePlayer.Position[1] = groundY
 	gamePlayer.OnGround = true
 
+	// Pause state
+	paused := false
+
 	// Setup input handlers
-	setupInputHandlers(window, gamePlayer, gameWorld)
+	setupInputHandlers(window, gamePlayer, gameWorld, &paused)
 
 	// Main game loop
-	runGameLoop(window, renderer, gamePlayer, gameWorld)
+	runGameLoop(window, renderer, gamePlayer, gameWorld, &paused)
 }
 
 func setupWindow() (*glfw.Window, error) {
@@ -80,27 +83,44 @@ func setupWindow() (*glfw.Window, error) {
 	return window, nil
 }
 
-func setupInputHandlers(window *glfw.Window, p *player.Player, w *world.World) {
+func setupInputHandlers(window *glfw.Window, p *player.Player, gameWorld *world.World, paused *bool) {
 	// Mouse position callback
-	window.SetCursorPosCallback(p.HandleMouseMovement)
+	window.SetCursorPosCallback(func(w *glfw.Window, xpos, ypos float64) {
+		if !*paused {
+			p.HandleMouseMovement(w, xpos, ypos)
+		}
+	})
 
-	// Mouse button callback
+	// Mouse button callback (game interactions disabled when paused)
 	window.SetMouseButtonCallback(func(w *glfw.Window, button glfw.MouseButton, action glfw.Action, mods glfw.ModifierKey) {
-		p.HandleMouseButton(button, action, mods)
+		if !*paused {
+			p.HandleMouseButton(button, action, mods)
+		}
 	})
 
 	window.SetKeyCallback(func(w *glfw.Window, key glfw.Key, scancode int, action glfw.Action, mods glfw.ModifierKey) {
 		if key == glfw.KeyF && action == glfw.Press {
 			p.ToggleWireframeMode()
 		}
+		if key == glfw.KeyEscape && action == glfw.Press {
+			*paused = !*paused
+			if *paused {
+				w.SetInputMode(glfw.CursorMode, glfw.CursorNormal)
+			} else {
+				w.SetInputMode(glfw.CursorMode, glfw.CursorDisabled)
+				p.FirstMouse = true
+			}
+		}
 	})
 }
 
-func runGameLoop(window *glfw.Window, renderer *graphics.Renderer, p *player.Player, w *world.World) {
+func runGameLoop(window *glfw.Window, renderer *graphics.Renderer, p *player.Player, w *world.World, paused *bool) {
 	frames := 0
 	lastFPSCheckTime := time.Now()
 	lastTime := time.Now()
 	lastPrune := time.Now()
+	mouseWasDown := false
+	var btnX, btnY, btnW, btnH float32
 
 	for !window.ShouldClose() {
 		profiling.ResetFrame()
@@ -108,9 +128,12 @@ func runGameLoop(window *glfw.Window, renderer *graphics.Renderer, p *player.Pla
 		dt := now.Sub(lastTime).Seconds()
 		lastTime = now
 
-		updateStart := time.Now()
-		func() { defer profiling.Track("player.Update")(); p.Update(dt, window) }()
-		updateDur := time.Since(updateStart)
+		var updateDur time.Duration
+		if !*paused {
+			updateStart := time.Now()
+			func() { defer profiling.Track("player.Update")(); p.Update(dt, window) }()
+			updateDur = time.Since(updateStart)
+		}
 
 		// Measure non-render buckets for HUD breakdown
 		playerDur := profiling.SumWithPrefix("player.")
@@ -118,15 +141,16 @@ func runGameLoop(window *glfw.Window, renderer *graphics.Renderer, p *player.Pla
 		glfwDur := profiling.SumWithPrefix("glfw.")
 		physicsDur := profiling.SumWithPrefix("physics.")
 
-		// Enqueue async streaming around player every frame (idempotent due to pending dedup)
-		func() {
-			defer profiling.Track("world.StreamChunksAroundAsync")()
-			// Lower initial pressure; far chunks will fill over time
-			w.StreamChunksAroundAsync(p.Position[0], p.Position[2], 24)
-		}()
+		// Enqueue async streaming when not paused
+		if !*paused {
+			func() {
+				defer profiling.Track("world.StreamChunksAroundAsync")()
+				w.StreamChunksAroundAsync(p.Position[0], p.Position[2], 24)
+			}()
+		}
 
 		// Periodically evict far chunks and prune renderer meshes
-		if time.Since(lastPrune) > 750*time.Millisecond {
+		if !*paused && time.Since(lastPrune) > 750*time.Millisecond {
 			func() {
 				defer profiling.Track("world.EvictFarChunks")()
 				w.EvictFarChunks(p.Position[0], p.Position[2], 40)
@@ -147,6 +171,41 @@ func runGameLoop(window *glfw.Window, renderer *graphics.Renderer, p *player.Pla
 		}
 
 		renderer.RenderProfilingInfo()
+
+		// Pause overlay and Resume button
+		if *paused {
+			// Dim background
+			renderer.DrawFilledRect(0, 0, float32(graphics.WinWidth), float32(graphics.WinHeight), mgl32.Vec3{0, 0, 0}, 0.45)
+			label := "Devam Et"
+			scale := float32(1.0)
+			tw, th := renderer.MeasureText(label, scale)
+			paddingX := float32(24)
+			paddingY := float32(14)
+			btnW = tw + paddingX*2
+			btnH = th + paddingY*2
+			btnX = (float32(graphics.WinWidth) - btnW) / 2
+			btnY = (float32(graphics.WinHeight) - btnH) / 2
+
+			cx, cy := window.GetCursorPos()
+			hover := float32(cx) >= btnX && float32(cx) <= btnX+btnW && float32(cy) >= btnY && float32(cy) <= btnY+btnH
+			base := mgl32.Vec3{0.20, 0.20, 0.20}
+			if hover {
+				base = mgl32.Vec3{0.30, 0.30, 0.30}
+			}
+			renderer.DrawFilledRect(btnX, btnY, btnW, btnH, base, 0.85)
+			// Text
+			tx := btnX + paddingX
+			ty := btnY + paddingY + th
+			renderer.RenderText(label, tx, ty, scale, mgl32.Vec3{1, 1, 1})
+
+			mouseDown := window.GetMouseButton(glfw.MouseButtonLeft) == glfw.Press
+			if mouseDown && !mouseWasDown && hover {
+				*paused = false
+				window.SetInputMode(glfw.CursorMode, glfw.CursorDisabled)
+				p.FirstMouse = true
+			}
+			mouseWasDown = mouseDown
+		}
 
 		// Present and pump events
 		func() { defer profiling.Track("glfw.SwapBuffers")(); window.SwapBuffers() }()

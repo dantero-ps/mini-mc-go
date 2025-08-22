@@ -7,11 +7,11 @@ import (
 const (
 	// Chunk dimensions
 	ChunkSizeX = 16
-	ChunkSizeY = 16
+	ChunkSizeY = 256
 	ChunkSizeZ = 16
 )
 
-// Chunk represents a 16x16x16 section of the world
+// Chunk represents a 16x256x16 section of the world
 type Chunk struct {
 	// Position of the chunk in chunk coordinates (not block coordinates)
 	X, Y, Z int

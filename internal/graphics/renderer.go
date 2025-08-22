@@ -8,7 +8,6 @@ import (
 	"mini-mc/internal/profiling"
 	"mini-mc/internal/world"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -126,6 +125,19 @@ type Renderer struct {
 	letterVAO    uint32
 	letterVBO    uint32
 
+	// Global atlas VBO/VAO for static chunk geometry (pos+normal interleaved)
+	atlasVAO           uint32
+	atlasVBO           uint32
+	atlasCapacityBytes int
+	atlasTotalFloats   int
+	firstsScratch      []int32
+	countsScratch      []int32
+
+	// UI rendering (rectangles)
+	uiShader *Shader
+	uiVAO    uint32
+	uiVBO    uint32
+
 	// Font rendering
 	fontAtlas    *FontAtlasInfo
 	fontRenderer *FontRenderer
@@ -135,6 +147,12 @@ type Renderer struct {
 
 	// Frustum culling margin in blocks (inflates AABBs before testing)
 	frustumMargin float32
+
+	// Frustum plane caching to avoid recalculating when camera hasn't moved much
+	cachedFrustumPlanes [6]plane
+	cachedViewMatrix    mgl32.Mat4
+	cachedProjMatrix    mgl32.Mat4
+	frustumCacheValid   bool
 
 	// FPS tracking
 	frames       int
@@ -192,12 +210,196 @@ type Renderer struct {
 		lastPreRenderDuration  time.Duration // from frame start to Render() call
 		lastSwapEventsDuration time.Duration // SwapBuffers + PollEvents actual time
 	}
+
+	// Scratch buffers to avoid per-frame allocs
+	visibleScratch []world.ChunkWithCoord
+
+	// Per-column (XZ) combined meshes to reduce draw/cull granularity
+	columnMeshes map[[2]int]*columnMesh
+}
+
+// Internal atlas helpers
+// appendOrUpdateAtlas appends a new chunk's vertices into the atlas or updates an existing region.
+
+func (r *Renderer) ensureAtlasCapacity(requiredBytes int) {
+	if requiredBytes <= r.atlasCapacityBytes {
+		return
+	}
+	capBytes := r.atlasCapacityBytes
+	if capBytes == 0 {
+		capBytes = 1 << 22 // 4MB
+	}
+	for capBytes < requiredBytes {
+		capBytes *= 2
+	}
+	// Allocate new buffer; we'll rebuild contents from CPU copies (portable)
+	var newVBO uint32
+	gl.GenBuffers(1, &newVBO)
+	gl.BindBuffer(gl.ARRAY_BUFFER, newVBO)
+	gl.BufferData(gl.ARRAY_BUFFER, capBytes, nil, gl.DYNAMIC_DRAW)
+
+	// Swap buffers: rebind VAO attributes to the new VBO
+	oldVBO := r.atlasVBO
+	r.atlasVBO = newVBO
+	r.atlasCapacityBytes = capBytes
+
+	gl.BindVertexArray(r.atlasVAO)
+	gl.BindBuffer(gl.ARRAY_BUFFER, r.atlasVBO)
+	gl.EnableVertexAttribArray(0)
+	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, 6*4, gl.PtrOffset(0))
+	gl.EnableVertexAttribArray(1)
+	gl.VertexAttribPointer(1, 3, gl.FLOAT, false, 6*4, gl.PtrOffset(3*4))
+	gl.BindVertexArray(0)
+	gl.BindBuffer(gl.ARRAY_BUFFER, 0)
+
+	// Rebuild atlas from CPU-side chunk meshes (avoids CopyBufferSubData)
+	r.rebuildAtlasFromCPU()
+
+	// All column meshes' atlas offsets are now invalid; mark for rebuild
+	for _, col := range r.columnMeshes {
+		if col == nil {
+			continue
+		}
+		col.firstFloat = -1
+		col.dirty = true
+	}
+
+	if oldVBO != 0 {
+		gl.DeleteBuffers(1, &oldVBO)
+	}
+}
+
+// rebuildAtlasFromCPU compacts and re-uploads all available chunk meshes into the atlas VBO.
+func (r *Renderer) rebuildAtlasFromCPU() {
+	if r.atlasVBO == 0 {
+		return
+	}
+	// Reset offset
+	r.atlasTotalFloats = 0
+	gl.BindBuffer(gl.ARRAY_BUFFER, r.atlasVBO)
+	for coord, m := range r.chunkMeshes {
+		_ = coord
+		if m == nil || m.vertexCount == 0 || len(m.cpuVerts) == 0 {
+			m.firstFloat = -1
+			continue
+		}
+		bytes := len(m.cpuVerts) * 4
+		offsetBytes := r.atlasTotalFloats * 4
+		gl.BufferSubData(gl.ARRAY_BUFFER, offsetBytes, bytes, gl.Ptr(m.cpuVerts))
+		m.firstFloat = r.atlasTotalFloats
+		r.atlasTotalFloats += len(m.cpuVerts)
+	}
+	gl.BindBuffer(gl.ARRAY_BUFFER, 0)
+}
+
+func (r *Renderer) appendOrUpdateAtlas(coord world.ChunkCoord, m *chunkMesh) {
+	if m == nil {
+		return
+	}
+	verts := m.cpuVerts
+	if len(verts) == 0 {
+		m.firstFloat = -1
+		return
+	}
+	bytes := len(verts) * 4
+	if m.firstFloat < 0 && m.vertexCount == int32(len(verts)/6) {
+		// Append new
+		requiredBytes := (r.atlasTotalFloats + len(verts)) * 4
+		r.ensureAtlasCapacity(requiredBytes)
+		offsetBytes := r.atlasTotalFloats * 4
+		gl.BindBuffer(gl.ARRAY_BUFFER, r.atlasVBO)
+		gl.BufferSubData(gl.ARRAY_BUFFER, offsetBytes, bytes, gl.Ptr(verts))
+		gl.BindBuffer(gl.ARRAY_BUFFER, 0)
+		m.firstFloat = r.atlasTotalFloats
+		r.atlasTotalFloats += len(verts)
+		return
+	}
+	// Update existing region (size may change; simple strategy: if different, re-append)
+	oldCountFloats := int(m.vertexCount) * 6
+	if m.firstFloat >= 0 && oldCountFloats == len(verts) {
+		gl.BindBuffer(gl.ARRAY_BUFFER, r.atlasVBO)
+		gl.BufferSubData(gl.ARRAY_BUFFER, m.firstFloat*4, bytes, gl.Ptr(verts))
+		gl.BindBuffer(gl.ARRAY_BUFFER, 0)
+		return
+	}
+	// Size changed: append new region and invalidate old by leaving a hole (simple, avoids compaction for now)
+	requiredBytes := (r.atlasTotalFloats + len(verts)) * 4
+	r.ensureAtlasCapacity(requiredBytes)
+	offsetBytes := r.atlasTotalFloats * 4
+	gl.BindBuffer(gl.ARRAY_BUFFER, r.atlasVBO)
+	gl.BufferSubData(gl.ARRAY_BUFFER, offsetBytes, bytes, gl.Ptr(verts))
+	gl.BindBuffer(gl.ARRAY_BUFFER, 0)
+	m.firstFloat = r.atlasTotalFloats
+	r.atlasTotalFloats += len(verts)
 }
 
 type chunkMesh struct {
-	vao         uint32
-	vbo         uint32
+	vao         uint32 // legacy per-chunk VAO (kept for now)
+	vbo         uint32 // legacy per-chunk VBO (kept for cleanup)
 	vertexCount int32
+	cpuVerts    []float32 // kept for atlas updates
+	firstFloat  int       // offset into atlas in floats (pos+normal interleaved)
+}
+
+// columnMesh represents a combined mesh for an XZ column across Y layers
+type columnMesh struct {
+	cpuVerts    []float32
+	vertexCount int32
+	firstFloat  int
+	dirty       bool
+}
+
+// ensureColumnMeshForXZ builds or updates a combined mesh for a given XZ column
+func (r *Renderer) ensureColumnMeshForXZ(x, z int) *columnMesh {
+	key := [2]int{x, z}
+	col := r.columnMeshes[key]
+	if col == nil {
+		col = &columnMesh{firstFloat: -1, dirty: true}
+		r.columnMeshes[key] = col
+	}
+	if !col.dirty {
+		return col
+	}
+	// Count total floats across Y-chunk meshes in this column
+	total := 0
+	for coord, cm := range r.chunkMeshes {
+		if coord.X == x && coord.Z == z && cm != nil && cm.vertexCount > 0 && len(cm.cpuVerts) > 0 {
+			total += len(cm.cpuVerts)
+		}
+	}
+	// If currently nothing ready to build, keep previous geometry to avoid flicker
+	if total == 0 {
+		// Keep column marked dirty so renderer uses per-chunk fallback until ready
+		return col
+	}
+	buf := make([]float32, 0, total)
+	for coord, cm := range r.chunkMeshes {
+		if coord.X == x && coord.Z == z && cm != nil && cm.vertexCount > 0 && len(cm.cpuVerts) > 0 {
+			buf = append(buf, cm.cpuVerts...)
+		}
+	}
+	// If size unchanged and region valid, update in place
+	if int32(len(buf)/6) == col.vertexCount && col.firstFloat >= 0 {
+		gl.BindBuffer(gl.ARRAY_BUFFER, r.atlasVBO)
+		gl.BufferSubData(gl.ARRAY_BUFFER, col.firstFloat*4, len(buf)*4, gl.Ptr(buf))
+		gl.BindBuffer(gl.ARRAY_BUFFER, 0)
+		col.cpuVerts = buf
+		col.dirty = false
+		return col
+	}
+	// Otherwise append new region
+	requiredBytes := (r.atlasTotalFloats + len(buf)) * 4
+	r.ensureAtlasCapacity(requiredBytes)
+	offsetBytes := r.atlasTotalFloats * 4
+	gl.BindBuffer(gl.ARRAY_BUFFER, r.atlasVBO)
+	gl.BufferSubData(gl.ARRAY_BUFFER, offsetBytes, len(buf)*4, gl.Ptr(buf))
+	gl.BindBuffer(gl.ARRAY_BUFFER, 0)
+	col.cpuVerts = buf
+	col.vertexCount = int32(len(buf) / 6)
+	col.firstFloat = r.atlasTotalFloats
+	r.atlasTotalFloats += len(buf)
+	col.dirty = false
+	return col
 }
 
 func NewRenderer() (*Renderer, error) {
@@ -219,6 +421,23 @@ func NewRenderer() (*Renderer, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// Set static face colors once after linking the main shader
+	mainShader.Use()
+	northColor := world.GetBlockColor(world.FaceNorth)
+	southColor := world.GetBlockColor(world.FaceSouth)
+	eastColor := world.GetBlockColor(world.FaceEast)
+	westColor := world.GetBlockColor(world.FaceWest)
+	topColor := world.GetBlockColor(world.FaceTop)
+	bottomColor := world.GetBlockColor(world.FaceBottom)
+	defaultColor := mgl32.Vec3{0.5, 0.5, 0.5}
+	mainShader.SetVector3("faceColorNorth", northColor.X(), northColor.Y(), northColor.Z())
+	mainShader.SetVector3("faceColorSouth", southColor.X(), southColor.Y(), southColor.Z())
+	mainShader.SetVector3("faceColorEast", eastColor.X(), eastColor.Y(), eastColor.Z())
+	mainShader.SetVector3("faceColorWest", westColor.X(), westColor.Y(), westColor.Z())
+	mainShader.SetVector3("faceColorTop", topColor.X(), topColor.Y(), topColor.Z())
+	mainShader.SetVector3("faceColorBottom", bottomColor.X(), bottomColor.Y(), bottomColor.Z())
+	mainShader.SetVector3("faceColorDefault", defaultColor.X(), defaultColor.Y(), defaultColor.Z())
 
 	wireframeVertPath := filepath.Join(ShadersDir, WireframeVertShader)
 	wireframeFragPath := filepath.Join(ShadersDir, WireframeFragShader)
@@ -267,7 +486,9 @@ func NewRenderer() (*Renderer, error) {
 	renderer.setupCrosshairVAO()
 	renderer.setupDirectionVAO()
 	renderer.setupLetterVAO()
+	renderer.setupAtlas()
 	renderer.chunkMeshes = make(map[world.ChunkCoord]*chunkMesh)
+	renderer.columnMeshes = make(map[[2]int]*columnMesh)
 
 	// Load font atlas and renderer for HUD text
 	fontPath := filepath.Join("assets", "fonts", "OpenSans-LightItalic.ttf")
@@ -282,7 +503,79 @@ func NewRenderer() (*Renderer, error) {
 	renderer.fontAtlas = atlas
 	renderer.fontRenderer = fontRenderer
 
+	// Setup simple UI pipeline
+	if err := renderer.setupUI(); err != nil {
+		return nil, err
+	}
+
 	return renderer, nil
+}
+
+func (r *Renderer) setupUI() error {
+	// Minimal shader that draws solid-colored triangles in NDC space
+	vertSrc := `#version 410 core
+layout (location = 0) in vec2 aPos;
+void main() {
+    gl_Position = vec4(aPos, 0.0, 1.0);
+}`
+	fragSrc := `#version 410 core
+out vec4 FragColor;
+uniform vec4 uColor;
+void main() {
+    FragColor = uColor;
+}`
+	sh, err := NewShaderFromSource(vertSrc, fragSrc)
+	if err != nil {
+		return err
+	}
+	r.uiShader = sh
+	gl.GenVertexArrays(1, &r.uiVAO)
+	gl.GenBuffers(1, &r.uiVBO)
+	gl.BindVertexArray(r.uiVAO)
+	gl.BindBuffer(gl.ARRAY_BUFFER, r.uiVBO)
+	gl.BufferData(gl.ARRAY_BUFFER, 6*2*4, nil, gl.DYNAMIC_DRAW)
+	gl.EnableVertexAttribArray(0)
+	gl.VertexAttribPointer(0, 2, gl.FLOAT, false, 2*4, gl.PtrOffset(0))
+	gl.BindBuffer(gl.ARRAY_BUFFER, 0)
+	gl.BindVertexArray(0)
+	return nil
+}
+
+// DrawFilledRect draws a screen-space rectangle (pixels, top-left origin) with RGBA color.
+func (r *Renderer) DrawFilledRect(x, y, w, h float32, color mgl32.Vec3, alpha float32) {
+	// Convert to NDC [-1,1]
+	x0 := (x/float32(WinWidth))*2 - 1
+	y0 := 1 - (y/float32(WinHeight))*2
+	x1 := ((x+w)/float32(WinWidth))*2 - 1
+	y1 := 1 - ((y+h)/float32(WinHeight))*2
+	verts := []float32{
+		x0, y0,
+		x1, y0,
+		x1, y1,
+		x0, y0,
+		x1, y1,
+		x0, y1,
+	}
+
+	gl.Disable(gl.DEPTH_TEST)
+	gl.Disable(gl.CULL_FACE)
+	gl.Enable(gl.BLEND)
+	gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+
+	r.uiShader.Use()
+	r.uiShader.SetVector3("uColor", color.X(), color.Y(), color.Z())
+	// Set alpha via separate uniform by packing into vec4: re-use SetFloat? create specific SetVector4? We'll pack via gl.Uniform4f
+	loc := gl.GetUniformLocation(r.uiShader.ID, gl.Str("uColor\x00"))
+	gl.Uniform4f(loc, color.X(), color.Y(), color.Z(), alpha)
+
+	gl.BindVertexArray(r.uiVAO)
+	gl.BindBuffer(gl.ARRAY_BUFFER, r.uiVBO)
+	gl.BufferSubData(gl.ARRAY_BUFFER, 0, len(verts)*4, gl.Ptr(verts))
+	gl.DrawArrays(gl.TRIANGLES, 0, 6)
+
+	gl.Disable(gl.BLEND)
+	gl.Enable(gl.DEPTH_TEST)
+	gl.Enable(gl.CULL_FACE)
 }
 
 func (r *Renderer) setupBlockVAO() {
@@ -353,6 +646,27 @@ func (r *Renderer) setupLetterVAO() {
 
 	gl.EnableVertexAttribArray(0)
 	gl.VertexAttribPointer(0, 2, gl.FLOAT, false, 2*4, gl.PtrOffset(0))
+}
+
+func (r *Renderer) setupAtlas() {
+	gl.GenVertexArrays(1, &r.atlasVAO)
+	gl.BindVertexArray(r.atlasVAO)
+
+	gl.GenBuffers(1, &r.atlasVBO)
+	gl.BindBuffer(gl.ARRAY_BUFFER, r.atlasVBO)
+	initial := 1 << 22 // 4MB
+	gl.BufferData(gl.ARRAY_BUFFER, initial, nil, gl.DYNAMIC_DRAW)
+	r.atlasCapacityBytes = initial
+	r.atlasTotalFloats = 0
+
+	// Attributes: pos.xyz + normal.xyz
+	gl.EnableVertexAttribArray(0)
+	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, 6*4, gl.PtrOffset(0))
+	gl.EnableVertexAttribArray(1)
+	gl.VertexAttribPointer(1, 3, gl.FLOAT, false, 6*4, gl.PtrOffset(3*4))
+
+	gl.BindVertexArray(0)
+	gl.BindBuffer(gl.ARRAY_BUFFER, 0)
 }
 
 func (r *Renderer) Render(w *world.World, p *player.Player, dt float64) {
@@ -552,9 +866,12 @@ func (r *Renderer) estimateBufferMemoryUsage() int64 {
 	// Estimate chunk mesh buffers
 	for _, mesh := range r.chunkMeshes {
 		if mesh != nil && mesh.vertexCount > 0 {
-			// Each vertex has 6 floats (pos + normal) * 4 bytes per float
-			total += int64(mesh.vertexCount) * 6 * 4
+			// Count only once via atlas below
 		}
+	}
+	// Atlas buffer
+	if r.atlasCapacityBytes > 0 {
+		total += int64(r.atlasCapacityBytes)
 	}
 
 	// Add static buffers
@@ -586,147 +903,237 @@ func (r *Renderer) trackDrawCall(vertexCount int) {
 	r.profilingStats.totalTriangles += vertexCount / 3
 }
 
-// trackShaderBind tracks shader binding time
-func (r *Renderer) trackShaderBind() func() {
-	start := time.Now()
-	return func() {
-		r.profilingStats.shaderBindTime += time.Since(start)
-	}
-}
-
-// trackVAOBind tracks VAO binding time
-func (r *Renderer) trackVAOBind() func() {
-	start := time.Now()
-	return func() {
-		r.profilingStats.vaoBindTime += time.Since(start)
-	}
-}
-
 func (r *Renderer) renderBlocks(w *world.World, p *player.Player, view, projection mgl32.Mat4) {
-	// Track shader binding time (only the Use() call)
-	sbStart := time.Now()
-	r.mainShader.Use()
-	r.profilingStats.shaderBindTime += time.Since(sbStart)
+	func() {
+		defer profiling.Track("renderer.renderBlocks.shaderSetup")()
+		// Track shader binding time (only the Use() call)
+		sbStart := time.Now()
+		r.mainShader.Use()
+		r.profilingStats.shaderBindTime += time.Since(sbStart)
 
-	r.mainShader.SetMatrix4("proj", &projection[0])
-	r.mainShader.SetMatrix4("view", &view[0])
+		r.mainShader.SetMatrix4("proj", &projection[0])
+		r.mainShader.SetMatrix4("view", &view[0])
 
-	// Set light direction
-	light := mgl32.Vec3{0.3, 1.0, 0.3}.Normalize()
-	r.mainShader.SetVector3("lightDir", light.X(), light.Y(), light.Z())
-
-	// Set face colors from Go code
-	northColor := world.GetBlockColor(world.FaceNorth)
-	southColor := world.GetBlockColor(world.FaceSouth)
-	eastColor := world.GetBlockColor(world.FaceEast)
-	westColor := world.GetBlockColor(world.FaceWest)
-	topColor := world.GetBlockColor(world.FaceTop)
-	bottomColor := world.GetBlockColor(world.FaceBottom)
-	defaultColor := mgl32.Vec3{0.5, 0.5, 0.5} // Gray (fallback)
-
-	r.mainShader.SetVector3("faceColorNorth", northColor.X(), northColor.Y(), northColor.Z())
-	r.mainShader.SetVector3("faceColorSouth", southColor.X(), southColor.Y(), southColor.Z())
-	r.mainShader.SetVector3("faceColorEast", eastColor.X(), eastColor.Y(), eastColor.Z())
-	r.mainShader.SetVector3("faceColorWest", westColor.X(), westColor.Y(), westColor.Z())
-	r.mainShader.SetVector3("faceColorTop", topColor.X(), topColor.Y(), topColor.Z())
-	r.mainShader.SetVector3("faceColorBottom", bottomColor.X(), bottomColor.Y(), bottomColor.Z())
-	r.mainShader.SetVector3("faceColorDefault", defaultColor.X(), defaultColor.Y(), defaultColor.Z())
+		// Set light direction
+		light := mgl32.Vec3{0.3, 1.0, 0.3}.Normalize()
+		r.mainShader.SetVector3("lightDir", light.X(), light.Y(), light.Z())
+	}()
 
 	// Draw greedy-meshed chunks that intersect the camera frustum
-	all := w.GetAllChunks()
-	clip := projection.Mul4(view)
-	planes := extractFrustumPlanes(clip)
+	planes := func() [6]plane {
+		defer profiling.Track("renderer.renderBlocks.frustumSetup")()
+		// Check if we can reuse cached frustum planes
+		const matrixEpsilon = 0.001
+		canReuseFrustum := r.frustumCacheValid &&
+			matrixNearEqual(r.cachedViewMatrix, view, matrixEpsilon) &&
+			matrixNearEqual(r.cachedProjMatrix, projection, matrixEpsilon)
 
-	nearRadiusChunks := 12
-	// Per-frame build budgets to avoid long stalls on first frames
-	nearBuildBudget := 8
-	farBuildBudget := 12
+		var planes [6]plane
+		if canReuseFrustum {
+			planes = r.cachedFrustumPlanes
+		} else {
+			clip := projection.Mul4(view)
+			planes = extractFrustumPlanes(clip)
 
-	px := int(math.Floor(float64(p.Position[0])))
-	pz := int(math.Floor(float64(p.Position[2])))
-	pcx := px / world.ChunkSizeX
-	pcz := pz / world.ChunkSizeZ
+			// Cache the planes and matrices
+			r.cachedFrustumPlanes = planes
+			r.cachedViewMatrix = view
+			r.cachedProjMatrix = projection
+			r.frustumCacheValid = true
+		}
+
+		return planes
+	}()
+
+	nearRadiusChunks, nearBuildBudget, farBuildBudget, maxRenderRadiusChunks, pcx, pcz := func() (int, int, int, int, int, int) {
+		defer profiling.Track("renderer.renderBlocks.initParams")()
+		nearRadiusChunks := 12
+		// Per-frame build budgets to avoid long stalls on first frames
+		nearBuildBudget := 8
+		farBuildBudget := 12
+
+		// Hard cap for render radius to shrink candidate set pre-cull/sort
+		maxRenderRadiusChunks := 24
+
+		px := int(math.Floor(float64(p.Position[0])))
+		pz := int(math.Floor(float64(p.Position[2])))
+		pcx := px / world.ChunkSizeX
+		pcz := pz / world.ChunkSizeZ
+		return nearRadiusChunks, nearBuildBudget, farBuildBudget, maxRenderRadiusChunks, pcx, pcz
+	}()
 
 	// Track frustum culling time
 	frustumStart := time.Now()
 
-	// Collect visible chunks and sort by distance from player first
-	visible := make([]world.ChunkWithCoord, 0, len(all))
-	for _, cc := range all {
-		coord := cc.Coord
-		min, max := r.computeChunkAABB(coord)
-		if aabbIntersectsFrustumPlanes(min, max, planes) {
-			visible = append(visible, cc)
+	// Collect visible chunks with optimized frustum culling
+	var visible []world.ChunkWithCoord
+	{
+		stop := profiling.Track("renderer.renderBlocks.collectVisible")
+		all := w.GetAllChunks()
+		if cap(r.visibleScratch) < len(all) {
+			r.visibleScratch = make([]world.ChunkWithCoord, 0, len(all))
+		} else {
+			r.visibleScratch = r.visibleScratch[:0]
 		}
+		visible = r.visibleScratch
+
+		// Pre-calculate common values to avoid repeated calculations
+		maxRadiusSq := maxRenderRadiusChunks * maxRenderRadiusChunks
+		chunkSizeXf := float32(world.ChunkSizeX)
+		chunkSizeYf := float32(world.ChunkSizeY)
+		chunkSizeZf := float32(world.ChunkSizeZ)
+		margin := r.frustumMargin
+
+		for _, cc := range all {
+			// Early reject by chunk-distance radius to avoid plane tests for far chunks
+			dxr := cc.Coord.X - pcx
+			dzr := cc.Coord.Z - pcz
+			if dxr*dxr+dzr*dzr > maxRadiusSq {
+				continue
+			}
+
+			// Calculate chunk bounds with pre-computed constants
+			cx := float32(cc.Coord.X) * chunkSizeXf
+			cy := float32(cc.Coord.Y) * chunkSizeYf
+			cz := float32(cc.Coord.Z) * chunkSizeZf
+
+			// Apply margin directly to avoid intermediate variables
+			minx := cx - margin
+			miny := cy - margin
+			minz := cz - margin
+			maxx := cx + chunkSizeXf + margin
+			maxy := cy + chunkSizeYf + margin
+			maxz := cz + chunkSizeZf + margin
+
+			if aabbIntersectsFrustumPlanesF(minx, miny, minz, maxx, maxy, maxz, planes) {
+				visible = append(visible, cc)
+			}
+		}
+		stop()
 	}
 
 	// Update frustum culling statistics
-	r.profilingStats.frustumCullTime = time.Since(frustumStart)
-	r.profilingStats.visibleChunks = len(visible)
-	r.profilingStats.culledChunks = len(all) - len(visible)
-	sort.Slice(visible, func(i, j int) bool {
-		diX := visible[i].Coord.X - pcx
-		diZ := visible[i].Coord.Z - pcz
-		djX := visible[j].Coord.X - pcx
-		djZ := visible[j].Coord.Z - pcz
-		return diX*diX+diZ*diZ < djX*djX+djZ*djZ
-	})
+	func() {
+		defer profiling.Track("renderer.renderBlocks.updateStats")()
+		r.profilingStats.frustumCullTime = time.Since(frustumStart)
+		r.profilingStats.visibleChunks = len(visible)
+		r.profilingStats.culledChunks = len(w.GetAllChunks()) - len(visible)
+		// Removed sort step to save CPU; near/far budgets still prioritize nearby chunks
+	}()
 
-	for _, cc := range visible {
-		coord := cc.Coord
-		ch := cc.Chunk
-		if ch == nil {
-			continue
-		}
-
-		dx := coord.X - pcx
-		dz := coord.Z - pcz
-		near := dx*dx+dz*dz <= nearRadiusChunks*nearRadiusChunks
-
-		existing := r.chunkMeshes[coord]
-		var mesh *chunkMesh
-		if near {
-			if existing == nil || ch.IsDirty() {
-				if nearBuildBudget > 0 {
-					mesh = func() *chunkMesh {
-						defer profiling.Track("meshing.ensureChunkMesh.near")()
-						return r.ensureChunkMesh(w, coord, ch)
-					}()
+	// Phase 1: ensure meshes per budgets (prepare data for columns)
+	func() {
+		defer profiling.Track("renderer.renderBlocks.ensureMeshes")()
+		nearRadiusSq := nearRadiusChunks * nearRadiusChunks
+		for _, cc := range visible {
+			coord := cc.Coord
+			ch := cc.Chunk
+			if ch == nil {
+				continue
+			}
+			dx := coord.X - pcx
+			dz := coord.Z - pcz
+			isNear := dx*dx+dz*dz <= nearRadiusSq
+			existing := r.chunkMeshes[coord]
+			needsBuild := existing == nil || ch.IsDirty()
+			if needsBuild {
+				if isNear && nearBuildBudget > 0 {
+					_ = r.ensureChunkMesh(w, coord, ch)
 					nearBuildBudget--
-				} else {
-					mesh = existing
-				}
-			} else {
-				mesh = existing
-			}
-		} else {
-			if existing == nil || ch.IsDirty() {
-				if farBuildBudget > 0 {
-					mesh = func() *chunkMesh {
-						defer profiling.Track("meshing.ensureChunkMesh.far")()
-						return r.ensureChunkMesh(w, coord, ch)
-					}()
+				} else if !isNear && farBuildBudget > 0 {
+					_ = r.ensureChunkMesh(w, coord, ch)
 					farBuildBudget--
-				} else {
-					mesh = existing
 				}
-			} else {
-				mesh = existing
 			}
 		}
-		if mesh == nil || mesh.vertexCount == 0 {
-			continue
+	}()
+
+	// Phase 2: single multi-draw over atlas
+	func() {
+		defer profiling.Track("renderer.renderBlocks.drawAtlas")()
+		// Aggregate visible chunks into unique XZ columns
+		type xz struct{ x, z int }
+		colSet := make(map[xz]struct{}, len(visible))
+		for _, vc := range visible {
+			colSet[xz{vc.Coord.X, vc.Coord.Z}] = struct{}{}
 		}
-
-		// Track VAO binding time (only the BindVertexArray call)
-		vbStart := time.Now()
-		gl.BindVertexArray(mesh.vao)
-		r.profilingStats.vaoBindTime += time.Since(vbStart)
-
-		// Track draw call and vertices
-		r.trackDrawCall(int(mesh.vertexCount))
-		gl.DrawArrays(gl.TRIANGLES, 0, mesh.vertexCount)
-	}
+		// First ensure/update columns
+		for k := range colSet {
+			_ = r.ensureColumnMeshForXZ(k.x, k.z)
+		}
+		// Build draw lists after any atlas growth to avoid stale offsets
+		cols := make([]*columnMesh, 0, len(colSet))
+		drawnCols := make(map[[2]int]struct{}, len(colSet))
+		for k := range colSet {
+			key := [2]int{k.x, k.z}
+			col := r.columnMeshes[key]
+			if col != nil && !col.dirty && col.vertexCount > 0 && col.firstFloat >= 0 {
+				cols = append(cols, col)
+				drawnCols[key] = struct{}{}
+			}
+		}
+		// Fallback per-chunk for columns not drawn
+		fallbackChunks := make([]*chunkMesh, 0, len(visible))
+		for _, vc := range visible {
+			key := [2]int{vc.Coord.X, vc.Coord.Z}
+			if _, ok := drawnCols[key]; ok {
+				continue
+			}
+			if m := r.chunkMeshes[vc.Coord]; m != nil && m.vertexCount > 0 && m.firstFloat >= 0 {
+				fallbackChunks = append(fallbackChunks, m)
+			}
+		}
+		// Draw ready columns
+		if len(cols) > 0 {
+			if cap(r.firstsScratch) < len(cols) {
+				r.firstsScratch = make([]int32, len(cols))
+				r.countsScratch = make([]int32, len(cols))
+			}
+			firsts := r.firstsScratch[:0]
+			counts := r.countsScratch[:0]
+			for _, c := range cols {
+				if c.firstFloat < 0 || c.vertexCount <= 0 || c.dirty {
+					continue
+				}
+				firsts = append(firsts, int32(c.firstFloat/6))
+				counts = append(counts, c.vertexCount)
+			}
+			if len(counts) > 0 {
+				gl.BindVertexArray(r.atlasVAO)
+				sum := 0
+				for i := 0; i < len(counts); i++ {
+					sum += int(counts[i])
+				}
+				r.trackDrawCall(sum)
+				gl.MultiDrawArrays(gl.TRIANGLES, &firsts[0], &counts[0], int32(len(counts)))
+			}
+		}
+		// Draw fallback chunks (if any) to avoid pop-in on first sight
+		if len(fallbackChunks) > 0 {
+			if cap(r.firstsScratch) < len(fallbackChunks) {
+				r.firstsScratch = make([]int32, len(fallbackChunks))
+				r.countsScratch = make([]int32, len(fallbackChunks))
+			}
+			firsts := r.firstsScratch[:0]
+			counts := r.countsScratch[:0]
+			for _, m := range fallbackChunks {
+				if m.firstFloat < 0 || m.vertexCount <= 0 {
+					continue
+				}
+				firsts = append(firsts, int32(m.firstFloat/6))
+				counts = append(counts, m.vertexCount)
+			}
+			if len(counts) > 0 {
+				gl.BindVertexArray(r.atlasVAO)
+				sum := 0
+				for i := 0; i < len(counts); i++ {
+					sum += int(counts[i])
+				}
+				r.trackDrawCall(sum)
+				gl.MultiDrawArrays(gl.TRIANGLES, &firsts[0], &counts[0], int32(len(counts)))
+			}
+		}
+	}()
 }
 
 // plane represents a normalized frustum plane ax + by + cz + d = 0
@@ -792,6 +1199,124 @@ func aabbIntersectsFrustumPlanes(min, max mgl32.Vec3, planes [6]plane) bool {
 	return true
 }
 
+// aabbIntersectsFrustumPlanesF is a float-optimized variant to avoid Vec3 calls in hot paths
+func aabbIntersectsFrustumPlanesF(minx, miny, minz, maxx, maxy, maxz float32, planes [6]plane) bool {
+	// Unrolled loop for better performance - frustum culling is called very frequently
+	p := planes[0] // left
+	px := maxx
+	if p.a < 0 {
+		px = minx
+	}
+	py := maxy
+	if p.b < 0 {
+		py = miny
+	}
+	pz := maxz
+	if p.c < 0 {
+		pz = minz
+	}
+	if p.a*px+p.b*py+p.c*pz+p.d < 0 {
+		return false
+	}
+
+	p = planes[1] // right
+	px = maxx
+	if p.a < 0 {
+		px = minx
+	}
+	py = maxy
+	if p.b < 0 {
+		py = miny
+	}
+	pz = maxz
+	if p.c < 0 {
+		pz = minz
+	}
+	if p.a*px+p.b*py+p.c*pz+p.d < 0 {
+		return false
+	}
+
+	p = planes[2] // bottom
+	px = maxx
+	if p.a < 0 {
+		px = minx
+	}
+	py = maxy
+	if p.b < 0 {
+		py = miny
+	}
+	pz = maxz
+	if p.c < 0 {
+		pz = minz
+	}
+	if p.a*px+p.b*py+p.c*pz+p.d < 0 {
+		return false
+	}
+
+	p = planes[3] // top
+	px = maxx
+	if p.a < 0 {
+		px = minx
+	}
+	py = maxy
+	if p.b < 0 {
+		py = miny
+	}
+	pz = maxz
+	if p.c < 0 {
+		pz = minz
+	}
+	if p.a*px+p.b*py+p.c*pz+p.d < 0 {
+		return false
+	}
+
+	p = planes[4] // near
+	px = maxx
+	if p.a < 0 {
+		px = minx
+	}
+	py = maxy
+	if p.b < 0 {
+		py = miny
+	}
+	pz = maxz
+	if p.c < 0 {
+		pz = minz
+	}
+	if p.a*px+p.b*py+p.c*pz+p.d < 0 {
+		return false
+	}
+
+	p = planes[5] // far
+	px = maxx
+	if p.a < 0 {
+		px = minx
+	}
+	py = maxy
+	if p.b < 0 {
+		py = miny
+	}
+	pz = maxz
+	if p.c < 0 {
+		pz = minz
+	}
+	if p.a*px+p.b*py+p.c*pz+p.d < 0 {
+		return false
+	}
+
+	return true
+}
+
+// matrixNearEqual compares two matrices for approximate equality within epsilon
+func matrixNearEqual(a, b mgl32.Mat4, epsilon float32) bool {
+	for i := 0; i < 16; i++ {
+		if float32(math.Abs(float64(a[i]-b[i]))) > epsilon {
+			return false
+		}
+	}
+	return true
+}
+
 // PruneMeshesByWorld removes cached meshes that are not in the world anymore or beyond a radius from center.
 // Returns number of meshes freed.
 func (r *Renderer) PruneMeshesByWorld(w *world.World, center mgl32.Vec3, radiusChunks int) int {
@@ -826,6 +1351,7 @@ func (r *Renderer) PruneMeshesByWorld(w *world.World, center mgl32.Vec3, radiusC
 }
 
 func (r *Renderer) ensureChunkMesh(w *world.World, coord world.ChunkCoord, ch *world.Chunk) *chunkMesh {
+	defer profiling.Track("renderer.renderBlocks.ensureMeshes.build")()
 	if ch == nil {
 		return nil
 	}
@@ -856,8 +1382,18 @@ func (r *Renderer) ensureChunkMesh(w *world.World, coord world.ChunkCoord, ch *w
 		if len(verts) > 0 {
 			gl.BufferData(gl.ARRAY_BUFFER, len(verts)*4, gl.Ptr(verts), gl.STATIC_DRAW)
 			existing.vertexCount = int32(len(verts) / 6)
+			// Keep CPU copy for atlas updates
+			existing.cpuVerts = verts
+			// Append/update in atlas
+			r.appendOrUpdateAtlas(coord, existing)
+			// Invalidate combined column mesh
+			key := [2]int{coord.X, coord.Z}
+			if col := r.columnMeshes[key]; col != nil {
+				col.dirty = true
+			}
 		} else {
 			existing.vertexCount = 0
+			existing.cpuVerts = nil
 			// Still upload zero to keep state valid
 			gl.BufferData(gl.ARRAY_BUFFER, 0, nil, gl.STATIC_DRAW)
 		}
@@ -866,6 +1402,10 @@ func (r *Renderer) ensureChunkMesh(w *world.World, coord world.ChunkCoord, ch *w
 	}
 	return existing
 }
+
+// growOrAllocBatch removed: batching path eliminated
+
+// buildBatchFromMeshes removed: batching path eliminated
 
 func (r *Renderer) renderHighlightedBlock(blockPos [3]int, view, projection mgl32.Mat4) {
 	// Track shader binding time (only the Use() call)
@@ -1042,100 +1582,13 @@ func (r *Renderer) computeChunkAABB(coord world.ChunkCoord) (mgl32.Vec3, mgl32.V
 	return min, max
 }
 
-// aabbIntersectsFrustum tests AABB against the camera frustum using clip-space half-space tests.
-// clip is projection * view.
-func (r *Renderer) aabbIntersectsFrustum(min, max mgl32.Vec3, clip mgl32.Mat4) bool {
-	// build 8 corners
-	corners := [8]mgl32.Vec4{
-		{min.X(), min.Y(), min.Z(), 1.0},
-		{max.X(), min.Y(), min.Z(), 1.0},
-		{min.X(), max.Y(), min.Z(), 1.0},
-		{max.X(), max.Y(), min.Z(), 1.0},
-		{min.X(), min.Y(), max.Z(), 1.0},
-		{max.X(), min.Y(), max.Z(), 1.0},
-		{min.X(), max.Y(), max.Z(), 1.0},
-		{max.X(), max.Y(), max.Z(), 1.0},
-	}
-
-	// Transform corners to clip space
-	var v [8]mgl32.Vec4
-	for i := 0; i < 8; i++ {
-		v[i] = clip.Mul4x1(corners[i])
-	}
-
-	// For each frustum plane, if all corners are outside, cull
-	// Right plane:  x - w <= 0  -> outside if x - w > 0
-	allOutside := true
-	for i := 0; i < 8; i++ {
-		if v[i].X()-v[i].W() <= 0 {
-			allOutside = false
-			break
-		}
-	}
-	if allOutside {
-		return false
-	}
-	// Left plane: -x - w <= 0
-	allOutside = true
-	for i := 0; i < 8; i++ {
-		if -v[i].X()-v[i].W() <= 0 {
-			allOutside = false
-			break
-		}
-	}
-	if allOutside {
-		return false
-	}
-	// Top plane: y - w <= 0
-	allOutside = true
-	for i := 0; i < 8; i++ {
-		if v[i].Y()-v[i].W() <= 0 {
-			allOutside = false
-			break
-		}
-	}
-	if allOutside {
-		return false
-	}
-	// Bottom plane: -y - w <= 0
-	allOutside = true
-	for i := 0; i < 8; i++ {
-		if -v[i].Y()-v[i].W() <= 0 {
-			allOutside = false
-			break
-		}
-	}
-	if allOutside {
-		return false
-	}
-	// Far plane: z - w <= 0
-	allOutside = true
-	for i := 0; i < 8; i++ {
-		if v[i].Z()-v[i].W() <= 0 {
-			allOutside = false
-			break
-		}
-	}
-	if allOutside {
-		return false
-	}
-	// Near plane: -z - w <= 0
-	allOutside = true
-	for i := 0; i < 8; i++ {
-		if -v[i].Z()-v[i].W() <= 0 {
-			allOutside = false
-			break
-		}
-	}
-	if allOutside {
-		return false
-	}
-
-	return !allOutside
-}
-
 func (r *Renderer) RenderText(text string, x, y float32, size float32, color mgl32.Vec3) {
 	r.fontRenderer.Render(text, x, y, size, color)
+}
+
+// MeasureText returns width and height in pixels for the given text at scale.
+func (r *Renderer) MeasureText(text string, scale float32) (float32, float32) {
+	return r.fontRenderer.Measure(text, scale)
 }
 
 // ProfilingSetLastTotalFrameDuration updates the previous frame's total CPU frame duration
@@ -1248,7 +1701,7 @@ func (r *Renderer) RenderProfilingInfo() {
 	// Top profiling lines
 	if top := profiling.TopN(10); top != "" {
 		for _, line := range strings.Split(top, ", ") {
-			if line != "" {
+			if line != "" && !strings.Contains(line, ":0ms") && strings.HasPrefix(line, "renderer.renderBlocks") {
 				lines = append(lines, line)
 			}
 		}
@@ -1257,7 +1710,7 @@ func (r *Renderer) RenderProfilingInfo() {
 	textColor := mgl32.Vec3{1.0, 1.0, 1.0}
 	startY := float32(60)
 	lineStep := float32(14)
-	r.fontRenderer.RenderLines(lines, 10, startY, lineStep, 0.5, textColor)
+	r.fontRenderer.RenderLines(lines, 10, startY, lineStep, 0.6, textColor)
 }
 
 // GetProfilingStats returns a copy of the current profiling statistics

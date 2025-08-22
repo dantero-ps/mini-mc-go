@@ -10,9 +10,22 @@ import (
 // Lightweight per-frame CPU profiler for tick-level insights.
 
 var (
-	mu          sync.Mutex
-	frameTotals = make(map[string]time.Duration)
+	mu             sync.Mutex
+	frameTotals    = make(map[string]time.Duration)
+	rollingSamples []sample
+	lastTopNCache  topNCache
 )
+
+type sample struct {
+	t      time.Time
+	totals map[string]time.Duration
+}
+
+type topNCache struct {
+	expiresAt time.Time
+	n         int
+	value     string
+}
 
 // Track returns a stop function that records the elapsed time under the given name.
 // Usage: defer profiling.Track("subsystem.Operation")()
@@ -28,7 +41,27 @@ func Track(name string) func() {
 
 // ResetFrame clears current per-frame totals. Call at the start of each frame.
 func ResetFrame() {
+	now := time.Now()
 	mu.Lock()
+	// carry the just-finished frame totals into rolling window
+	if len(frameTotals) > 0 {
+		snapshot := make(map[string]time.Duration, len(frameTotals))
+		for k, v := range frameTotals {
+			snapshot[k] = v
+		}
+		rollingSamples = append(rollingSamples, sample{t: now, totals: snapshot})
+	}
+	// prune entries older than 1 second
+	cutoff := now.Add(-1 * time.Second)
+	if len(rollingSamples) > 0 {
+		firstIdx := 0
+		for firstIdx < len(rollingSamples) && rollingSamples[firstIdx].t.Before(cutoff) {
+			firstIdx++
+		}
+		if firstIdx > 0 {
+			rollingSamples = append([]sample(nil), rollingSamples[firstIdx:]...)
+		}
+	}
 	for k := range frameTotals {
 		delete(frameTotals, k)
 	}
@@ -84,13 +117,36 @@ func Add(name string, d time.Duration) {
 // TopN formats top N durations from the current frame totals.
 // Example: "renderer.Render:4.2ms, meshing.BuildGreedyMeshForChunk:2.1ms"
 func TopN(n int) string {
-	ss := Snapshot()
+	now := time.Now()
+	mu.Lock()
+	if lastTopNCache.value != "" && now.Before(lastTopNCache.expiresAt) && lastTopNCache.n == n {
+		val := lastTopNCache.value
+		mu.Unlock()
+		return val
+	}
+	// aggregate over last 1 second window
+	aggregated := make(map[string]time.Duration)
+	cutoff := now.Add(-1 * time.Second)
+	for _, s := range rollingSamples {
+		if s.t.Before(cutoff) {
+			continue
+		}
+		for k, v := range s.totals {
+			aggregated[k] += v
+		}
+	}
+	// include current in-progress frame
+	for k, v := range frameTotals {
+		aggregated[k] += v
+	}
+	mu.Unlock()
+
 	type pair struct {
 		name string
 		dur  time.Duration
 	}
-	list := make([]pair, 0, len(ss))
-	for k, v := range ss {
+	list := make([]pair, 0, len(aggregated))
+	for k, v := range aggregated {
 		list = append(list, pair{name: k, dur: v})
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i].dur > list[j].dur })
@@ -102,7 +158,12 @@ func TopN(n int) string {
 		ms := float64(list[i].dur.Microseconds()) / 1000.0
 		parts = append(parts, list[i].name+":"+formatMs(ms))
 	}
-	return strings.Join(parts, ", ")
+	result := strings.Join(parts, ", ")
+
+	mu.Lock()
+	lastTopNCache = topNCache{expiresAt: now.Add(1 * time.Second), n: n, value: result}
+	mu.Unlock()
+	return result
 }
 
 func formatMs(ms float64) string {

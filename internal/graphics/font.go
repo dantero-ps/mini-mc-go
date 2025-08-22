@@ -316,6 +316,29 @@ func (fr *FontRenderer) RenderLines(lines []string, x, yStart, lineStep, scale f
 	gl.Enable(gl.CULL_FACE)
 }
 
+// Measure returns the approximate width and height in pixels the text will occupy at the given scale.
+func (fr *FontRenderer) Measure(text string, scale float32) (float32, float32) {
+	var width float32
+	var maxH float32
+	chars := []rune(text)
+	for _, r := range chars {
+		fc, ok := fr.atlas.Characters[r]
+		if !ok {
+			// fall back to space advance if glyph missing
+			space, ok2 := fr.atlas.Characters[' ']
+			if ok2 {
+				width += float32(space.Advance) * scale
+			}
+			continue
+		}
+		width += float32(fc.Advance) * scale
+		if fc.Height*scale > maxH {
+			maxH = fc.Height * scale
+		}
+	}
+	return width, maxH
+}
+
 func (fr *FontRenderer) buildVertices(chars []rune, x, y, scale float32) []float32 {
 	vertices := make([]float32, 0, len(chars)*6*4)
 	for _, r := range chars {
