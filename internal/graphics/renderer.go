@@ -481,7 +481,7 @@ func NewRenderer() (*Renderer, error) {
 		frames:          0,
 		lastFPSCheck:    time.Now(),
 		currentFPS:      0,
-		showProfiling:   true,
+		showProfiling:   false,
 	}
 
 	// Initialize VAOs and VBOs
