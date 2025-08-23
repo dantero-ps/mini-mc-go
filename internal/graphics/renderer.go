@@ -159,6 +159,9 @@ type Renderer struct {
 	lastFPSCheck time.Time
 	currentFPS   int
 
+	// HUD toggles
+	showProfiling bool
+
 	// Enhanced profiling metrics
 	profilingStats struct {
 		// Frame timing
@@ -478,6 +481,7 @@ func NewRenderer() (*Renderer, error) {
 		frames:          0,
 		lastFPSCheck:    time.Now(),
 		currentFPS:      0,
+		showProfiling:   true,
 	}
 
 	// Initialize VAOs and VBOs
@@ -767,8 +771,13 @@ func (r *Renderer) Render(w *world.World, p *player.Player, dt float64) {
 
 	// Render player position (HUD)
 	func() { defer profiling.Track("renderer.renderPlayerPos")(); r.renderPlayerPosition(p) }()
+	// Render FPS right after player position
+	func() { r.renderFPS() }()
 
-	// HUD is rendered from main after frame profiling is finalized
+	// Optional profiling HUD
+	if r.showProfiling {
+		r.RenderProfilingInfo()
+	}
 
 	// End frame profiling
 	r.endFrameProfiling()
@@ -1563,6 +1572,18 @@ func (r *Renderer) renderPlayerPosition(p *player.Player) {
 
 }
 
+// renderFPS renders the current FPS value on screen
+func (r *Renderer) renderFPS() {
+	if r.fontRenderer == nil {
+		return
+	}
+	text := fmt.Sprintf("FPS: %d", r.currentFPS)
+	x := float32(10)
+	y := float32(46)
+	color := mgl32.Vec3{1.0, 1.0, 1.0}
+	r.fontRenderer.Render(text, x, y, 0.6, color)
+}
+
 // computeChunkAABB returns the axis-aligned bounding box in world space for a chunk
 func (r *Renderer) computeChunkAABB(coord world.ChunkCoord) (mgl32.Vec3, mgl32.Vec3) {
 	min := mgl32.Vec3{
@@ -1626,9 +1647,6 @@ func (r *Renderer) ProfilingSetPhysics(physics time.Duration) {
 func (r *Renderer) RenderProfilingInfo() {
 	defer profiling.Track("renderer.hud")()
 	lines := make([]string, 0, 32)
-
-	// FPS
-	lines = append(lines, fmt.Sprintf("FPS: %d", r.currentFPS))
 
 	// Frame timing (renderer-local)
 	tracked := profiling.SumWithPrefix("renderer.")
@@ -1753,4 +1771,14 @@ func (r *Renderer) ResetProfilingStats() {
 	r.profilingStats.minFrameTime = 0
 	r.profilingStats.avgFrameTime = 0
 	r.profilingStats.lastFrameDuration = 0
+}
+
+// HUDEnabled returns whether profiling HUD is enabled
+func (r *Renderer) HUDEnabled() bool {
+	return r.showProfiling
+}
+
+// ToggleHUD toggles profiling HUD visibility
+func (r *Renderer) ToggleHUD() {
+	r.showProfiling = !r.showProfiling
 }

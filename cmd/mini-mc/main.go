@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"runtime"
 	"time"
 
@@ -59,7 +60,7 @@ func main() {
 	paused := false
 
 	// Setup input handlers
-	setupInputHandlers(window, gamePlayer, gameWorld, &paused)
+	setupInputHandlers(window, renderer, gamePlayer, gameWorld, &paused)
 
 	// Main game loop
 	runGameLoop(window, renderer, gamePlayer, gameWorld, &paused)
@@ -83,7 +84,7 @@ func setupWindow() (*glfw.Window, error) {
 	return window, nil
 }
 
-func setupInputHandlers(window *glfw.Window, p *player.Player, gameWorld *world.World, paused *bool) {
+func setupInputHandlers(window *glfw.Window, renderer *graphics.Renderer, p *player.Player, gameWorld *world.World, paused *bool) {
 	// Mouse position callback
 	window.SetCursorPosCallback(func(w *glfw.Window, xpos, ypos float64) {
 		if !*paused {
@@ -101,6 +102,9 @@ func setupInputHandlers(window *glfw.Window, p *player.Player, gameWorld *world.
 	window.SetKeyCallback(func(w *glfw.Window, key glfw.Key, scancode int, action glfw.Action, mods glfw.ModifierKey) {
 		if key == glfw.KeyF && action == glfw.Press {
 			p.ToggleWireframeMode()
+		}
+		if key == glfw.KeyF3 && action == glfw.Press {
+			renderer.ToggleHUD()
 		}
 		if key == glfw.KeyEscape && action == glfw.Press {
 			*paused = !*paused
@@ -166,11 +170,14 @@ func runGameLoop(window *glfw.Window, renderer *graphics.Renderer, p *player.Pla
 		frames++
 
 		if time.Since(lastFPSCheckTime) >= time.Second {
+			fmt.Println("FPS: ", frames)
 			frames = 0
 			lastFPSCheckTime = time.Now()
 		}
 
-		renderer.RenderProfilingInfo()
+		if renderer.HUDEnabled() {
+			renderer.RenderProfilingInfo()
+		}
 
 		// Pause overlay and Resume button
 		if *paused {

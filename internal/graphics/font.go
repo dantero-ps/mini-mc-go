@@ -238,13 +238,11 @@ func (fr *FontRenderer) Render(text string, x, y, scale float32, color mgl32.Vec
 
 	// Build vertex data for all characters
 	verts := fr.buildVertices([]rune(text), x, y, scale)
-	// Resize buffer if needed
-	needed := len(verts) * 4
-	if needed > fr.maxCharsCap*6*4 {
-		fr.maxCharsCap = int(math.Max(float64(fr.maxCharsCap*2), float64(len(verts)/6+1)))
-		gl.BufferData(gl.ARRAY_BUFFER, fr.maxCharsCap*6*4*4, nil, gl.DYNAMIC_DRAW)
-	}
-	gl.BufferSubData(gl.ARRAY_BUFFER, 0, len(verts)*4, gl.Ptr(verts))
+
+	// Deterministic orphan to avoid GPU stalls on dynamic updates
+	size := len(verts) * 4
+	gl.BufferData(gl.ARRAY_BUFFER, size, nil, gl.DYNAMIC_DRAW)
+	gl.BufferSubData(gl.ARRAY_BUFFER, 0, size, gl.Ptr(verts))
 	gl.DrawArrays(gl.TRIANGLES, 0, int32(len(verts)/4))
 
 	gl.Disable(gl.BLEND)
@@ -293,22 +291,12 @@ func (fr *FontRenderer) RenderLines(lines []string, x, yStart, lineStep, scale f
 		y += lineStep
 	}
 
-	needed := len(vertices) * 4
-	if needed > fr.maxCharsCap*6*4 {
-		// Grow capacity to fit all vertices
-		requiredChars := len(vertices) / (6 * 4)
-		if requiredChars == 0 {
-			requiredChars = 1
-		}
-		// Double until enough
-		for fr.maxCharsCap < requiredChars {
-			fr.maxCharsCap *= 2
-		}
-		gl.BufferData(gl.ARRAY_BUFFER, fr.maxCharsCap*6*4*4, nil, gl.DYNAMIC_DRAW)
-	}
-	if len(vertices) > 0 {
-		gl.BufferSubData(gl.ARRAY_BUFFER, 0, len(vertices)*4, gl.Ptr(vertices))
-		gl.DrawArrays(gl.TRIANGLES, 0, int32(len(vertices)/4))
+	neededFloats := len(vertices)
+	if neededFloats > 0 {
+		sz := neededFloats * 4
+		gl.BufferData(gl.ARRAY_BUFFER, sz, nil, gl.DYNAMIC_DRAW)
+		gl.BufferSubData(gl.ARRAY_BUFFER, 0, sz, gl.Ptr(vertices))
+		gl.DrawArrays(gl.TRIANGLES, 0, int32(neededFloats/4))
 	}
 
 	gl.Disable(gl.BLEND)
