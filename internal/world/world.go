@@ -438,7 +438,7 @@ func (w *World) populateChunk(c *Chunk) {
 				topLocal = ChunkSizeY - 1
 			}
 			for ly := 0; ly <= topLocal; ly++ {
-				c.blocks[lx][ly][lz] = BlockTypeGrass
+				c.SetBlock(lx, ly, lz, BlockTypeGrass)
 			}
 		}
 	}

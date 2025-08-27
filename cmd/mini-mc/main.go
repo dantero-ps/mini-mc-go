@@ -78,7 +78,7 @@ func setupWindow() (*glfw.Window, error) {
 	}
 	window.MakeContextCurrent()
 
-	glfw.SwapInterval(0)
+	glfw.SwapInterval(1)
 	window.SetInputMode(glfw.CursorMode, glfw.CursorDisabled)
 
 	return window, nil
@@ -103,7 +103,7 @@ func setupInputHandlers(window *glfw.Window, renderer *graphics.Renderer, p *pla
 		if key == glfw.KeyF && action == glfw.Press {
 			p.ToggleWireframeMode()
 		}
-		if key == glfw.KeyF3 && action == glfw.Press {
+		if key == glfw.KeyV && action == glfw.Press {
 			renderer.ToggleHUD()
 		}
 		if key == glfw.KeyEscape && action == glfw.Press {

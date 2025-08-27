@@ -24,37 +24,55 @@ const (
 )
 
 type Player struct {
-	Position    mgl32.Vec3
-	Velocity    mgl32.Vec3
-	OnGround    bool
-	IsSprinting bool
-	IsSneaking  bool
-	CamYaw      float64
-	CamPitch    float64
-	LastMouseX  float64
-	LastMouseY  float64
-	FirstMouse  bool
+	PrevPosition     mgl32.Vec3
+	Position         mgl32.Vec3
+	Velocity         mgl32.Vec3
+	OnGround         bool
+	IsSprinting      bool
+	IsSneaking       bool
+	PrevHeadBobYaw   float64
+	HeadBobYaw       float64
+	PrevHeadBobPitch float64
+	HeadBobPitch     float64
+	CamYaw           float64
+	CamPitch         float64
+	LastMouseX       float64
+	LastMouseY       float64
+	FirstMouse       bool
+
+	DistanceWalkedModified     float64
+	PrevDistanceWalkedModified float64
 
 	// Interaction
 	HoveredBlock    [3]int
 	HasHoveredBlock bool
 
 	World *world.World
+
+	// Hand animation state
+	handSwingTimer    float64
+	handSwingDuration float64
+	HandSwingProgress float32
+	EquipProgress     float32
 }
 
 func New(world *world.World) *Player {
 	return &Player{
-		Position:    mgl32.Vec3{0, 2.8, 0},
-		Velocity:    mgl32.Vec3{0, 0, 0},
-		OnGround:    false,
-		IsSprinting: false,
-		IsSneaking:  false,
-		CamYaw:      0.0,
-		CamPitch:    0.0,
-		LastMouseX:  0,
-		LastMouseY:  0,
-		FirstMouse:  true,
-		World:       world,
+		Position:          mgl32.Vec3{0, 2.8, 0},
+		Velocity:          mgl32.Vec3{0, 0, 0},
+		OnGround:          false,
+		IsSprinting:       false,
+		IsSneaking:        false,
+		CamYaw:            0.0,
+		CamPitch:          0.0,
+		LastMouseX:        0,
+		LastMouseY:        0,
+		FirstMouse:        true,
+		World:             world,
+		handSwingTimer:    0,
+		handSwingDuration: 0.25,
+		HandSwingProgress: 0,
+		EquipProgress:     0,
 	}
 }
 
@@ -110,6 +128,11 @@ func (p *Player) HandleMouseButton(button glfw.MouseButton, action glfw.Action, 
 			}
 		}
 	}
+
+	// Trigger a hand swing on any primary/secondary press (even if not hitting a block)
+	if action == glfw.Press && (button == glfw.MouseButtonLeft || button == glfw.MouseButtonRight) {
+		p.TriggerHandSwing()
+	}
 }
 
 func (p *Player) Update(dt float64, window *glfw.Window) {
@@ -119,6 +142,24 @@ func (p *Player) Update(dt float64, window *glfw.Window) {
 
 	// Process movement
 	p.UpdatePosition(dt, window)
+
+	// Updates head bobbing animation based on player movement
+	p.UpdateHeadBob()
+
+	// Update hand swing timer/progress
+	if p.handSwingTimer > 0 {
+		p.handSwingTimer -= dt
+		if p.handSwingTimer < 0 {
+			p.handSwingTimer = 0
+		}
+		if p.handSwingDuration > 0 {
+			p.HandSwingProgress = float32(1.0 - p.handSwingTimer/p.handSwingDuration)
+		} else {
+			p.HandSwingProgress = 0
+		}
+	} else {
+		p.HandSwingProgress = 0
+	}
 }
 
 func (p *Player) UpdateHoveredBlock() {
@@ -144,6 +185,9 @@ func (p *Player) UpdatePosition(dt float64, window *glfw.Window) {
 		p.IsSprinting = false
 		p.IsSneaking = false
 	}
+
+	p.PrevPosition = p.Position
+	p.PrevDistanceWalkedModified = p.DistanceWalkedModified
 
 	// Get input direction
 	forward := float32(0)
@@ -327,6 +371,33 @@ func (p *Player) UpdatePosition(dt float64, window *glfw.Window) {
 			p.OnGround = false
 		}
 	}
+
+	positionChange := p.Position.Sub(p.PrevPosition)
+	distanceMoved := math.Sqrt(float64(positionChange.X()*positionChange.X() + positionChange.Z()*positionChange.Z()))
+	p.DistanceWalkedModified = p.DistanceWalkedModified + distanceMoved*0.6
+}
+
+func (p *Player) UpdateHeadBob() {
+	p.PrevHeadBobYaw = p.HeadBobYaw
+	p.PrevHeadBobPitch = p.HeadBobPitch
+
+	f := math.Sqrt(float64(p.Velocity.X()*p.Velocity.X() + p.Velocity.Z()*p.Velocity.Z()))
+	f1 := math.Atan(float64(-p.Velocity.Y()*0.20000000298023224)) * 15.0
+
+	if f > 0.1 {
+		f = 0.1
+	}
+
+	if !p.OnGround {
+		f = 0.0
+	}
+
+	if p.OnGround {
+		f1 = 0.0
+	}
+
+	p.HeadBobYaw += (f - p.HeadBobYaw) * 0.4
+	p.HeadBobPitch += (f1 - p.HeadBobPitch) * 0.8
 }
 
 func (p *Player) GetFrontVector() mgl32.Vec3 {
@@ -359,4 +430,20 @@ var WireframeMode bool = false
 func (p *Player) ToggleWireframeMode() {
 	WireframeMode = !WireframeMode
 	fmt.Printf("Wireframe mode: %v\n", WireframeMode)
+}
+
+// TriggerHandSwing starts a new right-hand swing animation.
+func (p *Player) TriggerHandSwing() {
+	p.handSwingTimer = p.handSwingDuration
+}
+
+// GetHandSwingProgress returns current right-hand swing progress in [0,1].
+func (p *Player) GetHandSwingProgress() float32 {
+	return p.HandSwingProgress
+}
+
+// GetHandEquipProgress returns current equip animation progress in [0,1].
+// Reserved for future item switching.
+func (p *Player) GetHandEquipProgress() float32 {
+	return p.EquipProgress
 }

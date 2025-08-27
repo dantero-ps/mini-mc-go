@@ -32,6 +32,8 @@ const (
 	CrosshairFragShader = "crosshair.frag"
 	DirectionVertShader = "direction.vert"
 	DirectionFragShader = "direction.frag"
+	HandVertShader      = "hand.vert"
+	HandFragShader      = "hand.frag"
 )
 
 var CrosshairVertices = []float32{
@@ -124,6 +126,12 @@ type Renderer struct {
 	directionVBO uint32
 	letterVAO    uint32
 	letterVBO    uint32
+
+	// First-person hand
+	handShader      *Shader
+	handVAO         uint32
+	handVBO         uint32
+	handVertexCount int32
 
 	// Global atlas VBO/VAO for static chunk geometry (pos+normal interleaved)
 	atlasVAO           uint32
@@ -491,6 +499,16 @@ func NewRenderer() (*Renderer, error) {
 	renderer.setupDirectionVAO()
 	renderer.setupLetterVAO()
 	renderer.setupAtlas()
+
+	// Hand shader and VAO
+	handVertPath := filepath.Join(ShadersDir, HandVertShader)
+	handFragPath := filepath.Join(ShadersDir, HandFragShader)
+	sh, err := NewShader(handVertPath, handFragPath)
+	if err != nil {
+		return nil, err
+	}
+	renderer.handShader = sh
+	renderer.setupHandVAO()
 	renderer.chunkMeshes = make(map[world.ChunkCoord]*chunkMesh)
 	renderer.columnMeshes = make(map[[2]int]*columnMesh)
 
@@ -567,8 +585,6 @@ func (r *Renderer) DrawFilledRect(x, y, w, h float32, color mgl32.Vec3, alpha fl
 	gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
 
 	r.uiShader.Use()
-	r.uiShader.SetVector3("uColor", color.X(), color.Y(), color.Z())
-	// Set alpha via separate uniform by packing into vec4: re-use SetFloat? create specific SetVector4? We'll pack via gl.Uniform4f
 	loc := gl.GetUniformLocation(r.uiShader.ID, gl.Str("uColor\x00"))
 	gl.Uniform4f(loc, color.X(), color.Y(), color.Z(), alpha)
 
@@ -673,6 +689,58 @@ func (r *Renderer) setupAtlas() {
 	gl.BindBuffer(gl.ARRAY_BUFFER, 0)
 }
 
+// setupHandVAO creates a simple rectangular prism to represent the right arm
+func (r *Renderer) setupHandVAO() {
+	l, rgt := float32(-2), float32(2)
+	b, top := float32(-2), float32(10)
+	bk, ft := float32(-2), float32(2)
+
+	// pos only (no normals) to keep shader minimal
+	vertexData := []float32{
+		// Front face - normal: (0,0,1)
+		l, b, ft, 0, 0, 1, rgt, b, ft, 0, 0, 1, rgt, top, ft, 0, 0, 1,
+		rgt, top, ft, 0, 0, 1, l, top, ft, 0, 0, 1, l, b, ft, 0, 0, 1,
+
+		// Back face - normal: (0,0,-1)
+		rgt, b, bk, 0, 0, -1, l, b, bk, 0, 0, -1, l, top, bk, 0, 0, -1,
+		l, top, bk, 0, 0, -1, rgt, top, bk, 0, 0, -1, rgt, b, bk, 0, 0, -1,
+
+		// Left face - normal: (-1,0,0)
+		l, b, bk, -1, 0, 0, l, b, ft, -1, 0, 0, l, top, ft, -1, 0, 0,
+		l, top, ft, -1, 0, 0, l, top, bk, -1, 0, 0, l, b, bk, -1, 0, 0,
+
+		// Right face - normal: (1,0,0)
+		rgt, b, ft, 1, 0, 0, rgt, b, bk, 1, 0, 0, rgt, top, bk, 1, 0, 0,
+		rgt, top, bk, 1, 0, 0, rgt, top, ft, 1, 0, 0, rgt, b, ft, 1, 0, 0,
+
+		// Top face - normal: (0,1,0)
+		l, top, ft, 0, 1, 0, rgt, top, ft, 0, 1, 0, rgt, top, bk, 0, 1, 0,
+		rgt, top, bk, 0, 1, 0, l, top, bk, 0, 1, 0, l, top, ft, 0, 1, 0,
+
+		// Bottom face - normal: (0,-1,0)
+		l, b, bk, 0, -1, 0, rgt, b, bk, 0, -1, 0, rgt, b, ft, 0, -1, 0,
+		rgt, b, ft, 0, -1, 0, l, b, ft, 0, -1, 0, l, b, bk, 0, -1, 0,
+	}
+
+	gl.GenVertexArrays(1, &r.handVAO)
+	gl.GenBuffers(1, &r.handVBO)
+	gl.BindVertexArray(r.handVAO)
+	gl.BindBuffer(gl.ARRAY_BUFFER, r.handVBO)
+	gl.BufferData(gl.ARRAY_BUFFER, len(vertexData)*4, gl.Ptr(vertexData), gl.STATIC_DRAW)
+
+	// Position attribute (location = 0)
+	gl.EnableVertexAttribArray(0)
+	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, 6*4, gl.PtrOffset(0))
+
+	// Normal attribute (location = 1)
+	gl.EnableVertexAttribArray(1)
+	gl.VertexAttribPointer(1, 3, gl.FLOAT, false, 6*4, gl.PtrOffset(3*4))
+
+	gl.BindBuffer(gl.ARRAY_BUFFER, 0)
+	gl.BindVertexArray(0)
+	r.handVertexCount = int32(len(vertexData) / 6)
+}
+
 func (r *Renderer) Render(w *world.World, p *player.Player, dt float64) {
 	// Start frame profiling
 	r.startFrameProfiling()
@@ -755,6 +823,10 @@ func (r *Renderer) Render(w *world.World, p *player.Player, dt float64) {
 
 	gl.PolygonMode(gl.FRONT_AND_BACK, gl.FILL)
 
+	if err := gl.GetError(); err != gl.NO_ERROR {
+		fmt.Printf("OpenGL error before draw: %d\n", err)
+	}
+
 	// Render highlighted block
 	if p.HasHoveredBlock {
 		func() {
@@ -762,6 +834,12 @@ func (r *Renderer) Render(w *world.World, p *player.Player, dt float64) {
 			r.renderHighlightedBlock(p.HoveredBlock, view, projection)
 		}()
 	}
+
+	if err := gl.GetError(); err != gl.NO_ERROR {
+		fmt.Printf("OpenGL error after draw: %d\n", err)
+	}
+
+	func() { defer profiling.Track("renderer.renderHand")(); r.renderHand(p, dt) }()
 
 	// Render crosshair
 	func() { defer profiling.Track("renderer.renderCrosshair")(); r.renderCrosshair() }()
@@ -777,6 +855,10 @@ func (r *Renderer) Render(w *world.World, p *player.Player, dt float64) {
 	// Optional profiling HUD
 	if r.showProfiling {
 		r.RenderProfilingInfo()
+	}
+
+	if err := gl.GetError(); err != gl.NO_ERROR {
+		fmt.Printf("OpenGL error after draw: %d\n", err)
 	}
 
 	// End frame profiling
@@ -850,22 +932,11 @@ func (r *Renderer) calculateFrameTimeStats() {
 
 // updateGPUMemoryUsage queries OpenGL for current memory usage
 func (r *Renderer) updateGPUMemoryUsage() {
-	// Note: These extensions may not be available on all systems
-	// We'll use safe fallbacks if they're not supported
-
-	// Try to get GPU memory info (NVidia)
-	if gl.GetString(gl.EXTENSIONS) != nil {
-		extensions := gl.GoStr(gl.GetString(gl.EXTENSIONS))
-		if strings.Contains(extensions, "GL_NVX_gpu_memory_info") {
-			var totalMemory int32
-			gl.GetIntegerv(0x9048, &totalMemory)                        // GL_GPU_MEMORY_INFO_TOTAL_AVAILABLE_MEMORY_NVX
-			r.profilingStats.gpuMemoryUsage = int64(totalMemory) * 1024 // Convert KB to bytes
-		}
-	}
-
-	// For now, we'll estimate based on our buffers and textures
 	r.profilingStats.bufferMemoryUsage = r.estimateBufferMemoryUsage()
 	r.profilingStats.textureMemoryUsage = r.estimateTextureMemoryUsage()
+
+	// Set a reasonable estimate for total GPU memory usage
+	r.profilingStats.gpuMemoryUsage = r.profilingStats.bufferMemoryUsage + r.profilingStats.textureMemoryUsage
 }
 
 // estimateBufferMemoryUsage estimates memory used by OpenGL buffers
@@ -1439,7 +1510,7 @@ func (r *Renderer) renderHighlightedBlock(blockPos [3]int, view, projection mgl3
 	vbStart := time.Now()
 	gl.BindVertexArray(r.wireframeVAO)
 	r.profilingStats.vaoBindTime += time.Since(vbStart)
-	gl.LineWidth(2.0)
+	gl.LineWidth(1.0)
 
 	// Track draw call
 	r.trackDrawCall(len(world.CubeWireframeVertices))
@@ -1460,11 +1531,80 @@ func (r *Renderer) renderCrosshair() {
 	vbStart := time.Now()
 	gl.BindVertexArray(r.crosshairVAO)
 	r.profilingStats.vaoBindTime += time.Since(vbStart)
-	gl.LineWidth(2.0)
+	gl.LineWidth(1.0)
 
 	// Track draw call
 	r.trackDrawCall(4)
 	gl.DrawArrays(gl.LINES, 0, 4)
+}
+
+func (r *Renderer) renderHand(p *player.Player, dt float64) {
+	gl.Clear(gl.DEPTH_BUFFER_BIT)
+	proj := r.camera.GetProjectionMatrix()
+
+	swing := p.GetHandSwingProgress()
+	equip := p.GetHandEquipProgress()
+
+	f := float32(-0.3 * math.Sin(math.Sqrt(float64(swing))*math.Pi))
+	f1 := float32(0.4 * math.Sin(math.Sqrt(float64(swing))*math.Pi*2.0))
+	f2 := float32(-0.4 * math.Sin(float64(swing)*math.Pi))
+	f3 := float32(math.Sin(float64(swing*swing) * math.Pi))
+	f4 := float32(math.Sin(math.Sqrt(float64(swing)) * math.Pi))
+
+	model := mgl32.Ident4()
+	model = r.setupViewBobbing(p, model, dt)
+	model = model.Mul4(mgl32.Translate3D(f, f1, f2))
+	model = model.Mul4(mgl32.Translate3D(0.64000005, -0.3, -0.72))
+	model = model.Mul4(mgl32.Translate3D(0.0, -0.6*equip, 0.0))
+	model = model.Mul4(mgl32.HomogRotate3D(mgl32.DegToRad(45.0), mgl32.Vec3{0, 1, 0}))
+	model = model.Mul4(mgl32.HomogRotate3D(mgl32.DegToRad(70.0)*f4, mgl32.Vec3{0, 1, 0}))
+	model = model.Mul4(mgl32.HomogRotate3D(mgl32.DegToRad(-20.0)*f3, mgl32.Vec3{0, 0, 1}))
+	model = model.Mul4(mgl32.Translate3D(-1.0, 3.6, 3.5))
+	model = model.Mul4(mgl32.HomogRotate3D(mgl32.DegToRad(120.0), mgl32.Vec3{0, 0, 1}))
+	model = model.Mul4(mgl32.HomogRotate3D(mgl32.DegToRad(200.0), mgl32.Vec3{1, 0, 0}))
+	model = model.Mul4(mgl32.HomogRotate3D(mgl32.DegToRad(-135.0), mgl32.Vec3{0, 1, 0}))
+	model = model.Mul4(mgl32.Translate3D(5.6, 0.0, 0.0))
+	model = model.Mul4(mgl32.Scale3D(0.0625, 0.0625, 0.0625))
+
+	r.handShader.Use()
+	r.handShader.SetMatrix4("proj", &proj[0])
+	r.handShader.SetMatrix4("model", &model[0])
+
+	lightPos := mgl32.Vec3{2, 55, 2}
+	r.handShader.SetVector3("lightPos", lightPos.X(), lightPos.Y(), lightPos.Z())
+
+	viewPos := mgl32.Vec3{0, 50, 0}
+	r.handShader.SetVector3("viewPos", viewPos.X(), viewPos.Y(), viewPos.Z())
+
+	gl.Disable(gl.CULL_FACE)
+	gl.BindVertexArray(r.handVAO)
+	gl.DrawArrays(gl.TRIANGLES, 0, r.handVertexCount)
+	gl.BindVertexArray(0)
+	gl.Enable(gl.CULL_FACE)
+}
+
+func (r *Renderer) setupViewBobbing(p *player.Player, model mgl32.Mat4, dt float64) mgl32.Mat4 {
+	f := p.DistanceWalkedModified - p.PrevDistanceWalkedModified
+	f1 := -(p.DistanceWalkedModified + f*dt)
+	f2 := p.PrevHeadBobYaw + (p.HeadBobYaw-p.PrevHeadBobYaw)*dt
+	f3 := p.PrevHeadBobPitch + (p.HeadBobPitch-p.PrevHeadBobPitch)*dt
+
+	const deg2rad = math.Pi / 180.0
+
+	tx := float32(math.Sin(f1*math.Pi) * f2 * 0.5)
+	ty := float32(-math.Abs(math.Cos(f1*math.Pi) * f2))
+	model = model.Mul4(mgl32.Translate3D(tx, ty, 0))
+
+	angZ := float32(math.Sin(f1*math.Pi)*f2*3.0) * float32(deg2rad)
+	model = model.Mul4(mgl32.HomogRotate3D(angZ, mgl32.Vec3{0, 0, 1}))
+
+	angX1 := float32(math.Abs(math.Cos(f1*math.Pi-0.2)*f2)*5.0) * float32(deg2rad)
+	model = model.Mul4(mgl32.HomogRotate3D(angX1, mgl32.Vec3{1, 0, 0}))
+
+	angX2 := float32(f3) * float32(deg2rad) / 50
+	model = model.Mul4(mgl32.HomogRotate3D(angX2, mgl32.Vec3{1, 0, 0}))
+
+	return model
 }
 
 // drawDirectionLetter draws the specified direction letter
@@ -1493,7 +1633,7 @@ func (r *Renderer) drawDirectionLetter(letter string) {
 	vbStart := time.Now()
 	gl.BindVertexArray(r.letterVAO)
 	r.profilingStats.vaoBindTime += time.Since(vbStart)
-	gl.LineWidth(2.0)
+	gl.LineWidth(1.0)
 
 	// Track draw call
 	r.trackDrawCall(len(vertices))
@@ -1526,7 +1666,7 @@ func (r *Renderer) renderDirection(p *player.Player) {
 	vbStart := time.Now()
 	gl.BindVertexArray(r.directionVAO)
 	r.profilingStats.vaoBindTime += time.Since(vbStart)
-	gl.LineWidth(2.0)
+	gl.LineWidth(1.0)
 
 	// Track draw calls
 	r.trackDrawCall(4)                // Arrow body
@@ -1643,7 +1783,7 @@ func (r *Renderer) ProfilingSetPhysics(physics time.Duration) {
 	r.profilingStats.lastPhysicsDuration = physics
 }
 
-// renderProfilingInfo renders the current profiling information on screen
+// RenderProfilingInfo renders the current profiling information on screen
 func (r *Renderer) RenderProfilingInfo() {
 	defer profiling.Track("renderer.hud")()
 	lines := make([]string, 0, 32)
@@ -1719,7 +1859,7 @@ func (r *Renderer) RenderProfilingInfo() {
 	// Top profiling lines
 	if top := profiling.TopN(10); top != "" {
 		for _, line := range strings.Split(top, ", ") {
-			if line != "" && !strings.Contains(line, ":0ms") && strings.HasPrefix(line, "renderer.renderBlocks") {
+			if line != "" && !strings.Contains(line, ":0ms") {
 				lines = append(lines, line)
 			}
 		}
