@@ -2,10 +2,17 @@ package main
 
 import (
 	"fmt"
+	"mini-mc/internal/graphics/renderables/crosshair"
+	"mini-mc/internal/graphics/renderables/direction"
+	"mini-mc/internal/graphics/renderables/hand"
+	"mini-mc/internal/graphics/renderables/wireframe"
 	"runtime"
 	"time"
 
-	"mini-mc/internal/graphics"
+	"mini-mc/internal/graphics/renderables/blocks"
+	"mini-mc/internal/graphics/renderables/hud"
+	"mini-mc/internal/graphics/renderables/ui"
+	renderer "mini-mc/internal/graphics/renderer"
 	"mini-mc/internal/player"
 	"mini-mc/internal/profiling"
 	"mini-mc/internal/world"
@@ -32,8 +39,25 @@ func main() {
 		panic(err)
 	}
 
-	// Initialize renderer
-	renderer, err := graphics.NewRenderer()
+	// Initialize renderable features
+	blocksRenderer := blocks.NewBlocks()
+	wireframeRenderer := wireframe.NewWireframe()
+	crosshairRenderer := crosshair.NewCrosshair()
+	directionRenderer := direction.NewDirection()
+	handRenderer := hand.NewHand()
+	uiRenderer := ui.NewUI()
+	hudRenderer := hud.NewHUD()
+
+	// Initialize renderer with all features
+	r, err := renderer.NewRenderer(
+		blocksRenderer,
+		wireframeRenderer,
+		crosshairRenderer,
+		directionRenderer,
+		handRenderer,
+		uiRenderer,
+		hudRenderer,
+	)
 	if err != nil {
 		panic(err)
 	}
@@ -60,10 +84,10 @@ func main() {
 	paused := false
 
 	// Setup input handlers
-	setupInputHandlers(window, renderer, gamePlayer, gameWorld, &paused)
+	setupInputHandlers(window, r, hudRenderer, gamePlayer, gameWorld, &paused)
 
 	// Main game loop
-	runGameLoop(window, renderer, gamePlayer, gameWorld, &paused)
+	runGameLoop(window, r, uiRenderer, hudRenderer, gamePlayer, gameWorld, &paused)
 }
 
 func setupWindow() (*glfw.Window, error) {
@@ -72,19 +96,19 @@ func setupWindow() (*glfw.Window, error) {
 	glfw.WindowHint(glfw.OpenGLForwardCompatible, glfw.True)
 	glfw.WindowHint(glfw.OpenGLProfile, glfw.OpenGLCoreProfile)
 
-	window, err := glfw.CreateWindow(graphics.WinWidth, graphics.WinHeight, "mini-mc", nil, nil)
+	window, err := glfw.CreateWindow(900, 600, "mini-mc", nil, nil)
 	if err != nil {
 		return nil, err
 	}
 	window.MakeContextCurrent()
 
-	glfw.SwapInterval(1)
+	glfw.SwapInterval(0)
 	window.SetInputMode(glfw.CursorMode, glfw.CursorDisabled)
 
 	return window, nil
 }
 
-func setupInputHandlers(window *glfw.Window, renderer *graphics.Renderer, p *player.Player, gameWorld *world.World, paused *bool) {
+func setupInputHandlers(window *glfw.Window, r *renderer.Renderer, hudRenderer *hud.HUD, p *player.Player, gameWorld *world.World, paused *bool) {
 	// Mouse position callback
 	window.SetCursorPosCallback(func(w *glfw.Window, xpos, ypos float64) {
 		if !*paused {
@@ -104,7 +128,7 @@ func setupInputHandlers(window *glfw.Window, renderer *graphics.Renderer, p *pla
 			p.ToggleWireframeMode()
 		}
 		if key == glfw.KeyV && action == glfw.Press {
-			renderer.ToggleHUD()
+			hudRenderer.ToggleProfiling()
 		}
 		if key == glfw.KeyEscape && action == glfw.Press {
 			*paused = !*paused
@@ -118,7 +142,7 @@ func setupInputHandlers(window *glfw.Window, renderer *graphics.Renderer, p *pla
 	})
 }
 
-func runGameLoop(window *glfw.Window, renderer *graphics.Renderer, p *player.Player, w *world.World, paused *bool) {
+func runGameLoop(window *glfw.Window, r *renderer.Renderer, uiRenderer *ui.UI, hudRenderer *hud.HUD, p *player.Player, w *world.World, paused *bool) {
 	frames := 0
 	lastFPSCheckTime := time.Now()
 	lastTime := time.Now()
@@ -161,12 +185,16 @@ func runGameLoop(window *glfw.Window, renderer *graphics.Renderer, p *player.Pla
 			}()
 			func() {
 				defer profiling.Track("renderer.PruneMeshesByWorld")()
-				renderer.PruneMeshesByWorld(w, p.Position, 40)
+				_ = blocks.PruneMeshesByWorld(w, p.Position[0], p.Position[2], 40)
 			}()
 			lastPrune = time.Now()
 		}
 
-		renderer.Render(w, p, dt)
+		// Measure render duration precisely
+		renderStart := time.Now()
+		r.Render(w, p, dt)
+		renderDur := time.Since(renderStart)
+		hudRenderer.ProfilingSetRenderDuration(renderDur)
 		frames++
 
 		if time.Since(lastFPSCheckTime) >= time.Second {
@@ -175,23 +203,19 @@ func runGameLoop(window *glfw.Window, renderer *graphics.Renderer, p *player.Pla
 			lastFPSCheckTime = time.Now()
 		}
 
-		if renderer.HUDEnabled() {
-			renderer.RenderProfilingInfo()
-		}
-
 		// Pause overlay and Resume button
 		if *paused {
 			// Dim background
-			renderer.DrawFilledRect(0, 0, float32(graphics.WinWidth), float32(graphics.WinHeight), mgl32.Vec3{0, 0, 0}, 0.45)
+			uiRenderer.DrawFilledRect(0, 0, 900, 600, mgl32.Vec3{0, 0, 0}, 0.45)
 			label := "Devam Et"
 			scale := float32(1.0)
-			tw, th := renderer.MeasureText(label, scale)
+			tw, th := hudRenderer.MeasureText(label, scale)
 			paddingX := float32(24)
 			paddingY := float32(14)
 			btnW = tw + paddingX*2
 			btnH = th + paddingY*2
-			btnX = (float32(graphics.WinWidth) - btnW) / 2
-			btnY = (float32(graphics.WinHeight) - btnH) / 2
+			btnX = (900 - btnW) / 2
+			btnY = (600 - btnH) / 2
 
 			cx, cy := window.GetCursorPos()
 			hover := float32(cx) >= btnX && float32(cx) <= btnX+btnW && float32(cy) >= btnY && float32(cy) <= btnY+btnH
@@ -199,11 +223,11 @@ func runGameLoop(window *glfw.Window, renderer *graphics.Renderer, p *player.Pla
 			if hover {
 				base = mgl32.Vec3{0.30, 0.30, 0.30}
 			}
-			renderer.DrawFilledRect(btnX, btnY, btnW, btnH, base, 0.85)
+			uiRenderer.DrawFilledRect(btnX, btnY, btnW, btnH, base, 0.85)
 			// Text
 			tx := btnX + paddingX
 			ty := btnY + paddingY + th
-			renderer.RenderText(label, tx, ty, scale, mgl32.Vec3{1, 1, 1})
+			hudRenderer.RenderText(label, tx, ty, scale, mgl32.Vec3{1, 1, 1})
 
 			mouseDown := window.GetMouseButton(glfw.MouseButtonLeft) == glfw.Press
 			if mouseDown && !mouseWasDown && hover {
@@ -221,19 +245,16 @@ func runGameLoop(window *glfw.Window, renderer *graphics.Renderer, p *player.Pla
 		// After presenting, record durations for next frame's HUD
 		totalFrameDur := time.Since(now)
 		swapEventsDur := profiling.SumWithPrefix("glfw.")
-		preRenderDur := totalFrameDur - swapEventsDur - time.Duration(float64(renderer.GetProfilingStats()["frameDuration"].(time.Duration)))
+		preRenderDur := totalFrameDur - swapEventsDur - renderDur
 		if preRenderDur < 0 {
 			preRenderDur = 0
 		}
-		renderer.ProfilingSetLastTotalFrameDuration(totalFrameDur)
-		renderer.ProfilingSetLastUpdateDuration(updateDur)
+		hudRenderer.ProfilingSetLastTotalFrameDuration(totalFrameDur)
+		hudRenderer.ProfilingSetLastUpdateDuration(updateDur)
 		// Update breakdown fields (main thread only)
-		renderer.ProfilingSetBreakdown(playerDur, worldDur, glfwDur, 0, profiling.SumWithPrefix("renderer.PruneMeshesByWorld"))
-		renderer.ProfilingSetPhysics(physicsDur)
-		// store physics separately
-		stats := renderer.GetProfilingStats()
-		_ = stats
-		renderer.ProfilingSetPhases(preRenderDur, swapEventsDur)
+		hudRenderer.ProfilingSetBreakdown(playerDur, worldDur, glfwDur, 0, profiling.SumWithPrefix("renderer.PruneMeshesByWorld"))
+		hudRenderer.ProfilingSetPhysics(physicsDur)
+		hudRenderer.ProfilingSetPhases(preRenderDur, swapEventsDur)
 		// Console timing after swap
 	}
 }

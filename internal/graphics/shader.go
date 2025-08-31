@@ -33,15 +33,6 @@ func NewShader(vertexPath, fragmentPath string) (*Shader, error) {
 	return &Shader{ID: program}, nil
 }
 
-// NewShaderFromSource creates a new shader program from source strings
-func NewShaderFromSource(vertexSrc, fragmentSrc string) (*Shader, error) {
-	program, err := compileProgram(vertexSrc, fragmentSrc)
-	if err != nil {
-		return nil, err
-	}
-	return &Shader{ID: program}, nil
-}
-
 // Use activates the shader program
 func (s *Shader) Use() {
 	gl.UseProgram(s.ID)

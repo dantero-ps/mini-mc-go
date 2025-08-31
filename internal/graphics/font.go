@@ -15,6 +15,15 @@ import (
 	"golang.org/x/image/math/fixed"
 )
 
+const (
+	ShadersDir = "assets/shaders/hud"
+)
+
+var (
+	FontVertShader = filepath.Join(ShadersDir, "font.vert")
+	FontFragShader = filepath.Join(ShadersDir, "font.frag")
+)
+
 // FontCharacter describes a single character's placement and metrics within the atlas
 type FontCharacter struct {
 	// Pixel coordinates of the glyph in the atlas texture (top-left origin)
@@ -188,9 +197,7 @@ func NewFontRenderer(atlas *FontAtlasInfo) (*FontRenderer, error) {
 	if atlas == nil || len(atlas.Characters) == 0 {
 		return nil, fmt.Errorf("invalid font atlas")
 	}
-	vert := filepath.Join(ShadersDir, "font.vert")
-	frag := filepath.Join(ShadersDir, "font.frag")
-	shader, err := NewShader(vert, frag)
+	shader, err := NewShader(FontVertShader, FontFragShader)
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +205,7 @@ func NewFontRenderer(atlas *FontAtlasInfo) (*FontRenderer, error) {
 		atlas:       atlas,
 		shader:      shader,
 		maxCharsCap: 256,
-		projection:  mgl32.Ortho(0, float32(WinWidth), float32(WinHeight), 0, 0, 1),
+		projection:  mgl32.Ortho(0, 900, 600, 0, 0, 1),
 	}
 	fr.initGL()
 	return fr, nil
