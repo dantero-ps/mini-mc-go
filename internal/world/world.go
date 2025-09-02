@@ -401,24 +401,6 @@ func (w *World) generateChunkSync(coord ChunkCoord) {
 		w.chunks[coord] = chunk
 	}
 	w.mu.Unlock()
-
-	// Mark adjacent chunks dirty so their meshes rebuild and drop temporary border faces
-	neighbors := []ChunkCoord{
-		{X: coord.X + 1, Y: coord.Y, Z: coord.Z},
-		{X: coord.X - 1, Y: coord.Y, Z: coord.Z},
-		{X: coord.X, Y: coord.Y + 1, Z: coord.Z},
-		{X: coord.X, Y: coord.Y - 1, Z: coord.Z},
-		{X: coord.X, Y: coord.Y, Z: coord.Z + 1},
-		{X: coord.X, Y: coord.Y, Z: coord.Z - 1},
-	}
-	for _, n := range neighbors {
-		w.mu.RLock()
-		nb := w.chunks[n]
-		w.mu.RUnlock()
-		if nb != nil {
-			nb.dirty = true
-		}
-	}
 }
 
 // populateChunk fills a chunk using noise heightmap

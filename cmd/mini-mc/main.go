@@ -244,6 +244,15 @@ func runGameLoop(window *glfw.Window, r *renderer.Renderer, uiRenderer *ui.UI, h
 
 		// After presenting, record durations for next frame's HUD
 		totalFrameDur := time.Since(now)
+
+		// Check if frame took longer than target 120 FPS (8.33ms)
+		targetFrameTime := time.Duration(1000000000 / 120) // 8.33ms in nanoseconds
+		if totalFrameDur > targetFrameTime {
+			fmt.Printf("Frame took too long: %.2fms (target: %.2fms)\n",
+				float64(totalFrameDur.Nanoseconds())/1000000.0,
+				float64(targetFrameTime.Nanoseconds())/1000000.0)
+		}
+
 		swapEventsDur := profiling.SumWithPrefix("glfw.")
 		preRenderDur := totalFrameDur - swapEventsDur - renderDur
 		if preRenderDur < 0 {

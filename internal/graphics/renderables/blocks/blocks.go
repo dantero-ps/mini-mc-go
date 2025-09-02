@@ -126,11 +126,6 @@ func (b *Blocks) renderBlocksInternal(ctx renderer.RenderContext) {
 		return extractFrustumPlanes(clip)
 	}()
 
-	nearRadiusChunks := 12
-	// Per-frame build budgets to avoid long stalls on first frames
-	nearBuildBudget := 24
-	farBuildBudget := 8
-
 	// Hard cap for render radius to shrink candidate set pre-cull/sort
 	maxRenderRadiusChunks := 24
 
@@ -139,33 +134,58 @@ func (b *Blocks) renderBlocksInternal(ctx renderer.RenderContext) {
 	pcx := px / world.ChunkSizeX
 	pcz := pz / world.ChunkSizeZ
 
-	// Collect visible chunks with optimized frustum culling
-	var visible []world.ChunkWithCoord
+	// Phase 1: ensure meshes for all loaded chunks within render radius (prepare data for columns)
+	var nearbyChunks []world.ChunkWithCoord
 	{
-		stop := profiling.Track("renderer.renderBlocks.collectVisible")
+		stop := profiling.Track("renderer.renderBlocks.ensureMeshes")
 		all := ctx.World.GetAllChunks()
 		if cap(b.visibleScratch) < len(all) {
 			b.visibleScratch = make([]world.ChunkWithCoord, 0, len(all))
 		} else {
 			b.visibleScratch = b.visibleScratch[:0]
 		}
-		visible = b.visibleScratch
+		nearbyChunks = b.visibleScratch
 
-		// Pre-calculate common values to avoid repeated calculations
+		// Pre-generate meshes for all chunks within render radius, regardless of view direction
 		maxRadiusSq := maxRenderRadiusChunks * maxRenderRadiusChunks
-		chunkSizeXf := float32(world.ChunkSizeX)
-		chunkSizeYf := float32(world.ChunkSizeY)
-		chunkSizeZf := float32(world.ChunkSizeZ)
-		margin := frustumMargin
 
 		for _, cc := range all {
-			// Early reject by chunk-distance radius to avoid plane tests for far chunks
+			// Only check distance-based culling for mesh generation
 			dxr := cc.Coord.X - pcx
 			dzr := cc.Coord.Z - pcz
 			if dxr*dxr+dzr*dzr > maxRadiusSq {
 				continue
 			}
+			nearbyChunks = append(nearbyChunks, cc)
 
+			// Generate mesh for this chunk
+			coord := cc.Coord
+			ch := cc.Chunk
+			if ch == nil {
+				continue
+			}
+			existing := chunkMeshes[coord]
+			needsBuild := existing == nil || ch.IsDirty()
+			if needsBuild {
+				_ = ensureChunkMesh(ctx.World, coord, ch)
+			}
+		}
+		stop()
+	}
+
+	// Collect visible chunks with frustum culling (for rendering only)
+	var visible []world.ChunkWithCoord
+	{
+		stop := profiling.Track("renderer.renderBlocks.collectVisible")
+		visible = make([]world.ChunkWithCoord, 0, len(nearbyChunks))
+
+		// Pre-calculate common values to avoid repeated calculations
+		chunkSizeXf := float32(world.ChunkSizeX)
+		chunkSizeYf := float32(world.ChunkSizeY)
+		chunkSizeZf := float32(world.ChunkSizeZ)
+		margin := frustumMargin
+
+		for _, cc := range nearbyChunks {
 			// Calculate chunk bounds with pre-computed constants
 			cx := float32(cc.Coord.X) * chunkSizeXf
 			cy := float32(cc.Coord.Y) * chunkSizeYf
@@ -185,39 +205,6 @@ func (b *Blocks) renderBlocksInternal(ctx renderer.RenderContext) {
 		}
 		stop()
 	}
-
-	// Update frustum culling statistics
-	func() {
-		defer profiling.Track("renderer.renderBlocks.updateStats")()
-		// No renderer-global counters here; HUD collects stats independently.
-	}()
-
-	// Phase 1: ensure meshes per budgets (prepare data for columns)
-	func() {
-		defer profiling.Track("renderer.renderBlocks.ensureMeshes")()
-		nearRadiusSq := nearRadiusChunks * nearRadiusChunks
-		for _, cc := range visible {
-			coord := cc.Coord
-			ch := cc.Chunk
-			if ch == nil {
-				continue
-			}
-			dx := coord.X - pcx
-			dz := coord.Z - pcz
-			isNear := dx*dx+dz*dz <= nearRadiusSq
-			existing := chunkMeshes[coord]
-			needsBuild := existing == nil || ch.IsDirty()
-			if needsBuild {
-				if isNear && nearBuildBudget > 0 {
-					_ = ensureChunkMesh(ctx.World, coord, ch)
-					nearBuildBudget--
-				} else if !isNear && farBuildBudget > 0 {
-					_ = ensureChunkMesh(ctx.World, coord, ch)
-					farBuildBudget--
-				}
-			}
-		}
-	}()
 
 	// Phase 2: single multi-draw over atlas
 	func() {
