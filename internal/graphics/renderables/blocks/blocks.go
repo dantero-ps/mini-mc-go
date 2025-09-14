@@ -2,6 +2,7 @@ package blocks
 
 import (
 	"math"
+	"mini-mc/internal/config"
 	"mini-mc/internal/graphics"
 	renderer "mini-mc/internal/graphics/renderer"
 	"mini-mc/internal/player"
@@ -127,7 +128,7 @@ func (b *Blocks) renderBlocksInternal(ctx renderer.RenderContext) {
 	}()
 
 	// Hard cap for render radius to shrink candidate set pre-cull/sort
-	maxRenderRadiusChunks := 24
+	maxRenderRadiusChunks := config.GetMaxRenderRadius()
 
 	px := int(math.Floor(float64(ctx.Player.Position[0])))
 	pz := int(math.Floor(float64(ctx.Player.Position[2])))

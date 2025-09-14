@@ -3,6 +3,7 @@ package blocks
 import (
 	"mini-mc/internal/meshing"
 	"mini-mc/internal/world"
+	"sync"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 )
@@ -13,54 +14,136 @@ var chunkMeshes map[world.ChunkCoord]*chunkMesh
 // Per-column (XZ) combined meshes to reduce draw/cull granularity
 var columnMeshes map[[2]int]*columnMesh
 
+// Global mesh worker pool
+var meshPool *meshing.WorkerPool
+
+// Pending mesh jobs - tracks which chunks have jobs in progress
+var pendingMeshJobs map[world.ChunkCoord]chan meshing.MeshResult
+var pendingMeshMutex sync.RWMutex
+
+// Results channel for completed mesh jobs
+var meshResultsChannel = make(chan meshing.MeshResult, 100)
+
+// InitMeshSystem initializes the mesh worker pool and data structures
+func InitMeshSystem(workers int) {
+	meshPool = meshing.NewWorkerPool(workers, 200) // 200 job queue size
+	chunkMeshes = make(map[world.ChunkCoord]*chunkMesh)
+	columnMeshes = make(map[[2]int]*columnMesh)
+	pendingMeshJobs = make(map[world.ChunkCoord]chan meshing.MeshResult)
+}
+
+// ShutdownMeshSystem gracefully shuts down the mesh worker pool
+func ShutdownMeshSystem() {
+	if meshPool != nil {
+		meshPool.Shutdown()
+	}
+}
+
+// ProcessMeshResults processes completed mesh results from worker pool
+// Should be called regularly from the main render thread
+func ProcessMeshResults() {
+	for {
+		select {
+		case result := <-meshResultsChannel:
+			applyMeshResult(result)
+		default:
+			return // No more results to process this frame
+		}
+	}
+}
+
+// applyMeshResult applies a completed mesh result to OpenGL buffers
+func applyMeshResult(result meshing.MeshResult) {
+	coord := result.Coord
+
+	// Remove from pending jobs
+	pendingMeshMutex.Lock()
+	delete(pendingMeshJobs, coord)
+	pendingMeshMutex.Unlock()
+
+	if result.Error != nil {
+		return // Skip on error
+	}
+
+	existing := chunkMeshes[coord]
+	if existing == nil {
+		existing = &chunkMesh{}
+		gl.GenVertexArrays(1, &existing.vao)
+		gl.GenBuffers(1, &existing.vbo)
+		// Setup VAO attribute layout (pos.xyz, normal.xyz)
+		gl.BindVertexArray(existing.vao)
+		gl.BindBuffer(gl.ARRAY_BUFFER, existing.vbo)
+		gl.EnableVertexAttribArray(0)
+		gl.VertexAttribPointer(0, 3, gl.FLOAT, false, 6*4, gl.PtrOffset(0))
+		gl.EnableVertexAttribArray(1)
+		gl.VertexAttribPointer(1, 3, gl.FLOAT, false, 6*4, gl.PtrOffset(3*4))
+	} else {
+		gl.BindVertexArray(existing.vao)
+		gl.BindBuffer(gl.ARRAY_BUFFER, existing.vbo)
+	}
+
+	verts := result.Vertices
+	if len(verts) > 0 {
+		gl.BufferData(gl.ARRAY_BUFFER, len(verts)*4, gl.Ptr(verts), gl.STATIC_DRAW)
+		existing.vertexCount = int32(len(verts) / 6)
+		// Keep CPU copy for atlas updates
+		existing.cpuVerts = verts
+		// Append/update in atlas
+		appendOrUpdateAtlas(existing)
+		// Invalidate combined column mesh
+		key := [2]int{coord.X, coord.Z}
+		if col := columnMeshes[key]; col != nil {
+			col.dirty = true
+		}
+	} else {
+		existing.vertexCount = 0
+		existing.cpuVerts = nil
+		// Still upload zero to keep state valid
+		gl.BufferData(gl.ARRAY_BUFFER, 0, nil, gl.STATIC_DRAW)
+	}
+	chunkMeshes[coord] = existing
+}
+
 func ensureChunkMesh(w *world.World, coord world.ChunkCoord, ch *world.Chunk) *chunkMesh {
 	if ch == nil {
 		return nil
 	}
+
 	existing := chunkMeshes[coord]
-	// Rebuild if missing or dirty
-	if existing == nil || ch.IsDirty() {
-		// Create or update GL resources
-		if existing == nil {
-			existing = &chunkMesh{}
-			gl.GenVertexArrays(1, &existing.vao)
-			gl.GenBuffers(1, &existing.vbo)
-			// Setup VAO attribute layout (pos.xyz, normal.xyz)
-			gl.BindVertexArray(existing.vao)
-			gl.BindBuffer(gl.ARRAY_BUFFER, existing.vbo)
-			gl.EnableVertexAttribArray(0)
-			gl.VertexAttribPointer(0, 3, gl.FLOAT, false, 6*4, gl.PtrOffset(0))
-			gl.EnableVertexAttribArray(1)
-			gl.VertexAttribPointer(1, 3, gl.FLOAT, false, 6*4, gl.PtrOffset(3*4))
-		} else {
-			gl.BindVertexArray(existing.vao)
-			gl.BindBuffer(gl.ARRAY_BUFFER, existing.vbo)
-		}
 
-		// Build greedy mesh
-		verts := meshing.BuildGreedyMeshForChunk(w, ch)
-
-		if len(verts) > 0 {
-			gl.BufferData(gl.ARRAY_BUFFER, len(verts)*4, gl.Ptr(verts), gl.STATIC_DRAW)
-			existing.vertexCount = int32(len(verts) / 6)
-			// Keep CPU copy for atlas updates
-			existing.cpuVerts = verts
-			// Append/update in atlas
-			appendOrUpdateAtlas(existing)
-			// Invalidate combined column mesh
-			key := [2]int{coord.X, coord.Z}
-			if col := columnMeshes[key]; col != nil {
-				col.dirty = true
-			}
-		} else {
-			existing.vertexCount = 0
-			existing.cpuVerts = nil
-			// Still upload zero to keep state valid
-			gl.BufferData(gl.ARRAY_BUFFER, 0, nil, gl.STATIC_DRAW)
-		}
-		chunkMeshes[coord] = existing
-		ch.SetClean()
+	// Return existing mesh if present and chunk is clean
+	if existing != nil && !ch.IsDirty() {
+		return existing
 	}
+
+	// Check if we already have a pending job for this chunk
+	pendingMeshMutex.RLock()
+	_, hasPendingJob := pendingMeshJobs[coord]
+	pendingMeshMutex.RUnlock()
+
+	// If chunk is dirty and no job is pending, submit a new mesh job
+	if ch.IsDirty() && !hasPendingJob && meshPool != nil {
+		// Create job and submit to worker pool
+		job := meshing.MeshJob{
+			World:      w,
+			Chunk:      ch,
+			Coord:      coord,
+			ResultChan: meshResultsChannel,
+		}
+
+		// Try to submit job (non-blocking)
+		if meshPool.SubmitJob(job) {
+			// Mark as pending
+			pendingMeshMutex.Lock()
+			pendingMeshJobs[coord] = meshResultsChannel
+			pendingMeshMutex.Unlock()
+
+			// Mark chunk as clean to prevent duplicate submissions
+			ch.SetClean()
+		}
+	}
+
+	// Return existing mesh if available, even if it's being updated
 	return existing
 }
 

@@ -47,7 +47,7 @@ type ChunkCoord struct {
 func New() *World {
 	w := &World{
 		chunks:         make(map[ChunkCoord]*Chunk),
-		jobs:           make(chan ChunkCoord, 1024),
+		jobs:           make(chan ChunkCoord, 4096),
 		pending:        make(map[ChunkCoord]struct{}),
 		seed:           1337,
 		scale:          1.0 / 64.0,
@@ -56,8 +56,8 @@ func New() *World {
 		octaves:        4,
 		persistence:    0.5,
 		lacunarity:     2.0,
-		maxJobsPerCall: 256,
-		maxPending:     8192,
+		maxJobsPerCall: 2048,
+		maxPending:     16384,
 		heightCache:    make(map[[2]int]int),
 	}
 

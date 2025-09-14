@@ -54,19 +54,23 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, baseX, baseY, baseZ
 
 	// Helper lambda to push a quad made of two triangles with given 4 corners and normal
 	emitQuad := func(x0, y0, z0, x1, y1, z1, x2, y2, z2, x3, y3, z3 float32, fnx, fny, fnz float32) {
-		// shift coordinates by -0.5 to align block centers to integer positions
+		// Axis mapping offsets:
+		// - X and Z remain centered at integer coordinates (0.5)
+		// - Y uses top-face-at-integer mapping (1.0)
 		ox := float32(0.5)
+		oy := float32(1.0)
+		oz := float32(0.5)
 		// Triangle 1: v0,v1,v2
 		vertices = append(vertices,
-			x0-ox, y0-ox, z0-ox, fnx, fny, fnz,
-			x1-ox, y1-ox, z1-ox, fnx, fny, fnz,
-			x2-ox, y2-ox, z2-ox, fnx, fny, fnz,
+			x0-ox, y0-oy, z0-oz, fnx, fny, fnz,
+			x1-ox, y1-oy, z1-oz, fnx, fny, fnz,
+			x2-ox, y2-oy, z2-oz, fnx, fny, fnz,
 		)
 		// Triangle 2: v2,v3,v0
 		vertices = append(vertices,
-			x2-ox, y2-ox, z2-ox, fnx, fny, fnz,
-			x3-ox, y3-ox, z3-ox, fnx, fny, fnz,
-			x0-ox, y0-ox, z0-ox, fnx, fny, fnz,
+			x2-ox, y2-oy, z2-oz, fnx, fny, fnz,
+			x3-ox, y3-oy, z3-oz, fnx, fny, fnz,
+			x0-ox, y0-oy, z0-oz, fnx, fny, fnz,
 		)
 	}
 

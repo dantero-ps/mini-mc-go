@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"time"
 
+	"mini-mc/internal/config"
 	"mini-mc/internal/graphics/renderables/blocks"
 	"mini-mc/internal/graphics/renderables/hud"
 	"mini-mc/internal/graphics/renderables/ui"
@@ -65,9 +66,13 @@ func main() {
 	// Create world
 	gameWorld := world.New()
 
+	// Initialize mesh worker pool system (4 workers for mesh generation)
+	blocks.InitMeshSystem(4)
+	defer blocks.ShutdownMeshSystem()
+
 	// Generate a smaller initial spawn area synchronously to keep startup smooth
 	spawnX, spawnZ := float32(0), float32(0)
-	gameWorld.StreamChunksAroundSync(spawnX, spawnZ, 10)
+	gameWorld.StreamChunksAroundSync(spawnX, spawnZ, 20)
 
 	// Compute ground level at spawn
 	tempPos := mgl32.Vec3{spawnX, 300, spawnZ}
@@ -150,6 +155,9 @@ func runGameLoop(window *glfw.Window, r *renderer.Renderer, uiRenderer *ui.UI, h
 	mouseWasDown := false
 	var btnX, btnY, btnW, btnH float32
 
+	// Render distance slider state
+	renderDistanceSlider := float32(config.GetRenderDistance()-5) / float32(50-5) // Normalize to 0-1
+
 	for !window.ShouldClose() {
 		profiling.ResetFrame()
 		now := time.Now()
@@ -173,19 +181,25 @@ func runGameLoop(window *glfw.Window, r *renderer.Renderer, uiRenderer *ui.UI, h
 		if !*paused {
 			func() {
 				defer profiling.Track("world.StreamChunksAroundAsync")()
-				w.StreamChunksAroundAsync(p.Position[0], p.Position[2], 24)
+				w.StreamChunksAroundAsync(p.Position[0], p.Position[2], config.GetChunkLoadRadius())
 			}()
 		}
+
+		// Process completed mesh results from worker pool
+		func() {
+			defer profiling.Track("blocks.ProcessMeshResults")()
+			blocks.ProcessMeshResults()
+		}()
 
 		// Periodically evict far chunks and prune renderer meshes
 		if !*paused && time.Since(lastPrune) > 750*time.Millisecond {
 			func() {
 				defer profiling.Track("world.EvictFarChunks")()
-				w.EvictFarChunks(p.Position[0], p.Position[2], 40)
+				w.EvictFarChunks(p.Position[0], p.Position[2], config.GetChunkEvictRadius())
 			}()
 			func() {
 				defer profiling.Track("renderer.PruneMeshesByWorld")()
-				_ = blocks.PruneMeshesByWorld(w, p.Position[0], p.Position[2], 40)
+				_ = blocks.PruneMeshesByWorld(w, p.Position[0], p.Position[2], config.GetChunkEvictRadius())
 			}()
 			lastPrune = time.Now()
 		}
@@ -207,6 +221,35 @@ func runGameLoop(window *glfw.Window, r *renderer.Renderer, uiRenderer *ui.UI, h
 		if *paused {
 			// Dim background
 			uiRenderer.DrawFilledRect(0, 0, 900, 600, mgl32.Vec3{0, 0, 0}, 0.45)
+
+			// Render Distance Slider
+			sliderLabel := "Render Distance"
+			sliderScale := float32(0.8)
+			_, sliderTH := hudRenderer.MeasureText(sliderLabel, sliderScale)
+			sliderX := float32(350)
+			sliderY := float32(200)
+			sliderW := float32(200)
+			sliderH := float32(20)
+
+			// Draw slider label
+			hudRenderer.RenderText(sliderLabel, sliderX, sliderY-10, sliderScale, mgl32.Vec3{1, 1, 1})
+
+			// Draw and handle slider (snap to steps equal to render distance range)
+			steps := 50 - 5 + 1 // inclusive range [5..50]
+			newSliderValue := uiRenderer.DrawSlider(sliderX, sliderY, sliderW, sliderH, renderDistanceSlider, window, steps)
+			if newSliderValue != renderDistanceSlider {
+				renderDistanceSlider = newSliderValue
+				// Convert slider value to render distance (5-50 range)
+				newDistance := int(float32(5) + renderDistanceSlider*float32(50-5) + 0.5)
+				config.SetRenderDistance(newDistance)
+			}
+
+			// Show current render distance value
+			currentDistance := config.GetRenderDistance()
+			distanceText := fmt.Sprintf("%d chunks", currentDistance)
+			hudRenderer.RenderText(distanceText, sliderX+sliderW+10, sliderY+sliderH/2+sliderTH/2, sliderScale, mgl32.Vec3{0.8, 0.8, 0.8})
+
+			// Resume button
 			label := "Devam Et"
 			scale := float32(1.0)
 			tw, th := hudRenderer.MeasureText(label, scale)
@@ -215,7 +258,7 @@ func runGameLoop(window *glfw.Window, r *renderer.Renderer, uiRenderer *ui.UI, h
 			btnW = tw + paddingX*2
 			btnH = th + paddingY*2
 			btnX = (900 - btnW) / 2
-			btnY = (600 - btnH) / 2
+			btnY = float32(300) // Move button lower to make space for slider
 
 			cx, cy := window.GetCursorPos()
 			hover := float32(cx) >= btnX && float32(cx) <= btnX+btnW && float32(cy) >= btnY && float32(cy) <= btnY+btnH
@@ -245,15 +288,17 @@ func runGameLoop(window *glfw.Window, r *renderer.Renderer, uiRenderer *ui.UI, h
 		// After presenting, record durations for next frame's HUD
 		totalFrameDur := time.Since(now)
 
-		// Check if frame took longer than target 120 FPS (8.33ms)
+		swapEventsDur := profiling.SumWithPrefix("glfw.")
+
+		// With V-Sync enabled, only check actual processing time (excluding SwapBuffers wait)
+		// SwapBuffers() waits for display refresh which adds unavoidable delay
+		processingDur := renderDur + updateDur
 		targetFrameTime := time.Duration(1000000000 / 120) // 8.33ms in nanoseconds
-		if totalFrameDur > targetFrameTime {
-			fmt.Printf("Frame took too long: %.2fms (target: %.2fms)\n",
-				float64(totalFrameDur.Nanoseconds())/1000000.0,
+		if processingDur > targetFrameTime {
+			fmt.Printf("Frame processing too slow: %.2fms (target: %.2fms)\n",
+				float64(processingDur.Nanoseconds())/1000000.0,
 				float64(targetFrameTime.Nanoseconds())/1000000.0)
 		}
-
-		swapEventsDur := profiling.SumWithPrefix("glfw.")
 		preRenderDur := totalFrameDur - swapEventsDur - renderDur
 		if preRenderDur < 0 {
 			preRenderDur = 0

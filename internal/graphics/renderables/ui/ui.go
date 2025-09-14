@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/glfw/v3.3/glfw"
 	"github.com/go-gl/mathgl/mgl32"
 )
 
@@ -22,9 +23,10 @@ var (
 
 // UI implements UI rendering for rectangles and text
 type UI struct {
-	shader *graphics.Shader
-	vao    uint32
-	vbo    uint32
+	shader           *graphics.Shader
+	vao              uint32
+	vbo              uint32
+	isDraggingSlider bool
 }
 
 // NewUI creates a new UI renderable
@@ -69,6 +71,98 @@ func (u *UI) Dispose() {
 	if u.vbo != 0 {
 		gl.DeleteBuffers(1, &u.vbo)
 	}
+}
+
+// DrawSlider draws a horizontal slider with the given value (0.0-1.0) and returns the new value. Supports drag capture and optional step snapping with tick marks.
+func (u *UI) DrawSlider(x, y, w, h float32, value float32, window interface{}, steps int) float32 {
+	// Draw slider track
+	trackColor := mgl32.Vec3{0.3, 0.3, 0.3}
+	u.DrawFilledRect(x, y, w, h, trackColor, 0.8)
+
+	// Draw step ticks if requested
+	if steps > 1 {
+		tickHeight := h * 0.6
+		tickY := y + (h-tickHeight)*0.5
+		tickWidth := float32(2)
+		tickColor := mgl32.Vec3{0.9, 0.9, 0.9}
+		for i := 0; i < steps; i++ {
+			var ratio float32
+			if steps <= 1 {
+				ratio = 0
+			} else {
+				ratio = float32(i) / float32(steps-1)
+			}
+			tx := x + ratio*w - tickWidth*0.5
+			u.DrawFilledRect(tx, tickY, tickWidth, tickHeight, tickColor, 0.18)
+		}
+	}
+
+	// Thumb size
+	thumbWidth := float32(20)
+	thumbHeight := h
+
+	// Mouse interaction with drag capture and snapping
+	if glfwWindow, ok := window.(*glfw.Window); ok {
+		cx, cy := glfwWindow.GetCursorPos()
+		mouseX, mouseY := float32(cx), float32(cy)
+		leftDown := glfwWindow.GetMouseButton(glfw.MouseButtonLeft) == glfw.Press
+
+		inside := mouseY >= y && mouseY <= y+h && mouseX >= x && mouseX <= x+w
+
+		if u.isDraggingSlider {
+			if leftDown {
+				v := (mouseX - x) / w
+				if v < 0 {
+					v = 0
+				}
+				if v > 1 {
+					v = 1
+				}
+				if steps > 1 {
+					denom := float32(steps - 1)
+					stepIndex := int(v*denom + 0.5)
+					if stepIndex < 0 {
+						stepIndex = 0
+					}
+					if stepIndex > steps-1 {
+						stepIndex = steps - 1
+					}
+					v = float32(stepIndex) / denom
+				}
+				value = v
+			} else {
+				u.isDraggingSlider = false
+			}
+		} else if leftDown && inside {
+			// Begin drag
+			u.isDraggingSlider = true
+			v := (mouseX - x) / w
+			if v < 0 {
+				v = 0
+			}
+			if v > 1 {
+				v = 1
+			}
+			if steps > 1 {
+				denom := float32(steps - 1)
+				stepIndex := int(v*denom + 0.5)
+				if stepIndex < 0 {
+					stepIndex = 0
+				}
+				if stepIndex > steps-1 {
+					stepIndex = steps - 1
+				}
+				v = float32(stepIndex) / denom
+			}
+			value = v
+		}
+	}
+
+	thumbX := x + (w-thumbWidth)*value
+	thumbColor := mgl32.Vec3{0.6, 0.6, 0.6}
+	u.DrawFilledRect(thumbX, y, thumbWidth, thumbHeight, thumbColor, 0.9)
+
+	return value
 }
 
 // DrawFilledRect draws a screen-space rectangle (pixels, top-left origin) with RGBA color.

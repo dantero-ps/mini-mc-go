@@ -41,14 +41,14 @@ func Raycast(start mgl32.Vec3, direction mgl32.Vec3, minDist, maxDist float32, w
 
 		blockPos := [3]int{
 			int(math.Floor(float64(pos.X()) + 0.5)),
-			int(math.Floor(float64(pos.Y()) + 0.5)),
+			int(math.Ceil(float64(pos.Y()))),
 			int(math.Floor(float64(pos.Z()) + 0.5)),
 		}
 
 		if !world.IsAir(blockPos[0], blockPos[1], blockPos[2]) {
 			bx, by, bz := float32(blockPos[0]), float32(blockPos[1]), float32(blockPos[2])
 			if pos.X() >= bx-0.5 && pos.X() < bx+0.5 &&
-				pos.Y() >= by-0.5 && pos.Y() < by+0.5 &&
+				pos.Y() > by-1.0 && pos.Y() <= by &&
 				pos.Z() >= bz-0.5 && pos.Z() < bz+0.5 {
 
 				result.HitPosition = blockPos

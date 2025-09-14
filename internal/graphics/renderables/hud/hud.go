@@ -83,14 +83,14 @@ type HUD struct {
 // NewHUD creates a new HUD renderable
 func NewHUD() *HUD {
 	return &HUD{
-		showProfiling: false,
+		showProfiling: true,
 	}
 }
 
 // Init initializes the HUD rendering system
 func (h *HUD) Init() error {
 	// Load font atlas and renderer
-	fontPath := filepath.Join("assets", "fonts", "OpenSans-LightItalic.ttf")
+	fontPath := filepath.Join("assets", "fonts", "OpenSans-Regular.ttf")
 	atlas, err := graphics.BuildFontAtlas(fontPath, 24)
 	if err != nil {
 		return err
@@ -301,8 +301,8 @@ func (h *HUD) RenderProfilingInfo() {
 
 	textColor := mgl32.Vec3{1.0, 1.0, 1.0}
 	startY := float32(60)
-	lineStep := float32(14)
-	h.fontRenderer.RenderLines(lines, 10, startY, lineStep, 0.6, textColor)
+	lineStep := float32(17)
+	h.fontRenderer.RenderLines(lines, 10, startY, lineStep, 0.75, textColor)
 }
 
 // Helper methods for profiling data management
