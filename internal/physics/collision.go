@@ -58,7 +58,8 @@ func FindGroundLevel(x, z float32, playerPos mgl32.Vec3, world *world.World) flo
 	playerMinZ := z - 0.3
 	playerMaxZ := z + 0.3
 
-	maxGroundY := float32(0)
+	// Use -Inf to indicate "no ground found"
+	maxGroundY := float32(math.Inf(-1))
 	for bx := minX; bx <= maxX; bx++ {
 		for bz := minZ; bz <= maxZ; bz++ {
 			// Only consider blocks that overlap horizontally with player footprint
