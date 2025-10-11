@@ -120,8 +120,11 @@ func (p *Player) HandleMouseButton(button glfw.MouseButton, action glfw.Action, 
 				// Clamp Y placement into [0,255]
 				if result.AdjacentPosition[1] >= 0 && result.AdjacentPosition[1] <= 255 {
 					ax, ay, az := result.AdjacentPosition[0], result.AdjacentPosition[1], result.AdjacentPosition[2]
-					// Only place if empty and does not intersect player
-					if p.World.IsAir(ax, ay, az) && !physics.IntersectsBlock(p.Position, PlayerHeight, ax, ay, az) {
+					// Allow placement if empty and either not intersecting player
+					// or the block's top is at/below the player's feet (pillar-up case)
+					targetTop := float32(ay)
+					placingUnderFeet := targetTop <= p.Position[1]+0.001
+					if p.World.IsAir(ax, ay, az) && (placingUnderFeet || !physics.IntersectsBlock(p.Position, PlayerHeight, ax, ay, az)) {
 						p.World.Set(ax, ay, az, world.BlockTypeGrass)
 					}
 				}
@@ -316,10 +319,14 @@ func (p *Player) UpdatePosition(dt float64, window *glfw.Window) {
 		}
 	} else {
 		if p.Velocity[1] <= 0 {
-			// Landing on ground
-			p.OnGround = true
+			// Landing on ground (only if ground exists)
 			groundLevel := physics.FindGroundLevel(p.Position[0], p.Position[2], p.Position, p.World)
-			p.Position[1] = groundLevel
+			if !float32IsInfNeg(groundLevel) {
+				p.OnGround = true
+				p.Position[1] = groundLevel
+			} else {
+				p.OnGround = false
+			}
 		} else {
 			// Hitting ceiling
 			ceiling := physics.FindCeilingLevel(p.Position[0], p.Position[2], p.Position, PlayerHeight, p.World)
@@ -347,21 +354,23 @@ func (p *Player) UpdatePosition(dt float64, window *glfw.Window) {
 
 	// Final ground settle to avoid micro fall/jitter when hugging walls
 	groundLevel := physics.FindGroundLevel(p.Position[0], p.Position[2], p.Position, p.World)
-	delta := p.Position[1] - groundLevel
-	if p.Velocity[1] <= 0 {
-		if delta < -0.001 {
-			// We're slightly inside ground due to numerical issues
-			p.Position[1] = groundLevel
-			p.Velocity[1] = 0
-			p.OnGround = true
-		} else if delta <= 0.08 {
-			// Close enough to ground: stick
-			p.Position[1] = groundLevel
-			p.Velocity[1] = 0
-			p.OnGround = true
+	if !float32IsInfNeg(groundLevel) {
+		delta := p.Position[1] - groundLevel
+		if p.Velocity[1] <= 0 {
+			if delta < -0.001 {
+				// We're slightly inside ground due to numerical issues
+				p.Position[1] = groundLevel
+				p.Velocity[1] = 0
+				p.OnGround = true
+			} else if delta <= 0.08 {
+				// Close enough to ground: stick
+				p.Position[1] = groundLevel
+				p.Velocity[1] = 0
+				p.OnGround = true
+			}
+		} else if delta > 0.1 {
+			p.OnGround = false
 		}
-	} else if delta > 0.1 {
-		p.OnGround = false
 	}
 
 	// Double check if on ground
@@ -425,6 +434,11 @@ func (p *Player) GetViewMatrix() mgl32.Mat4 {
 }
 
 var WireframeMode bool = false
+
+// float32IsInfNeg reports whether v is negative infinity.
+func float32IsInfNeg(v float32) bool {
+	return math.IsInf(float64(v), -1)
+}
 
 // ToggleWireframeMode, wireframe modunu açıp kapatır
 func (p *Player) ToggleWireframeMode() {
