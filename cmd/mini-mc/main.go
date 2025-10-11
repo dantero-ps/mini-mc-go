@@ -72,7 +72,7 @@ func main() {
 
 	// Generate a smaller initial spawn area synchronously to keep startup smooth
 	spawnX, spawnZ := float32(0), float32(0)
-	gameWorld.StreamChunksAroundSync(spawnX, spawnZ, 20)
+	gameWorld.StreamChunksAroundSync(spawnX, spawnZ, 50)
 
 	// Compute ground level at spawn
 	tempPos := mgl32.Vec3{spawnX, 300, spawnZ}
