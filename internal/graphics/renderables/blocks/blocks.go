@@ -279,7 +279,7 @@ func (b *Blocks) renderBlocksInternal(ctx renderer.RenderContext) {
 					continue
 				}
 				if c.firstVertex < 0 {
-					c.firstVertex = int32(c.firstFloat / 6)
+					c.firstVertex = int32(c.firstFloat / 4)
 				}
 				cf := c.firstVertex
 				cc := c.vertexCount
@@ -313,7 +313,7 @@ func (b *Blocks) renderBlocksInternal(ctx renderer.RenderContext) {
 			}
 			if m := chunkMeshes[vc.Coord]; m != nil && m.vertexCount > 0 && m.firstFloat >= 0 {
 				if m.firstVertex < 0 {
-					m.firstVertex = int32(m.firstFloat / 6)
+					m.firstVertex = int32(m.firstFloat / 4)
 				}
 				fallbackChunks = append(fallbackChunks, m)
 			}

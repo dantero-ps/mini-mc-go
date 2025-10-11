@@ -5,8 +5,8 @@ import (
 	"mini-mc/internal/world"
 )
 
-// VertexStride is number of float32 per vertex (pos.xyz + normal.xyz)
-const VertexStride = 6
+// VertexStride is number of float32 per vertex (pos.xyz + encodedNormal as float)
+const VertexStride = 4
 
 // BuildGreedyMeshForChunk builds a greedy-meshed triangle list (pos+normal interleaved)
 // for the given chunk using world coordinates to decide face visibility across chunk borders.
@@ -52,6 +52,24 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, baseX, baseY, baseZ
 		vertices   []float32
 	)
 
+	// encodeNormal converts normal vector to a single float encoding (0-5 for 6 face directions)
+	encodeNormal := func(nx, ny, nz float32) float32 {
+		if nz > 0.5 {
+			return 0.0 // North (+Z)
+		} else if nz < -0.5 {
+			return 1.0 // South (-Z)
+		} else if nx > 0.5 {
+			return 2.0 // East (+X)
+		} else if nx < -0.5 {
+			return 3.0 // West (-X)
+		} else if ny > 0.5 {
+			return 4.0 // Top (+Y)
+		} else if ny < -0.5 {
+			return 5.0 // Bottom (-Y)
+		}
+		return 6.0 // Default/unknown
+	}
+
 	// Helper lambda to push a quad made of two triangles with given 4 corners and normal
 	emitQuad := func(x0, y0, z0, x1, y1, z1, x2, y2, z2, x3, y3, z3 float32, fnx, fny, fnz float32) {
 		// Axis mapping offsets:
@@ -60,17 +78,18 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, baseX, baseY, baseZ
 		ox := float32(0.5)
 		oy := float32(1.0)
 		oz := float32(0.5)
+		encodedNormal := encodeNormal(fnx, fny, fnz)
 		// Triangle 1: v0,v1,v2
 		vertices = append(vertices,
-			x0-ox, y0-oy, z0-oz, fnx, fny, fnz,
-			x1-ox, y1-oy, z1-oz, fnx, fny, fnz,
-			x2-ox, y2-oy, z2-oz, fnx, fny, fnz,
+			x0-ox, y0-oy, z0-oz, encodedNormal,
+			x1-ox, y1-oy, z1-oz, encodedNormal,
+			x2-ox, y2-oy, z2-oz, encodedNormal,
 		)
 		// Triangle 2: v2,v3,v0
 		vertices = append(vertices,
-			x2-ox, y2-oy, z2-oz, fnx, fny, fnz,
-			x3-ox, y3-oy, z3-oz, fnx, fny, fnz,
-			x0-ox, y0-oy, z0-oz, fnx, fny, fnz,
+			x2-ox, y2-oy, z2-oz, encodedNormal,
+			x3-ox, y3-oy, z3-oz, encodedNormal,
+			x0-ox, y0-oy, z0-oz, encodedNormal,
 		)
 	}
 

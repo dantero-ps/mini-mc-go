@@ -74,9 +74,9 @@ func applyMeshResult(result meshing.MeshResult) {
 		gl.BindVertexArray(existing.vao)
 		gl.BindBuffer(gl.ARRAY_BUFFER, existing.vbo)
 		gl.EnableVertexAttribArray(0)
-		gl.VertexAttribPointer(0, 3, gl.FLOAT, false, 6*4, gl.PtrOffset(0))
+		gl.VertexAttribPointer(0, 3, gl.FLOAT, false, 4*4, gl.PtrOffset(0))
 		gl.EnableVertexAttribArray(1)
-		gl.VertexAttribPointer(1, 3, gl.FLOAT, false, 6*4, gl.PtrOffset(3*4))
+		gl.VertexAttribPointer(1, 1, gl.FLOAT, false, 4*4, gl.PtrOffset(3*4))
 	} else {
 		gl.BindVertexArray(existing.vao)
 		gl.BindBuffer(gl.ARRAY_BUFFER, existing.vbo)
@@ -85,7 +85,7 @@ func applyMeshResult(result meshing.MeshResult) {
 	verts := result.Vertices
 	if len(verts) > 0 {
 		gl.BufferData(gl.ARRAY_BUFFER, len(verts)*4, gl.Ptr(verts), gl.STATIC_DRAW)
-		existing.vertexCount = int32(len(verts) / 6)
+		existing.vertexCount = int32(len(verts) / 4)
 		// Keep CPU copy for atlas updates
 		existing.cpuVerts = verts
 		// Append/update in atlas

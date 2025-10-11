@@ -43,9 +43,9 @@ func ensureAtlasCapacity(requiredBytes int) {
 	gl.BindVertexArray(atlasVAO)
 	gl.BindBuffer(gl.ARRAY_BUFFER, atlasVBO)
 	gl.EnableVertexAttribArray(0)
-	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, 6*4, gl.PtrOffset(0))
+	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, 4*4, gl.PtrOffset(0))
 	gl.EnableVertexAttribArray(1)
-	gl.VertexAttribPointer(1, 3, gl.FLOAT, false, 6*4, gl.PtrOffset(3*4))
+	gl.VertexAttribPointer(1, 1, gl.FLOAT, false, 4*4, gl.PtrOffset(3*4))
 	gl.BindVertexArray(0)
 	gl.BindBuffer(gl.ARRAY_BUFFER, 0)
 
@@ -85,7 +85,7 @@ func rebuildAtlasFromCPU() {
 		offsetBytes := atlasTotalFloats * 4
 		gl.BufferSubData(gl.ARRAY_BUFFER, offsetBytes, bytes, gl.Ptr(m.cpuVerts))
 		m.firstFloat = atlasTotalFloats
-		m.firstVertex = int32(atlasTotalFloats / 6)
+		m.firstVertex = int32(atlasTotalFloats / 4)
 		atlasTotalFloats += len(m.cpuVerts)
 	}
 	gl.BindBuffer(gl.ARRAY_BUFFER, 0)
@@ -102,7 +102,7 @@ func appendOrUpdateAtlas(m *chunkMesh) {
 		return
 	}
 	bytes := len(verts) * 4
-	if m.firstFloat < 0 && m.vertexCount == int32(len(verts)/6) {
+	if m.firstFloat < 0 && m.vertexCount == int32(len(verts)/4) {
 		// Append new
 		requiredBytes := (atlasTotalFloats + len(verts)) * 4
 		ensureAtlasCapacity(requiredBytes)
@@ -111,12 +111,12 @@ func appendOrUpdateAtlas(m *chunkMesh) {
 		gl.BufferSubData(gl.ARRAY_BUFFER, offsetBytes, bytes, gl.Ptr(verts))
 		gl.BindBuffer(gl.ARRAY_BUFFER, 0)
 		m.firstFloat = atlasTotalFloats
-		m.firstVertex = int32(atlasTotalFloats / 6)
+		m.firstVertex = int32(atlasTotalFloats / 4)
 		atlasTotalFloats += len(verts)
 		return
 	}
 	// Update existing region (size may change; simple strategy: if different, re-append)
-	oldCountFloats := int(m.vertexCount) * 6
+	oldCountFloats := int(m.vertexCount) * 4
 	if m.firstFloat >= 0 && oldCountFloats == len(verts) {
 		gl.BindBuffer(gl.ARRAY_BUFFER, atlasVBO)
 		gl.BufferSubData(gl.ARRAY_BUFFER, m.firstFloat*4, bytes, gl.Ptr(verts))
@@ -164,13 +164,13 @@ func ensureColumnMeshForXZ(x, z int) *columnMesh {
 		}
 	}
 	// If size unchanged and region valid, update in place
-	if int32(len(buf)/6) == col.vertexCount && col.firstFloat >= 0 {
+	if int32(len(buf)/4) == col.vertexCount && col.firstFloat >= 0 {
 		gl.BindBuffer(gl.ARRAY_BUFFER, atlasVBO)
 		gl.BufferSubData(gl.ARRAY_BUFFER, col.firstFloat*4, len(buf)*4, gl.Ptr(buf))
 		gl.BindBuffer(gl.ARRAY_BUFFER, 0)
 		col.cpuVerts = buf
 		col.dirty = false
-		col.firstVertex = int32(col.firstFloat / 6)
+		col.firstVertex = int32(col.firstFloat / 4)
 		// keep orderedColumns position
 		return col
 	}
@@ -182,9 +182,9 @@ func ensureColumnMeshForXZ(x, z int) *columnMesh {
 	gl.BufferSubData(gl.ARRAY_BUFFER, offsetBytes, len(buf)*4, gl.Ptr(buf))
 	gl.BindBuffer(gl.ARRAY_BUFFER, 0)
 	col.cpuVerts = buf
-	col.vertexCount = int32(len(buf) / 6)
+	col.vertexCount = int32(len(buf) / 4)
 	col.firstFloat = atlasTotalFloats
-	col.firstVertex = int32(atlasTotalFloats / 6)
+	col.firstVertex = int32(atlasTotalFloats / 4)
 	atlasTotalFloats += len(buf)
 	col.dirty = false
 	// insert into orderedColumns keeping order by firstVertex
@@ -221,11 +221,11 @@ func setupAtlas() {
 	atlasCapacityBytes = initial
 	atlasTotalFloats = 0
 
-	// Attributes: pos.xyz + normal.xyz
+	// Attributes: pos.xyz + encodedNormal (float)
 	gl.EnableVertexAttribArray(0)
-	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, 6*4, gl.PtrOffset(0))
+	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, 4*4, gl.PtrOffset(0))
 	gl.EnableVertexAttribArray(1)
-	gl.VertexAttribPointer(1, 3, gl.FLOAT, false, 6*4, gl.PtrOffset(3*4))
+	gl.VertexAttribPointer(1, 1, gl.FLOAT, false, 4*4, gl.PtrOffset(3*4))
 
 	gl.BindVertexArray(0)
 	gl.BindBuffer(gl.ARRAY_BUFFER, 0)
