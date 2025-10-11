@@ -12,6 +12,10 @@ var (
 	atlasTotalFloats   int
 	firstsScratch      []int32
 	countsScratch      []int32
+	fallbackScratch    []*chunkMesh
+	currentFrame       uint64
+	// ordered list of columns sorted by firstVertex; maintained incrementally
+	orderedColumns []*columnMesh
 )
 
 func ensureAtlasCapacity(requiredBytes int) {
@@ -74,12 +78,14 @@ func rebuildAtlasFromCPU() {
 		_ = coord
 		if m == nil || m.vertexCount == 0 || len(m.cpuVerts) == 0 {
 			m.firstFloat = -1
+			m.firstVertex = -1
 			continue
 		}
 		bytes := len(m.cpuVerts) * 4
 		offsetBytes := atlasTotalFloats * 4
 		gl.BufferSubData(gl.ARRAY_BUFFER, offsetBytes, bytes, gl.Ptr(m.cpuVerts))
 		m.firstFloat = atlasTotalFloats
+		m.firstVertex = int32(atlasTotalFloats / 6)
 		atlasTotalFloats += len(m.cpuVerts)
 	}
 	gl.BindBuffer(gl.ARRAY_BUFFER, 0)
@@ -92,6 +98,7 @@ func appendOrUpdateAtlas(m *chunkMesh) {
 	verts := m.cpuVerts
 	if len(verts) == 0 {
 		m.firstFloat = -1
+		m.firstVertex = -1
 		return
 	}
 	bytes := len(verts) * 4
@@ -104,6 +111,7 @@ func appendOrUpdateAtlas(m *chunkMesh) {
 		gl.BufferSubData(gl.ARRAY_BUFFER, offsetBytes, bytes, gl.Ptr(verts))
 		gl.BindBuffer(gl.ARRAY_BUFFER, 0)
 		m.firstFloat = atlasTotalFloats
+		m.firstVertex = int32(atlasTotalFloats / 6)
 		atlasTotalFloats += len(verts)
 		return
 	}
@@ -123,6 +131,7 @@ func appendOrUpdateAtlas(m *chunkMesh) {
 	gl.BufferSubData(gl.ARRAY_BUFFER, offsetBytes, bytes, gl.Ptr(verts))
 	gl.BindBuffer(gl.ARRAY_BUFFER, 0)
 	m.firstFloat = atlasTotalFloats
+	m.firstVertex = int32(atlasTotalFloats / 6)
 	atlasTotalFloats += len(verts)
 }
 
@@ -130,7 +139,7 @@ func ensureColumnMeshForXZ(x, z int) *columnMesh {
 	key := [2]int{x, z}
 	col := columnMeshes[key]
 	if col == nil {
-		col = &columnMesh{firstFloat: -1, dirty: true}
+		col = &columnMesh{x: x, z: z, firstFloat: -1, firstVertex: -1, dirty: true}
 		columnMeshes[key] = col
 	}
 	if !col.dirty {
@@ -161,6 +170,8 @@ func ensureColumnMeshForXZ(x, z int) *columnMesh {
 		gl.BindBuffer(gl.ARRAY_BUFFER, 0)
 		col.cpuVerts = buf
 		col.dirty = false
+		col.firstVertex = int32(col.firstFloat / 6)
+		// keep orderedColumns position
 		return col
 	}
 	// Otherwise append new region
@@ -173,8 +184,29 @@ func ensureColumnMeshForXZ(x, z int) *columnMesh {
 	col.cpuVerts = buf
 	col.vertexCount = int32(len(buf) / 6)
 	col.firstFloat = atlasTotalFloats
+	col.firstVertex = int32(atlasTotalFloats / 6)
 	atlasTotalFloats += len(buf)
 	col.dirty = false
+	// insert into orderedColumns keeping order by firstVertex
+	if col.firstVertex >= 0 {
+		inserted := false
+		for i, c := range orderedColumns {
+			if c == nil || c.firstVertex < 0 {
+				continue
+			}
+			if col.firstVertex < c.firstVertex {
+				// insert at i
+				orderedColumns = append(orderedColumns, nil)
+				copy(orderedColumns[i+1:], orderedColumns[i:])
+				orderedColumns[i] = col
+				inserted = true
+				break
+			}
+		}
+		if !inserted {
+			orderedColumns = append(orderedColumns, col)
+		}
+	}
 	return col
 }
 

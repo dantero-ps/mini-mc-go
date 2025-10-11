@@ -8,6 +8,7 @@ import (
 	"mini-mc/internal/player"
 	"mini-mc/internal/profiling"
 	"mini-mc/internal/world"
+	"time"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
@@ -17,12 +18,29 @@ import (
 type Blocks struct {
 	mainShader     *graphics.Shader
 	visibleScratch []world.ChunkWithCoord
+	// throttling & state
+	ensureEvery time.Duration
+	lastEnsure  time.Time
+	lastChunkX  int
+	lastChunkZ  int
+	// cache of nearby chunks to avoid per-frame radius scans
+	cachedPCX    int
+	cachedPCZ    int
+	cachedRadius int
+	cachedNearby []world.ChunkWithCoord
 }
 
 // NewBlocks creates a new blocks renderable
 func NewBlocks() *Blocks {
 	return &Blocks{
 		visibleScratch: make([]world.ChunkWithCoord, 0, 1024),
+		ensureEvery:    200 * time.Millisecond,
+		lastChunkX:     1<<31 - 1, // sentinel so first run triggers
+		lastChunkZ:     1<<31 - 1,
+		cachedPCX:      1<<31 - 1,
+		cachedPCZ:      1<<31 - 1,
+		cachedRadius:   -1,
+		cachedNearby:   make([]world.ChunkWithCoord, 0, 1024),
 	}
 }
 
@@ -135,31 +153,39 @@ func (b *Blocks) renderBlocksInternal(ctx renderer.RenderContext) {
 	pcx := px / world.ChunkSizeX
 	pcz := pz / world.ChunkSizeZ
 
-	// Phase 1: ensure meshes for all loaded chunks within render radius (prepare data for columns)
+	// Phase 1: collect nearby chunks only when player enters a new chunk or radius changes
 	var nearbyChunks []world.ChunkWithCoord
-	{
-		stop := profiling.Track("renderer.renderBlocks.ensureMeshes")
-		all := ctx.World.GetAllChunks()
-		if cap(b.visibleScratch) < len(all) {
-			b.visibleScratch = make([]world.ChunkWithCoord, 0, len(all))
-		} else {
-			b.visibleScratch = b.visibleScratch[:0]
+	sameCell := pcx == b.cachedPCX && pcz == b.cachedPCZ && maxRenderRadiusChunks == b.cachedRadius
+	if !sameCell {
+		// Query only chunks in radius using world's column index and cache the result
+		b.visibleScratch = b.visibleScratch[:0]
+		tmp := ctx.World.AppendChunksInRadiusXZ(pcx, pcz, maxRenderRadiusChunks, b.visibleScratch)
+		b.cachedNearby = append(b.cachedNearby[:0], tmp...)
+		b.cachedPCX, b.cachedPCZ = pcx, pcz
+		b.cachedRadius = maxRenderRadiusChunks
+	}
+	nearbyChunks = b.cachedNearby
+
+	shouldEnsure := false
+	// If any nearby chunk is dirty, rebuild immediately (reflect edits without delay)
+	hasDirty := false
+	for _, cc := range nearbyChunks {
+		if cc.Chunk != nil && cc.Chunk.IsDirty() {
+			hasDirty = true
+			break
 		}
-		nearbyChunks = b.visibleScratch
-
-		// Pre-generate meshes for all chunks within render radius, regardless of view direction
-		maxRadiusSq := maxRenderRadiusChunks * maxRenderRadiusChunks
-
-		for _, cc := range all {
-			// Only check distance-based culling for mesh generation
-			dxr := cc.Coord.X - pcx
-			dzr := cc.Coord.Z - pcz
-			if dxr*dxr+dzr*dzr > maxRadiusSq {
-				continue
-			}
-			nearbyChunks = append(nearbyChunks, cc)
-
-			// Generate mesh for this chunk
+	}
+	if b.lastChunkX != pcx || b.lastChunkZ != pcz {
+		shouldEnsure = true
+		b.lastChunkX, b.lastChunkZ = pcx, pcz
+	} else if time.Since(b.lastEnsure) >= b.ensureEvery {
+		shouldEnsure = true
+	} else if hasDirty {
+		shouldEnsure = true
+	}
+	if shouldEnsure {
+		stop := profiling.Track("renderer.renderBlocks.ensureMeshes")
+		for _, cc := range nearbyChunks {
 			coord := cc.Coord
 			ch := cc.Chunk
 			if ch == nil {
@@ -171,6 +197,7 @@ func (b *Blocks) renderBlocksInternal(ctx renderer.RenderContext) {
 				_ = ensureChunkMesh(ctx.World, coord, ch)
 			}
 		}
+		b.lastEnsure = time.Now()
 		stop()
 	}
 
@@ -217,52 +244,80 @@ func (b *Blocks) renderBlocksInternal(ctx renderer.RenderContext) {
 			colSet[xz{vc.Coord.X, vc.Coord.Z}] = struct{}{}
 		}
 		// First ensure/update columns
+		// Increment frame and mark visible columns for this frame to avoid per-frame maps
+		forMarked := false
 		for k := range colSet {
-			_ = ensureColumnMeshForXZ(k.x, k.z)
-		}
-		// Build draw lists after any atlas growth to avoid stale offsets
-		cols := make([]*columnMesh, 0, len(colSet))
-		drawnCols := make(map[[2]int]struct{}, len(colSet))
-		for k := range colSet {
-			key := [2]int{k.x, k.z}
-			col := columnMeshes[key]
-			if col != nil && !col.dirty && col.vertexCount > 0 && col.firstFloat >= 0 {
-				cols = append(cols, col)
-				drawnCols[key] = struct{}{}
+			col := ensureColumnMeshForXZ(k.x, k.z)
+			if !forMarked {
+				currentFrame++
+				forMarked = true
+			}
+			if col != nil {
+				col.visibleFrame = currentFrame
 			}
 		}
-		// Fallback per-chunk for columns not drawn
-		fallbackChunks := make([]*chunkMesh, 0, len(visible))
-		for _, vc := range visible {
-			key := [2]int{vc.Coord.X, vc.Coord.Z}
-			if _, ok := drawnCols[key]; ok {
-				continue
-			}
-			if m := chunkMeshes[vc.Coord]; m != nil && m.vertexCount > 0 && m.firstFloat >= 0 {
-				fallbackChunks = append(fallbackChunks, m)
-			}
-		}
-		// Draw ready columns
-		if len(cols) > 0 {
-			if cap(firstsScratch) < len(cols) {
-				firstsScratch = make([]int32, len(cols))
-				countsScratch = make([]int32, len(cols))
+		// Draw ready columns using a single pass over orderedColumns (already ordered by firstVertex)
+		if len(colSet) > 0 {
+			if cap(firstsScratch) < len(colSet) {
+				firstsScratch = make([]int32, len(colSet))
+				countsScratch = make([]int32, len(colSet))
 			}
 			firsts := firstsScratch[:0]
 			counts := countsScratch[:0]
-			for _, c := range cols {
-				if c.firstFloat < 0 || c.vertexCount <= 0 || c.dirty {
+			var lastFirst int32
+			var lastCount int32
+			hasRun := false
+			for _, c := range orderedColumns {
+				if c == nil {
 					continue
 				}
-				firsts = append(firsts, int32(c.firstFloat/6))
-				counts = append(counts, c.vertexCount)
+				// Skip if not visible this frame or already drawn via a duplicate entry
+				if c.visibleFrame != currentFrame || c.drawnFrame == currentFrame {
+					continue
+				}
+				if c.dirty || c.vertexCount <= 0 || c.firstFloat < 0 {
+					continue
+				}
+				if c.firstVertex < 0 {
+					c.firstVertex = int32(c.firstFloat / 6)
+				}
+				cf := c.firstVertex
+				cc := c.vertexCount
+				if hasRun && cf == lastFirst+lastCount {
+					lastCount += cc
+					counts[len(counts)-1] = lastCount
+				} else {
+					firsts = append(firsts, cf)
+					counts = append(counts, cc)
+					lastFirst = cf
+					lastCount = cc
+					hasRun = true
+				}
+				c.drawnFrame = currentFrame
 			}
 			if len(counts) > 0 {
 				gl.BindVertexArray(atlasVAO)
 				gl.MultiDrawArrays(gl.TRIANGLES, &firsts[0], &counts[0], int32(len(counts)))
 			}
 		}
-		// Draw fallback chunks (if any) to avoid pop-in on first sight
+		// Collect and draw fallback chunks (columns not drawn this frame)
+		if cap(fallbackScratch) < len(visible) {
+			fallbackScratch = make([]*chunkMesh, 0, len(visible))
+		}
+		fallbackChunks := fallbackScratch[:0]
+		for _, vc := range visible {
+			key := [2]int{vc.Coord.X, vc.Coord.Z}
+			col := columnMeshes[key]
+			if col != nil && col.drawnFrame == currentFrame {
+				continue
+			}
+			if m := chunkMeshes[vc.Coord]; m != nil && m.vertexCount > 0 && m.firstFloat >= 0 {
+				if m.firstVertex < 0 {
+					m.firstVertex = int32(m.firstFloat / 6)
+				}
+				fallbackChunks = append(fallbackChunks, m)
+			}
+		}
 		if len(fallbackChunks) > 0 {
 			if cap(firstsScratch) < len(fallbackChunks) {
 				firstsScratch = make([]int32, len(fallbackChunks))
@@ -271,10 +326,10 @@ func (b *Blocks) renderBlocksInternal(ctx renderer.RenderContext) {
 			firsts := firstsScratch[:0]
 			counts := countsScratch[:0]
 			for _, m := range fallbackChunks {
-				if m.firstFloat < 0 || m.vertexCount <= 0 {
+				if m.firstVertex < 0 || m.vertexCount <= 0 {
 					continue
 				}
-				firsts = append(firsts, int32(m.firstFloat/6))
+				firsts = append(firsts, m.firstVertex)
 				counts = append(counts, m.vertexCount)
 			}
 			if len(counts) > 0 {

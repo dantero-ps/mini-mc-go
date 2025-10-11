@@ -15,6 +15,9 @@ type World struct {
 	chunks map[ChunkCoord]*Chunk
 	mu     sync.RWMutex
 
+	// Per-column index for fast XZ radius queries: (chunkX,chunkZ) -> slice indexed by chunkY
+	colIndex map[[2]int][]*Chunk
+
 	// Async generation
 	jobs      chan ChunkCoord
 	pending   map[ChunkCoord]struct{}
@@ -49,6 +52,7 @@ func New() *World {
 		chunks:         make(map[ChunkCoord]*Chunk),
 		jobs:           make(chan ChunkCoord, 4096),
 		pending:        make(map[ChunkCoord]struct{}),
+		colIndex:       make(map[[2]int][]*Chunk),
 		seed:           1337,
 		scale:          1.0 / 64.0,
 		baseHeight:     32,
@@ -88,6 +92,18 @@ func (w *World) GetChunk(chunkX, chunkY, chunkZ int, create bool) *Chunk {
 		chunk = NewChunk(chunkX, chunkY, chunkZ)
 		w.mu.Lock()
 		w.chunks[coord] = chunk
+		// maintain column index
+		key := [2]int{chunkX, chunkZ}
+		col := w.colIndex[key]
+		if chunkY >= 0 {
+			if len(col) <= chunkY {
+				n := make([]*Chunk, chunkY+1)
+				copy(n, col)
+				col = n
+			}
+			col[chunkY] = chunk
+			w.colIndex[key] = col
+		}
 		w.mu.Unlock()
 	}
 	return chunk
@@ -319,6 +335,23 @@ func (w *World) EvictFarChunks(x, z float32, radius int) int {
 		dz := coord.Z - cz
 		if dx*dx+dz*dz > radius*radius {
 			delete(w.chunks, coord)
+			// maintain column index
+			key := [2]int{coord.X, coord.Z}
+			if col, ok := w.colIndex[key]; ok {
+				if coord.Y >= 0 && coord.Y < len(col) {
+					col[coord.Y] = nil
+					// trim trailing nils
+					end := len(col)
+					for end > 0 && col[end-1] == nil {
+						end--
+					}
+					if end == 0 {
+						delete(w.colIndex, key)
+					} else {
+						w.colIndex[key] = col[:end]
+					}
+				}
+			}
 			removed++
 		}
 	}
@@ -399,6 +432,18 @@ func (w *World) generateChunkSync(coord ChunkCoord) {
 	w.mu.Lock()
 	if _, ok := w.chunks[coord]; !ok {
 		w.chunks[coord] = chunk
+		// maintain column index
+		key := [2]int{coord.X, coord.Z}
+		col := w.colIndex[key]
+		if coord.Y >= 0 {
+			if len(col) <= coord.Y {
+				n := make([]*Chunk, coord.Y+1)
+				copy(n, col)
+				col = n
+			}
+			col[coord.Y] = chunk
+			w.colIndex[key] = col
+		}
 	}
 	w.mu.Unlock()
 }
@@ -444,6 +489,36 @@ func (w *World) heightAt(worldX, worldZ int) int {
 // This is useful for estimating occupancy when adjacent chunks are not yet generated.
 func (w *World) SurfaceHeightAt(x, z int) int {
 	return w.heightAt(x, z)
+}
+
+// AppendChunksInRadiusXZ appends all loaded chunks within a radius (in chunks)
+// around a center chunk coordinate (cx, cz) into dst and returns the resulting slice.
+// This avoids scanning the entire chunk map each frame.
+func (w *World) AppendChunksInRadiusXZ(cx, cz, radius int, dst []ChunkWithCoord) []ChunkWithCoord {
+	defer profiling.Track("world.AppendChunksInRadiusXZ")()
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+
+	// Ensure capacity roughly for typical columns; we cannot know Y count, so grow as needed
+	for dx := -radius; dx <= radius; dx++ {
+		for dz := -radius; dz <= radius; dz++ {
+			if dx*dx+dz*dz > radius*radius {
+				continue
+			}
+			xk := cx + dx
+			zk := cz + dz
+			if col, ok := w.colIndex[[2]int{xk, zk}]; ok {
+				for y := 0; y < len(col); y++ {
+					ch := col[y]
+					if ch == nil {
+						continue
+					}
+					dst = append(dst, ChunkWithCoord{Chunk: ch, Coord: ChunkCoord{X: xk, Y: y, Z: zk}})
+				}
+			}
+		}
+	}
+	return dst
 }
 
 // Helper functions for coordinate conversion

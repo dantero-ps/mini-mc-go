@@ -19,13 +19,19 @@ type chunkMesh struct {
 	vertexCount int32
 	cpuVerts    []float32 // kept for atlas updates
 	firstFloat  int       // offset into atlas in floats (pos+normal interleaved)
+	firstVertex int32     // offset into atlas in vertices (firstFloat/6)
 }
 
 type columnMesh struct {
-	cpuVerts    []float32
-	vertexCount int32
-	firstFloat  int
-	dirty       bool
+	x            int
+	z            int
+	cpuVerts     []float32
+	vertexCount  int32
+	firstFloat   int
+	dirty        bool
+	firstVertex  int32  // offset into atlas in vertices (firstFloat/6)
+	drawnFrame   uint64 // last frame this column participated in a merged draw call
+	visibleFrame uint64 // last frame this column was marked visible
 }
 
 type plane struct {
