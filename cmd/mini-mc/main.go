@@ -107,6 +107,7 @@ func setupWindow() (*glfw.Window, error) {
 	}
 	window.MakeContextCurrent()
 
+	// Disable V-Sync; we'll use our own FPS limiter
 	glfw.SwapInterval(0)
 	window.SetInputMode(glfw.CursorMode, glfw.CursorDisabled)
 
@@ -154,9 +155,26 @@ func runGameLoop(window *glfw.Window, r *renderer.Renderer, uiRenderer *ui.UI, h
 	lastPrune := time.Now()
 	mouseWasDown := false
 	var btnX, btnY, btnW, btnH float32
+	var fpsLimiterNext time.Time
 
 	// Render distance slider state
 	renderDistanceSlider := float32(config.GetRenderDistance()-5) / float32(50-5) // Normalize to 0-1
+	// FPS limiter slider state: left=minCap (finite), right=uncapped
+	const minFPSCap = 30
+	const maxFPSCap = 240
+	fpsLimit := config.GetFPSLimit()
+	var fpsLimitSlider float32
+	if fpsLimit <= 0 {
+		fpsLimitSlider = 1.0
+	} else {
+		if fpsLimit < minFPSCap {
+			fpsLimit = minFPSCap
+		}
+		if fpsLimit > maxFPSCap {
+			fpsLimit = maxFPSCap
+		}
+		fpsLimitSlider = float32(fpsLimit-minFPSCap) / float32(maxFPSCap-minFPSCap)
+	}
 
 	for !window.ShouldClose() {
 		profiling.ResetFrame()
@@ -236,7 +254,7 @@ func runGameLoop(window *glfw.Window, r *renderer.Renderer, uiRenderer *ui.UI, h
 
 			// Draw and handle slider (snap to steps equal to render distance range)
 			steps := 50 - 5 + 1 // inclusive range [5..50]
-			newSliderValue := uiRenderer.DrawSlider(sliderX, sliderY, sliderW, sliderH, renderDistanceSlider, window, steps)
+			newSliderValue := uiRenderer.DrawSlider(sliderX, sliderY, sliderW, sliderH, renderDistanceSlider, window, steps, "renderDistance")
 			if newSliderValue != renderDistanceSlider {
 				renderDistanceSlider = newSliderValue
 				// Convert slider value to render distance (5-50 range)
@@ -249,6 +267,42 @@ func runGameLoop(window *glfw.Window, r *renderer.Renderer, uiRenderer *ui.UI, h
 			distanceText := fmt.Sprintf("%d chunks", currentDistance)
 			hudRenderer.RenderText(distanceText, sliderX+sliderW+10, sliderY+sliderH/2+sliderTH/2, sliderScale, mgl32.Vec3{0.8, 0.8, 0.8})
 
+			// Read mouse once for UI interactions in pause menu
+			cx, cy := window.GetCursorPos()
+			mouseDown := window.GetMouseButton(glfw.MouseButtonLeft) == glfw.Press
+
+			// FPS Limit Slider
+			fpsLabel := "FPS Limit"
+			fpsScale := float32(0.9)
+			_, fpsTH := hudRenderer.MeasureText(fpsLabel, fpsScale)
+			fpsX := sliderX
+			fpsY := sliderY + 50
+			fpsW := sliderW
+			fpsH := sliderH
+			hudRenderer.RenderText(fpsLabel, fpsX, fpsY-10, fpsScale, mgl32.Vec3{1, 1, 1})
+			// 30..240 inclusive -> snapping, rightmost => uncapped
+			newFPSValue := uiRenderer.DrawSlider(fpsX, fpsY, fpsW, fpsH, fpsLimitSlider, window, (maxFPSCap-minFPSCap)+1, "fpsLimit")
+			if newFPSValue != fpsLimitSlider {
+				fpsLimitSlider = newFPSValue
+				// Map slider: rightmost => uncapped (0), else 30..240
+				var newLimit int
+				if fpsLimitSlider >= 0.999 {
+					newLimit = 0
+				} else {
+					newLimit = int(float32(minFPSCap) + fpsLimitSlider*float32(maxFPSCap-minFPSCap) + 0.5)
+				}
+				config.SetFPSLimit(newLimit)
+			}
+			// Show current FPS limit value
+			currentFPSLimit := config.GetFPSLimit()
+			var limitText string
+			if currentFPSLimit <= 0 {
+				limitText = "Uncapped"
+			} else {
+				limitText = fmt.Sprintf("%d FPS", currentFPSLimit)
+			}
+			hudRenderer.RenderText(limitText, fpsX+fpsW+10, fpsY+fpsH/2+fpsTH/2, fpsScale, mgl32.Vec3{0.8, 0.8, 0.8})
+
 			// Resume button
 			label := "Devam Et"
 			scale := float32(1.0)
@@ -260,7 +314,6 @@ func runGameLoop(window *glfw.Window, r *renderer.Renderer, uiRenderer *ui.UI, h
 			btnX = (900 - btnW) / 2
 			btnY = float32(300) // Move button lower to make space for slider
 
-			cx, cy := window.GetCursorPos()
 			hover := float32(cx) >= btnX && float32(cx) <= btnX+btnW && float32(cy) >= btnY && float32(cy) <= btnY+btnH
 			base := mgl32.Vec3{0.20, 0.20, 0.20}
 			if hover {
@@ -272,7 +325,6 @@ func runGameLoop(window *glfw.Window, r *renderer.Renderer, uiRenderer *ui.UI, h
 			ty := btnY + paddingY + th
 			hudRenderer.RenderText(label, tx, ty, scale, mgl32.Vec3{1, 1, 1})
 
-			mouseDown := window.GetMouseButton(glfw.MouseButtonLeft) == glfw.Press
 			if mouseDown && !mouseWasDown && hover {
 				*paused = false
 				window.SetInputMode(glfw.CursorMode, glfw.CursorDisabled)
@@ -290,14 +342,21 @@ func runGameLoop(window *glfw.Window, r *renderer.Renderer, uiRenderer *ui.UI, h
 
 		swapEventsDur := profiling.SumWithPrefix("glfw.")
 
-		// With V-Sync enabled, only check actual processing time (excluding SwapBuffers wait)
-		// SwapBuffers() waits for display refresh which adds unavoidable delay
-		processingDur := renderDur + updateDur
-		targetFrameTime := time.Duration(1000000000 / 120) // 8.33ms in nanoseconds
-		if processingDur > targetFrameTime {
-			fmt.Printf("Frame processing too slow: %.2fms (target: %.2fms)\n",
-				float64(processingDur.Nanoseconds())/1000000.0,
-				float64(targetFrameTime.Nanoseconds())/1000000.0)
+		// Optional: warn if processing exceeds target frame time when limiter is active
+		{
+			effectiveLimit := config.GetFPSLimit()
+			if *paused {
+				effectiveLimit = 120
+			}
+			if effectiveLimit > 0 {
+				processingDur := renderDur + updateDur
+				targetFrameTime := time.Second / time.Duration(effectiveLimit)
+				if processingDur > targetFrameTime {
+					fmt.Printf("Frame processing too slow: %.2fms (target: %.2fms)\n",
+						float64(processingDur.Nanoseconds())/1000000.0,
+						float64(targetFrameTime.Nanoseconds())/1000000.0)
+				}
+			}
 		}
 		preRenderDur := totalFrameDur - swapEventsDur - renderDur
 		if preRenderDur < 0 {
@@ -310,5 +369,43 @@ func runGameLoop(window *glfw.Window, r *renderer.Renderer, uiRenderer *ui.UI, h
 		hudRenderer.ProfilingSetPhysics(physicsDur)
 		hudRenderer.ProfilingSetPhases(preRenderDur, swapEventsDur)
 		// Console timing after swap
+
+		// High-precision FPS limiter (after swap+events): schedule next frame deadline,
+		// sleep most of the remaining time, then spin for the last ~200µs to improve accuracy.
+		{
+			effectiveLimit := config.GetFPSLimit()
+			if *paused {
+				effectiveLimit = 120
+			}
+			if effectiveLimit > 0 {
+				target := time.Second / time.Duration(effectiveLimit)
+				if fpsLimiterNext.IsZero() {
+					fpsLimiterNext = time.Now().Add(target)
+				} else {
+					fpsLimiterNext = fpsLimiterNext.Add(target)
+				}
+				for {
+					remaining := time.Until(fpsLimiterNext)
+					if remaining <= 0 {
+						break
+					}
+					if remaining > 200*time.Microsecond {
+						time.Sleep(remaining - 200*time.Microsecond)
+					} else {
+						// busy-wait for the final few microseconds
+						// yields substantially better precision on high FPS caps
+					}
+					if time.Until(fpsLimiterNext) <= 0 {
+						break
+					}
+				}
+				// If we're significantly late (e.g., hitch), resync to avoid drift
+				if late := -time.Until(fpsLimiterNext); late > target {
+					fpsLimiterNext = time.Now().Add(target)
+				}
+			} else {
+				fpsLimiterNext = time.Time{}
+			}
+		}
 	}
 }

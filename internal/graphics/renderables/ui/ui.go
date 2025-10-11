@@ -27,6 +27,7 @@ type UI struct {
 	vao              uint32
 	vbo              uint32
 	isDraggingSlider bool
+	activeSliderID   string
 }
 
 // NewUI creates a new UI renderable
@@ -74,18 +75,30 @@ func (u *UI) Dispose() {
 }
 
 // DrawSlider draws a horizontal slider with the given value (0.0-1.0) and returns the new value. Supports drag capture and optional step snapping with tick marks.
-func (u *UI) DrawSlider(x, y, w, h float32, value float32, window interface{}, steps int) float32 {
+// sliderID must uniquely identify this slider so that only one slider is active during a drag.
+func (u *UI) DrawSlider(x, y, w, h float32, value float32, window interface{}, steps int, sliderID string) float32 {
 	// Draw slider track
 	trackColor := mgl32.Vec3{0.3, 0.3, 0.3}
 	u.DrawFilledRect(x, y, w, h, trackColor, 0.8)
 
-	// Draw step ticks if requested
+	// Draw step ticks if requested (downsample to ~10 ticks max to reduce clutter)
 	if steps > 1 {
 		tickHeight := h * 0.6
 		tickY := y + (h-tickHeight)*0.5
 		tickWidth := float32(2)
 		tickColor := mgl32.Vec3{0.9, 0.9, 0.9}
+		visibleTicks := 10
+		if visibleTicks < 2 {
+			visibleTicks = 2
+		}
+		stepSpacing := steps / visibleTicks
+		if stepSpacing < 1 {
+			stepSpacing = 1
+		}
 		for i := 0; i < steps; i++ {
+			if i != 0 && i != steps-1 && (i%stepSpacing) != 0 {
+				continue
+			}
 			var ratio float32
 			if steps <= 1 {
 				ratio = 0
@@ -109,7 +122,7 @@ func (u *UI) DrawSlider(x, y, w, h float32, value float32, window interface{}, s
 
 		inside := mouseY >= y && mouseY <= y+h && mouseX >= x && mouseX <= x+w
 
-		if u.isDraggingSlider {
+		if u.isDraggingSlider && u.activeSliderID == sliderID {
 			if leftDown {
 				v := (mouseX - x) / w
 				if v < 0 {
@@ -132,10 +145,12 @@ func (u *UI) DrawSlider(x, y, w, h float32, value float32, window interface{}, s
 				value = v
 			} else {
 				u.isDraggingSlider = false
+				u.activeSliderID = ""
 			}
-		} else if leftDown && inside {
+		} else if !u.isDraggingSlider && leftDown && inside {
 			// Begin drag
 			u.isDraggingSlider = true
+			u.activeSliderID = sliderID
 			v := (mouseX - x) / w
 			if v < 0 {
 				v = 0

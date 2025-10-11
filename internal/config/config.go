@@ -6,10 +6,12 @@ import "sync"
 type RenderSettings struct {
 	mu             sync.RWMutex
 	renderDistance int // in chunks
+	fpsLimit       int // 0 means uncapped, otherwise target FPS
 }
 
 var globalRenderSettings = &RenderSettings{
-	renderDistance: 25, // default value
+	renderDistance: 25,  // default value
+	fpsLimit:       180, // default FPS cap
 }
 
 // GetRenderDistance returns the current render distance in chunks
@@ -33,6 +35,26 @@ func SetRenderDistance(distance int) {
 	}
 
 	globalRenderSettings.renderDistance = distance
+}
+
+// GetFPSLimit returns the configured FPS cap (0 means uncapped)
+func GetFPSLimit() int {
+	globalRenderSettings.mu.RLock()
+	defer globalRenderSettings.mu.RUnlock()
+	return globalRenderSettings.fpsLimit
+}
+
+// SetFPSLimit sets the FPS cap; 0 disables the cap (uncapped)
+func SetFPSLimit(limit int) {
+	globalRenderSettings.mu.Lock()
+	defer globalRenderSettings.mu.Unlock()
+	if limit < 0 {
+		limit = 0
+	}
+	if limit > 240 {
+		limit = 240
+	}
+	globalRenderSettings.fpsLimit = limit
 }
 
 // GetChunkLoadRadius returns radius for chunk loading (slightly larger than render distance)
