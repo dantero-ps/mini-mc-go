@@ -112,6 +112,8 @@ func (h *HUD) Init() error {
 	if err := uiRenderer.Init(); err != nil {
 		return err
 	}
+	// Allow FIFO UI to also render text when used directly.
+	uiRenderer.SetFontRenderer(fontRenderer)
 
 	// Create Item renderer for GUI
 	itemRenderer := items.NewItems()
@@ -886,4 +888,9 @@ func (h *HUD) MeasureText(text string, scale float32) (float32, float32) {
 		return h.fontRenderer.Measure(text, scale)
 	}
 	return 0, 0
+}
+
+// FontRenderer exposes the HUD's font renderer for UI systems that want to enqueue text.
+func (h *HUD) FontRenderer() *graphics.FontRenderer {
+	return h.fontRenderer
 }

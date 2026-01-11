@@ -253,8 +253,6 @@ func (p *Player) CheckEntityCollisions(dt float64) {
 			if dist < pickupRadius {
 				// Pick up item
 				if p.Inventory.AddItem(&itemEnt.Stack) {
-					// Play sound (print for now)
-					// fmt.Println("Item toplandı!")
 					itemEnt.SetDead()
 				}
 			}
@@ -403,23 +401,17 @@ func (p *Player) BreakBlock() {
 	if blockType != world.BlockTypeAir {
 		p.World.Set(x, y, z, world.BlockTypeAir)
 
-		// Drop Item logic
-		def, ok := registry.Blocks[blockType]
-		name := "Unknown"
-		if ok {
-			name = def.Name
+		if p.GameMode != GameModeCreative {
+			// Create item entity in the world
+			// Start slightly above the bottom of the block, with random horizontal offset
+			offsetX := (rand.Float64() * 0.7) + 0.15
+			offsetY := 0.8
+			offsetZ := (rand.Float64() * 0.7) + 0.15
+
+			pos := mgl32.Vec3{float32(x) + float32(offsetX), float32(y) + float32(offsetY), float32(z) + float32(offsetZ)}
+			itemEnt := entity.NewItemEntity(p.World, pos, item.NewItemStack(blockType, 1))
+			p.World.AddEntity(itemEnt)
 		}
-		fmt.Printf("Blok kırıldı: %s (Item düştü!)\n", name)
-
-		// Create item entity in the world
-		// Start slightly above the bottom of the block, with random horizontal offset
-		offsetX := (rand.Float64() * 0.7) + 0.15
-		offsetY := 0.8
-		offsetZ := (rand.Float64() * 0.7) + 0.15
-
-		pos := mgl32.Vec3{float32(x) + float32(offsetX), float32(y) + float32(offsetY), float32(z) + float32(offsetZ)}
-		itemEnt := entity.NewItemEntity(p.World, pos, item.NewItemStack(blockType, 1))
-		p.World.AddEntity(itemEnt)
 
 		// Reset mining
 		p.ResetMining()
@@ -436,7 +428,6 @@ func (p *Player) DropCursorItem() {
 	p.Inventory.CursorStack = nil
 
 	p.spawnItemEntity(*stack)
-	fmt.Println("Cursor item dropped!")
 }
 
 // DropHeldItem drops the item currently in the player's hand.
@@ -500,9 +491,6 @@ func (p *Player) UpdatePosition(dt float64, window *glfw.Window) {
 				p.IsFlying = !p.IsFlying
 				if p.IsFlying {
 					p.Velocity[1] = 0 // Stop vertical velocity when entering flight
-					fmt.Println("Uçma modu: AÇIK")
-				} else {
-					fmt.Println("Uçma modu: KAPALI")
 				}
 				p.lastSpacePressTime = -1 // Reset after double tap
 			} else {

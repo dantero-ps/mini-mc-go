@@ -82,6 +82,10 @@ func setupGame(mode player.GameMode) (*GameComponents, error) {
 		return nil, err
 	}
 
+	// Wire UI text rendering to the game's font renderer (initialized by HUD.Init inside renderer.NewRenderer()).
+	// This keeps text in the same FIFO UI queue when menu/pause uses uiRenderer.DrawText().
+	uiRenderer.SetFontRenderer(hudRenderer.FontRenderer())
+
 	// Create world
 	gameWorld := world.New()
 

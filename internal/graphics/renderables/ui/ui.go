@@ -29,6 +29,7 @@ type drawCmdKind uint8
 const (
 	cmdFilledRect drawCmdKind = iota
 	cmdTexturedRect
+	cmdText
 )
 
 type drawCmd struct {
@@ -49,12 +50,17 @@ type drawCmd struct {
 	// Resolved draw-range (set during Flush build)
 	first int32
 	count int32
+
+	// Text
+	text      string
+	textScale float32
 }
 
 // UI implements UI rendering for rectangles and text
 type UI struct {
 	shader           *graphics.Shader
 	texShader        *graphics.Shader
+	fontRenderer     *graphics.FontRenderer
 	vao              uint32
 	vbo              uint32
 	texVao           uint32
@@ -141,6 +147,25 @@ func (u *UI) Render(ctx renderer.RenderContext) {
 func (u *UI) BeginFrame() {
 	u.cmds = u.cmds[:0]
 	u.frameActive = true
+}
+
+func (u *UI) SetFontRenderer(fr *graphics.FontRenderer) {
+	u.fontRenderer = fr
+}
+
+func (u *UI) DrawText(text string, x, y float32, scale float32, color mgl32.Vec3) {
+	if !u.frameActive {
+		u.BeginFrame()
+	}
+	u.cmds = append(u.cmds, drawCmd{
+		kind:      cmdText,
+		x:         x,
+		y:         y,
+		color:     color,
+		alpha:     1.0,
+		text:      text,
+		textScale: scale,
+	})
 }
 
 // Dispose cleans up OpenGL resources
@@ -358,6 +383,8 @@ func (u *UI) Flush() {
 				x1, y1, cmd.u1, cmd.v1, r, g, b, a,
 				x0, y1, cmd.u0, cmd.v1, r, g, b, a,
 			)
+		case cmdText:
+			// No geometry to build
 		}
 	}
 
@@ -406,6 +433,8 @@ func (u *UI) Flush() {
 				gl.BindBuffer(gl.ARRAY_BUFFER, u.texVbo)
 				gl.ActiveTexture(gl.TEXTURE0)
 				u.texShader.SetInt("uTexture", 0)
+			case cmdText:
+				// Font renderer manages its own GL state; we'll just call it.
 			}
 		}
 
@@ -421,6 +450,25 @@ func (u *UI) Flush() {
 				currentTexture = cmd.textureID
 			}
 			gl.DrawArrays(gl.TRIANGLES, cmd.first, cmd.count)
+		case cmdText:
+			if u.fontRenderer != nil && cmd.text != "" {
+				// Ensure UI VAOs don't interfere with font rendering
+				gl.BindVertexArray(0)
+				gl.BindBuffer(gl.ARRAY_BUFFER, 0)
+				u.fontRenderer.Render(cmd.text, cmd.x, cmd.y, cmd.textScale, cmd.color)
+
+				// FontRenderer.Render may change GL state (blend/depth/cull/program/VAO).
+				// Re-apply the UI state so subsequent FIFO commands (e.g. button rects) still render correctly.
+				gl.Disable(gl.DEPTH_TEST)
+				gl.Disable(gl.CULL_FACE)
+				gl.Enable(gl.BLEND)
+				gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+				gl.ActiveTexture(gl.TEXTURE0)
+
+				// Force rebind of pipeline after font draw
+				currentKind = drawCmdKind(255)
+				currentTexture = 0
+			}
 		}
 	}
 

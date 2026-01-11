@@ -4,7 +4,6 @@ import (
 	"mini-mc/internal/graphics/renderables/hud"
 	"mini-mc/internal/graphics/renderables/ui"
 	"mini-mc/internal/player"
-	"runtime"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/glfw/v3.3/glfw"
@@ -27,6 +26,8 @@ func showMenu(window *glfw.Window) player.GameMode {
 	if err := uiRenderer.Init(); err != nil {
 		panic(err)
 	}
+	// Put text into the same FIFO UI queue (correct z-order, single Flush).
+	uiRenderer.SetFontRenderer(menuHUD.FontRenderer())
 	defer uiRenderer.Dispose()
 
 	var selectedMode player.GameMode
@@ -79,25 +80,22 @@ func showMenu(window *glfw.Window) player.GameMode {
 		}
 		uiRenderer.DrawFilledRect(float32(btn2X), float32(btn2Y), float32(btnW), float32(btnH), btn2Color, 1.0)
 
-		// 1) Flush UI geometry first so it stays behind text.
-		uiRenderer.Flush()
+		// Text is also enqueued into the FIFO UI list.
+		uiRenderer.DrawText("MINI MC", 350, 100, 1.0, mgl32.Vec3{1, 1, 1})
+		uiRenderer.DrawText("Select Game Mode:", 340, 160, 0.5, mgl32.Vec3{0.8, 0.8, 0.8})
+		uiRenderer.DrawText("Survival", float32(btn1X)+20, float32(btn1Y)+37, 0.6, mgl32.Vec3{0, 1, 0})
+		uiRenderer.DrawText("No Flying, Normal Mining", float32(btn1X)+20, float32(btn1Y)+65, 0.35, mgl32.Vec3{0.8, 0.8, 0.8})
+		uiRenderer.DrawText("Creative", float32(btn2X)+20, float32(btn2Y)+37, 0.6, mgl32.Vec3{0, 0.8, 1})
+		uiRenderer.DrawText("Flying, Instant Break", float32(btn2X)+20, float32(btn2Y)+65, 0.35, mgl32.Vec3{0.8, 0.8, 0.8})
 
-		// 2) Draw text on top (font renderer is immediate-mode).
-		menuHUD.RenderText("MINI MC", 350, 100, 1.0, mgl32.Vec3{1, 1, 1})
-		menuHUD.RenderText("Select Game Mode:", 340, 160, 0.5, mgl32.Vec3{0.8, 0.8, 0.8})
-		menuHUD.RenderText("Survival", float32(btn1X)+20, float32(btn1Y)+37, 0.6, mgl32.Vec3{0, 1, 0})
-		menuHUD.RenderText("No Flying, Normal Mining", float32(btn1X)+20, float32(btn1Y)+65, 0.35, mgl32.Vec3{0.8, 0.8, 0.8})
-		menuHUD.RenderText("Creative", float32(btn2X)+20, float32(btn2Y)+37, 0.6, mgl32.Vec3{0, 0.8, 1})
-		menuHUD.RenderText("Flying, Instant Break", float32(btn2X)+20, float32(btn2Y)+65, 0.35, mgl32.Vec3{0.8, 0.8, 0.8})
+		// Single flush per menu frame.
+		uiRenderer.Flush()
 
 		window.SwapBuffers()
 		glfw.PollEvents()
 
 		// Update mouse state
 		wasMouseDown = mouseDown
-
-		// Limit CPU usage in menu
-		runtime.Gosched()
 	}
 
 	// Re-lock cursor before returning to game
