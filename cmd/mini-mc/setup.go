@@ -2,10 +2,12 @@ package main
 
 import (
 	"mini-mc/internal/graphics/renderables/blocks"
+	"mini-mc/internal/graphics/renderables/breaking"
 	"mini-mc/internal/graphics/renderables/crosshair"
 	"mini-mc/internal/graphics/renderables/direction"
 	"mini-mc/internal/graphics/renderables/hand"
 	"mini-mc/internal/graphics/renderables/hud"
+	"mini-mc/internal/graphics/renderables/items"
 	"mini-mc/internal/graphics/renderables/ui"
 	"mini-mc/internal/graphics/renderables/wireframe"
 	renderer "mini-mc/internal/graphics/renderer"
@@ -14,6 +16,7 @@ import (
 	"mini-mc/internal/world"
 	"runtime"
 
+	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/glfw/v3.3/glfw"
 	"github.com/go-gl/mathgl/mgl32"
 )
@@ -29,6 +32,11 @@ func setupWindow() (*glfw.Window, error) {
 		return nil, err
 	}
 	window.MakeContextCurrent()
+
+	// Initialize OpenGL bindings
+	if err := gl.Init(); err != nil {
+		return nil, err
+	}
 
 	// Disable V-Sync; we'll use our own FPS limiter
 	glfw.SwapInterval(0)
@@ -46,19 +54,23 @@ type GameComponents struct {
 	Player      *player.Player
 }
 
-func setupGame() (*GameComponents, error) {
+func setupGame(mode player.GameMode) (*GameComponents, error) {
 	// Initialize renderable features
 	blocksRenderer := blocks.NewBlocks()
+	itemsRenderer := items.NewItems()
+	breakingRenderer := breaking.NewBreaking()
 	wireframeRenderer := wireframe.NewWireframe()
 	crosshairRenderer := crosshair.NewCrosshair()
 	directionRenderer := direction.NewDirection()
-	handRenderer := hand.NewHand()
+	handRenderer := hand.NewHand(itemsRenderer)
 	uiRenderer := ui.NewUI()
 	hudRenderer := hud.NewHUD()
 
 	// Initialize renderer with all features
 	r, err := renderer.NewRenderer(
 		blocksRenderer,
+		itemsRenderer,
+		breakingRenderer,
 		wireframeRenderer,
 		crosshairRenderer,
 		directionRenderer,
@@ -85,7 +97,7 @@ func setupGame() (*GameComponents, error) {
 	groundY := physics.FindGroundLevel(spawnX, spawnZ, tempPos, gameWorld)
 
 	// Initialize player at safe ground
-	gamePlayer := player.New(gameWorld)
+	gamePlayer := player.New(gameWorld, mode)
 	gamePlayer.Position[0] = spawnX
 	gamePlayer.Position[2] = spawnZ
 	gamePlayer.Position[1] = groundY

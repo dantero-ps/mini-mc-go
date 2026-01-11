@@ -3,24 +3,38 @@ package hud
 import (
 	"fmt"
 	"mini-mc/internal/graphics"
+	"mini-mc/internal/graphics/renderables/items"
+	"mini-mc/internal/graphics/renderables/ui"
 	renderer "mini-mc/internal/graphics/renderer"
+	"mini-mc/internal/inventory"
+	"mini-mc/internal/item"
 	"mini-mc/internal/player"
 	"mini-mc/internal/profiling"
+	"mini-mc/internal/registry"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/go-gl/glfw/v3.3/glfw"
 	"github.com/go-gl/mathgl/mgl32"
 )
-
-type UI struct{}
 
 // HUD implements HUD rendering including text and profiling
 type HUD struct {
 	fontAtlas     *graphics.FontAtlasInfo
 	fontRenderer  *graphics.FontRenderer
-	uiRenderer    *UI
+	uiRenderer    *ui.UI
+	itemRenderer  *items.Items
 	showProfiling bool
+
+	// Textures
+	widgetsTexture   uint32
+	inventoryTexture uint32
+
+	// Inventory state
+	HoveredSlot   int       // -1 if no hover, otherwise slot index (0-35)
+	lastClickSlot int       // Last clicked slot
+	lastClickTime time.Time // Time of last click
 
 	// Profiling state
 	frames       int
@@ -29,13 +43,11 @@ type HUD struct {
 
 	// Enhanced profiling metrics
 	profilingStats struct {
-		// Frame timing
 		frameStartTime    time.Time
 		frameEndTime      time.Time
 		frameDuration     time.Duration
 		lastFrameDuration time.Duration
 
-		// Rendering statistics
 		totalDrawCalls int
 		totalVertices  int
 		totalTriangles int
@@ -43,29 +55,23 @@ type HUD struct {
 		culledChunks   int
 		meshedChunks   int
 
-		// GPU memory usage
 		gpuMemoryUsage     int64
 		textureMemoryUsage int64
 		bufferMemoryUsage  int64
 
-		// Performance counters
 		frustumCullTime time.Duration
 		meshingTime     time.Duration
 		shaderBindTime  time.Duration
 		vaoBindTime     time.Duration
 
-		// Historical data for averaging
 		frameTimeHistory []time.Duration
 		maxFrameTime     time.Duration
 		minFrameTime     time.Duration
 		avgFrameTime     time.Duration
 
-		// Total frame duration measured externally (prev frame)
 		lastTotalFrameDuration time.Duration
-		// Update phase duration measured in main (prev frame)
-		lastUpdateDuration time.Duration
+		lastUpdateDuration     time.Duration
 
-		// Non-render breakdown from previous frame
 		lastPlayerDuration  time.Duration
 		lastWorldDuration   time.Duration
 		lastGlfwDuration    time.Duration
@@ -74,16 +80,16 @@ type HUD struct {
 		lastOtherDuration   time.Duration
 		lastPhysicsDuration time.Duration
 
-		// Phase durations (prev frame)
-		lastPreRenderDuration  time.Duration // from frame start to Render() call
-		lastSwapEventsDuration time.Duration // SwapBuffers + PollEvents actual time
+		lastPreRenderDuration  time.Duration
+		lastSwapEventsDuration time.Duration
 	}
 }
 
 // NewHUD creates a new HUD renderable
 func NewHUD() *HUD {
 	return &HUD{
-		showProfiling: true,
+		showProfiling: false,
+		HoveredSlot:   -1,
 	}
 }
 
@@ -91,7 +97,7 @@ func NewHUD() *HUD {
 func (h *HUD) Init() error {
 	// Load font atlas and renderer
 	fontPath := filepath.Join("assets", "fonts", "OpenSans-Regular.ttf")
-	atlas, err := graphics.BuildFontAtlas(fontPath, 24)
+	atlas, err := graphics.BuildFontAtlas(fontPath, 48)
 	if err != nil {
 		return err
 	}
@@ -101,12 +107,38 @@ func (h *HUD) Init() error {
 		return err
 	}
 
-	// Create UI renderer for rectangles
-	uiRenderer := &UI{}
+	// Create UI renderer
+	uiRenderer := ui.NewUI()
+	if err := uiRenderer.Init(); err != nil {
+		return err
+	}
+
+	// Create Item renderer for GUI
+	itemRenderer := items.NewItems()
+	if err := itemRenderer.Init(); err != nil {
+		return err
+	}
 
 	h.fontAtlas = atlas
 	h.fontRenderer = fontRenderer
 	h.uiRenderer = uiRenderer
+	h.itemRenderer = itemRenderer
+
+	// Load Textures
+	widgetsPath := "assets/textures/gui/widgets.png"
+	tex, _, _, err := graphics.LoadTexture(widgetsPath)
+	if err != nil {
+		return fmt.Errorf("failed to load widgets texture: %v", err)
+	}
+	h.widgetsTexture = tex
+
+	// Inventory texture loading
+	invPath := "assets/textures/gui/inventory.png"
+	texInv, _, _, err := graphics.LoadTexture(invPath)
+	if err != nil {
+		return fmt.Errorf("failed to load inventory texture: %v", err)
+	}
+	h.inventoryTexture = texInv
 
 	return nil
 }
@@ -127,6 +159,17 @@ func (h *HUD) Render(ctx renderer.RenderContext) {
 	// Render FPS
 	h.renderFPS()
 
+	if ctx.Player.IsInventoryOpen {
+		// Dim background
+		width := float32(900)
+		height := float32(600)
+		h.uiRenderer.DrawFilledRect(0, 0, width, height, mgl32.Vec3{0, 0, 0}, 0.70)
+
+		h.renderInventory(ctx.Player)
+	}
+	// Render Hotbar always
+	h.renderHotbar(ctx.Player)
+
 	// Render profiling info if enabled
 	if h.showProfiling {
 		func() {
@@ -136,8 +179,441 @@ func (h *HUD) Render(ctx renderer.RenderContext) {
 	}
 }
 
-// Dispose cleans up resources
+func (h *HUD) renderHotbar(p *player.Player) {
+	if h.uiRenderer == nil || p.Inventory == nil {
+		return
+	}
+
+	// Screen dimensions (hardcoded for now in UI, should pass from window)
+	screenWidth := float32(900)
+	screenHeight := float32(600)
+
+	// Hotbar dimensions (widgets.png)
+	// Original: 182x22 pixels. Scaled x2 for visibility -> 364x44
+	scale := float32(2.0)
+	hbW := 182 * scale
+	hbH := 22 * scale
+
+	x := (screenWidth - hbW) / 2
+	y := screenHeight - hbH - 10 // 10px padding from bottom
+
+	// Draw Hotbar Background
+	// UVs: 0,0 to 182/256, 22/256
+	u1 := float32(182) / 256.0
+	v1 := float32(22) / 256.0
+	color := mgl32.Vec3{1.0, 1.0, 1.0}
+	h.uiRenderer.DrawTexturedRect(x, y, hbW, hbH, h.widgetsTexture, 0, 0, u1, v1, color, 1.0)
+
+	// Draw Selected Slot
+	// Selector is 24x24 pixels in texture at 0,22
+	selW := 24 * scale
+	selH := 24 * scale
+
+	// Slot index (0-8)
+	slotIdx := p.Inventory.CurrentItem
+	// Each slot is 20px wide in texture grid (approx)
+	// Actually:
+	// Slot 0 starts at x=3 (relative to 182).
+	// Spacing is 20px.
+	// Slot x pos = 3 + 20*i
+	// But the selector is centered on the slot.
+	// Selector texture is at 0, 22. Size 24x24.
+	// Selector pos relative to hotbar: (slotX - 1, -1)
+	// Let's calculate screen pos directly.
+
+	// Offset for selector logic: -1px in texture space relative to slot start
+	slotXTex := 3 + 20*slotIdx
+	selXTex := slotXTex - 2 // -2 pixels adjustment to align 24px box over 20px slot?
+	// Actually Minecraft logic:
+	// Hotbar: 182 wide.
+	// Slot 0: x=6 (in 182 width coords? No, let's look at texture)
+	// Texture check:
+	// First slot seems to be at x=3 (border is 3px).
+	// Slot inner is 16x16.
+	// Selector is 24x24.
+	// Selector draws OVER the hotbar.
+
+	selXScreen := x + float32(selXTex)*scale - float32(1)*scale // Fine tune alignment
+	selYScreen := y - float32(1)*scale                          // -1px up
+
+	// Selector UVs
+	selU0 := float32(0.0)
+	selV0 := float32(22) / 256.0
+	selU1 := float32(24) / 256.0
+	selV1 := float32(22+24) / 256.0
+
+	h.uiRenderer.DrawTexturedRect(selXScreen, selYScreen, selW, selH, h.widgetsTexture, selU0, selV0, selU1, selV1, color, 1.0)
+
+	// Draw Items
+	for i := 0; i < 9; i++ {
+		stack := p.Inventory.MainInventory[i]
+		if stack != nil {
+			// Calculate slot position
+			// Slot is 16x16 items
+			// x = 3 + 20*i + 3 (padding to center 16 in 20? No)
+			// Let's approximate: 3 + 20*i is left edge of slot area.
+			slotX := x + float32(3+20*i)*scale
+			slotY := y + float32(3)*scale
+
+			// Render Item
+			itemSize := 16 * scale
+			h.itemRenderer.RenderGUI(stack, slotX, slotY, itemSize)
+
+			// Render Count if > 1
+			if stack.Count > 1 {
+				countText := fmt.Sprintf("%d", stack.Count)
+				// Bottom right of slot
+				tx := slotX + itemSize/2
+				ty := slotY + itemSize/2
+				h.fontRenderer.Render(countText, tx, ty, 0.3, mgl32.Vec3{1, 1, 1})
+			}
+		}
+	}
+
+	// Draw item name text above hotbar if selected
+	selItem := p.Inventory.GetCurrentItem()
+	if selItem != nil {
+		name := "Unknown"
+		if def, ok := registry.Blocks[selItem.Type]; ok {
+			name = def.Name
+		}
+		// Center text
+		w, _ := h.fontRenderer.Measure(name, 0.4)
+		tx := (screenWidth - w) / 2
+		ty := y - 30
+		h.fontRenderer.Render(name, tx, ty, 0.4, mgl32.Vec3{1, 1, 1})
+	}
+}
+
+func (h *HUD) renderInventory(p *player.Player) {
+	if h.uiRenderer == nil || p.Inventory == nil {
+		return
+	}
+
+	// Screen dimensions (hardcoded for now in UI, should pass from window)
+	screenWidth := float32(900)
+	screenHeight := float32(600)
+
+	scale := float32(2.0)
+	invW := 176 * scale
+	invH := 166 * scale
+
+	x := (screenWidth - invW) / 2
+	y := (screenHeight - invH) / 2
+
+	// Draw Background
+	// UVs: 0,0 to 176/256, 166/256
+	u1 := float32(176) / 256.0
+	v1 := float32(166) / 256.0
+	color := mgl32.Vec3{1.0, 1.0, 1.0}
+
+	// Use inventoryTexture
+	h.uiRenderer.DrawTexturedRect(x, y, invW, invH, h.inventoryTexture, 0, 0, u1, v1, color, 1.0)
+
+	// Render "Crafting" text
+	craftingX := x + 86*scale
+	craftingY := y + 16*scale
+	h.fontRenderer.Render("Crafting", craftingX, craftingY, 0.35, mgl32.Vec3{0.3, 0.3, 0.3})
+
+	// Draw Items
+	itemSize := 16 * scale
+
+	// Reset hover slot
+	h.HoveredSlot = -1
+
+	// Helper to check hover and draw overlay
+	drawHoverOverlay := func(slotIdx int, slotX, slotY float32) {
+		mx := float32(p.MouseX)
+		my := float32(p.MouseY)
+		if mx >= slotX && mx < slotX+itemSize && my >= slotY && my < slotY+itemSize {
+			// Draw semi-transparent white overlay
+			// 0x80FFFFFF in ARGB is 1,1,1,0.5
+			h.uiRenderer.DrawFilledRect(slotX, slotY, itemSize, itemSize, mgl32.Vec3{1, 1, 1}, 0.5)
+			h.HoveredSlot = slotIdx
+		}
+	}
+
+	// 1. Main Inventory (Indices 9-35)
+	// Java: x=8, y=84
+	for i := 9; i < 36; i++ {
+		stack := p.Inventory.MainInventory[i]
+		// Grid: 9 cols, 3 rows
+		// i-9 to normalize to 0-26
+		normIdx := i - 9
+		col := normIdx % 9
+		row := normIdx / 9
+
+		slotX := x + float32(8+col*18)*scale
+		slotY := y + float32(84+row*18)*scale
+
+		if stack != nil {
+			h.itemRenderer.RenderGUI(stack, slotX, slotY, itemSize)
+
+			if stack.Count > 1 {
+				countText := fmt.Sprintf("%d", stack.Count)
+				tx := slotX + itemSize/2
+				ty := slotY + itemSize/2
+				h.fontRenderer.Render(countText, tx, ty, 0.3, mgl32.Vec3{1, 1, 1})
+			}
+		}
+		// Draw hover overlay after item (so it's on top)
+		drawHoverOverlay(i, slotX, slotY)
+	}
+
+	// 2. Hotbar (Indices 0-8)
+	// Java: x=8, y=142
+	for i := 0; i < 9; i++ {
+		stack := p.Inventory.MainInventory[i]
+		slotX := x + float32(8+i*18)*scale
+		slotY := y + float32(142)*scale
+
+		if stack != nil {
+			h.itemRenderer.RenderGUI(stack, slotX, slotY, itemSize)
+
+			if stack.Count > 1 {
+				countText := fmt.Sprintf("%d", stack.Count)
+				tx := slotX + itemSize/2
+				ty := slotY + itemSize/2
+				h.fontRenderer.Render(countText, tx, ty, 0.3, mgl32.Vec3{1, 1, 1})
+			}
+		}
+		drawHoverOverlay(i, slotX, slotY)
+	}
+
+	// 3. Armor (Indices 0-3 in ArmorInventory)
+	// Java: x=8, y=8 start, vertical step 18
+	for i := 0; i < 4; i++ {
+		stack := p.Inventory.ArmorInventory[i]
+		if stack != nil {
+			slotX := x + float32(8)*scale
+			slotY := y + float32(8+i*18)*scale
+
+			h.itemRenderer.RenderGUI(stack, slotX, slotY, itemSize)
+		}
+	}
+
+	// Render Cursor Stack
+	if p.Inventory.CursorStack != nil {
+		mx := float32(p.MouseX)
+		my := float32(p.MouseY)
+		// Center item on cursor
+		h.itemRenderer.RenderGUI(p.Inventory.CursorStack, mx-itemSize/2, my-itemSize/2, itemSize)
+
+		if p.Inventory.CursorStack.Count > 1 {
+			countText := fmt.Sprintf("%d", p.Inventory.CursorStack.Count)
+			tx := mx + itemSize/4
+			ty := my + itemSize/4
+			h.fontRenderer.Render(countText, tx, ty, 0.3, mgl32.Vec3{1, 1, 1})
+		}
+	}
+}
+
+// HandleInventoryClick handles mouse clicks in the inventory
+func (h *HUD) HandleInventoryClick(p *player.Player, x, y float64, button glfw.MouseButton, action glfw.Action) bool {
+	if action != glfw.Press {
+		return false
+	}
+
+	// Coordinates match renderInventory
+	scale := float32(2.0)
+	invW := 176 * scale
+	invH := 166 * scale
+
+	// Assuming window is 900x600 for UI scaling
+	screenW := float32(900)
+	screenH := float32(600)
+
+	startX := (screenW - invW) / 2
+	startY := (screenH - invH) / 2
+
+	mouseX := float32(x)
+	mouseY := float32(y)
+
+	checkSlot := func(idx int, slotX, slotY float32) {
+		// slotX, slotY are relative to startX, startY
+		sx := startX + slotX
+		sy := startY + slotY
+		size := 16 * scale
+
+		if mouseX >= sx && mouseX < sx+size && mouseY >= sy && mouseY < sy+size {
+			h.handleSlotClick(p, idx, button)
+		}
+	}
+
+	// Main Inventory (9-35)
+	for i := 9; i < 36; i++ {
+		col := (i - 9) % 9
+		row := (i - 9) / 9
+
+		// Java coords: x=8 + col*18, y=84 + row*18
+		checkSlot(i, float32(8+col*18)*scale, float32(84+row*18)*scale)
+	}
+
+	// Hotbar (0-8)
+	for i := 0; i < 9; i++ {
+		// Java coords: x=8 + i*18, y=142
+		checkSlot(i, float32(8+i*18)*scale, float32(142)*scale)
+	}
+
+	return true
+}
+
+func (h *HUD) handleSlotClick(p *player.Player, slotIdx int, button glfw.MouseButton) {
+	cursor := p.Inventory.CursorStack
+	slot := p.Inventory.MainInventory[slotIdx]
+
+	// Double-click detection (within 300ms on the same slot)
+	isDoubleClick := false
+	if button == glfw.MouseButtonLeft && slotIdx == h.lastClickSlot && time.Since(h.lastClickTime) < 300*time.Millisecond {
+		isDoubleClick = true
+	}
+	h.lastClickSlot = slotIdx
+	h.lastClickTime = time.Now()
+
+	// Handle double-click: collect all items of same type
+	if isDoubleClick {
+		// If cursor has an item, collect all matching items from inventory
+		if cursor != nil {
+			totalCount := cursor.Count
+
+			// If clicked slot has same item, add it
+			if slot != nil && slot.IsItemEqual(*cursor) {
+				totalCount += slot.Count
+				p.Inventory.MainInventory[slotIdx] = nil
+			}
+
+			// Loop through all slots and collect matching items
+			for i := 0; i < len(p.Inventory.MainInventory); i++ {
+				if i == slotIdx {
+					continue // Already handled above
+				}
+
+				otherSlot := p.Inventory.MainInventory[i]
+				if otherSlot != nil && otherSlot.IsItemEqual(*cursor) {
+					totalCount += otherSlot.Count
+					p.Inventory.MainInventory[i] = nil // Clear the slot
+				}
+			}
+
+			// Update cursor with total
+			cursor.Count = totalCount
+			return
+		} else if slot != nil {
+			// Cursor empty, slot has item: collect all matching items
+			totalCount := slot.Count
+
+			// Loop through all slots and collect matching items
+			for i := 0; i < len(p.Inventory.MainInventory); i++ {
+				if i == slotIdx {
+					continue // Skip the slot we're clicking
+				}
+
+				otherSlot := p.Inventory.MainInventory[i]
+				if otherSlot != nil && otherSlot.IsItemEqual(*slot) {
+					totalCount += otherSlot.Count
+					p.Inventory.MainInventory[i] = nil // Clear the slot
+				}
+			}
+
+			// Put all collected items in cursor
+			if totalCount > 0 {
+				cursorStack := item.NewItemStack(slot.Type, totalCount)
+				p.Inventory.CursorStack = &cursorStack
+				p.Inventory.MainInventory[slotIdx] = nil
+			}
+			return
+		}
+	}
+
+	if button == glfw.MouseButtonRight && cursor != nil {
+		// Right click: place one item from cursor stack into slot
+		if slot == nil {
+			// Empty slot: place one item
+			newStack := item.NewItemStack(cursor.Type, 1)
+			p.Inventory.MainInventory[slotIdx] = &newStack
+			cursor.Count--
+			if cursor.Count <= 0 {
+				p.Inventory.CursorStack = nil
+			}
+		} else if slot.IsItemEqual(*cursor) {
+			// Same item: merge one item if there's space
+			if slot.Count < slot.GetMaxStackSize() {
+				slot.Count++
+				cursor.Count--
+				if cursor.Count <= 0 {
+					p.Inventory.CursorStack = nil
+				}
+			}
+		}
+		return
+	}
+
+	// Left click (normal behavior)
+	if cursor == nil {
+		if slot != nil {
+			// Pick up
+			p.Inventory.CursorStack = slot
+			p.Inventory.MainInventory[slotIdx] = nil
+		}
+	} else {
+		if slot == nil {
+			// Place into empty slot
+			p.Inventory.MainInventory[slotIdx] = cursor
+			p.Inventory.CursorStack = nil
+		} else if slot.IsItemEqual(*cursor) {
+			// Same item type: merge stacks
+			space := slot.GetMaxStackSize() - slot.Count
+			if space > 0 {
+				toAdd := cursor.Count
+				if toAdd > space {
+					toAdd = space
+				}
+				slot.Count += toAdd
+				cursor.Count -= toAdd
+				if cursor.Count <= 0 {
+					p.Inventory.CursorStack = nil
+				}
+			}
+		} else {
+			// Different items: swap
+			p.Inventory.MainInventory[slotIdx] = cursor
+			p.Inventory.CursorStack = slot
+		}
+	}
+}
+
+// MoveHoveredItemToHotbar moves the hovered item to the specified hotbar slot
+func (h *HUD) MoveHoveredItemToHotbar(p *player.Player, hotbarSlot int) {
+	if h.HoveredSlot < 0 || h.HoveredSlot >= inventory.MainInventorySize {
+		return
+	}
+
+	hoveredStack := p.Inventory.MainInventory[h.HoveredSlot]
+	if hoveredStack == nil {
+		return
+	}
+
+	// If hotbar slot has something, move hovered to cursor instead
+	hotbarStack := p.Inventory.MainInventory[hotbarSlot]
+	if hotbarStack != nil {
+		p.Inventory.CursorStack = hoveredStack
+		p.Inventory.MainInventory[h.HoveredSlot] = hotbarStack
+		p.Inventory.MainInventory[hotbarSlot] = nil
+	} else {
+		// Hotbar slot is empty: move hovered item there
+		p.Inventory.MainInventory[hotbarSlot] = hoveredStack
+		p.Inventory.MainInventory[h.HoveredSlot] = nil
+	}
+}
+
+// ... Rest of file (Dispose, Profiling, etc) kept same ...
 func (h *HUD) Dispose() {
+	if h.uiRenderer != nil {
+		h.uiRenderer.Dispose()
+	}
+	if h.itemRenderer != nil {
+		h.itemRenderer.Dispose()
+	}
 	// Font resources are managed by graphics package
 }
 
@@ -216,7 +692,7 @@ func (h *HUD) renderPlayerPosition(p *player.Player) {
 	x := float32(10)
 	y := float32(30)
 	color := mgl32.Vec3{1.0, 1.0, 1.0}
-	h.fontRenderer.Render(text, x, y, 0.7, color)
+	h.fontRenderer.Render(text, x, y, 0.35, color)
 }
 
 // renderFPS renders the current FPS value on screen
@@ -228,7 +704,7 @@ func (h *HUD) renderFPS() {
 	x := float32(10)
 	y := float32(46)
 	color := mgl32.Vec3{1.0, 1.0, 1.0}
-	h.fontRenderer.Render(text, x, y, 0.6, color)
+	h.fontRenderer.Render(text, x, y, 0.3, color)
 }
 
 // RenderProfilingInfo renders the current profiling information on screen
@@ -302,7 +778,7 @@ func (h *HUD) RenderProfilingInfo() {
 	textColor := mgl32.Vec3{1.0, 1.0, 1.0}
 	startY := float32(60)
 	lineStep := float32(17)
-	h.fontRenderer.RenderLines(lines, 10, startY, lineStep, 0.75, textColor)
+	h.fontRenderer.RenderLines(lines, 10, startY, lineStep, 0.375, textColor)
 }
 
 // Helper methods for profiling data management

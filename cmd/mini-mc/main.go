@@ -24,26 +24,39 @@ func main() {
 		panic(err)
 	}
 
-	// Initialize game components
-	game, err := setupGame()
-	if err != nil {
-		panic(err)
+	for {
+		// Show Game Mode Selection Menu
+		gameMode := showMenu(window)
+
+		// Initialize game components
+		game, err := setupGame(gameMode)
+		if err != nil {
+			panic(err)
+		}
+
+		// Create game loop
+		gameLoop := NewGameLoop(
+			window,
+			game.Renderer,
+			game.UIRenderer,
+			game.HUDRenderer,
+			game.Player,
+			game.World,
+		)
+
+		// Setup input handlers
+		setupInputHandlers(window, game.HUDRenderer, game.Player, gameLoop.Paused())
+
+		// Run the game
+		shouldRestart := gameLoop.Run()
+
+		// Cleanup
+		game.World.Close()
+		blocks.ShutdownMeshSystem()
+		game.Renderer.Dispose()
+
+		if !shouldRestart {
+			break
+		}
 	}
-	defer blocks.ShutdownMeshSystem()
-
-	// Create game loop
-	gameLoop := NewGameLoop(
-		window,
-		game.Renderer,
-		game.UIRenderer,
-		game.HUDRenderer,
-		game.Player,
-		game.World,
-	)
-
-	// Setup input handlers
-	setupInputHandlers(window, game.HUDRenderer, game.Player, gameLoop.Paused())
-
-	// Run the game
-	gameLoop.Run()
 }

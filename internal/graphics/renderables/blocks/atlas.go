@@ -24,6 +24,22 @@ var (
 	totalAllocatedBytes int
 )
 
+func CleanupAtlas() {
+	if atlasRegions != nil {
+		for _, r := range atlasRegions {
+			if r.vbo != 0 {
+				gl.DeleteBuffers(1, &r.vbo)
+			}
+			if r.vao != 0 {
+				gl.DeleteVertexArrays(1, &r.vao)
+			}
+		}
+		atlasRegions = nil
+	}
+	totalAllocatedBytes = 0
+	currentFrame = 0
+}
+
 func regionKeyForXZ(x, z int) [2]int {
 	// Tek bölge: 256MB atlas, region anahtarı sabit
 	return [2]int{0, 0}

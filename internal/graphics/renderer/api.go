@@ -1,4 +1,4 @@
-package graphics
+package renderer
 
 import (
 	"mini-mc/internal/graphics"

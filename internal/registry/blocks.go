@@ -13,6 +13,7 @@ type BlockDefinition struct {
 	IsTransparent bool
 	TintColor     uint32                   // 0xRRGGBB (0 = No Tint)
 	TintFaces     map[world.BlockFace]bool // Set of faces to apply tint
+	Hardness      float32                  // Seconds to break (approximate)
 }
 
 // Global registry
@@ -68,6 +69,7 @@ func InitRegistry() {
 		IsSolid:     true,
 		TintColor:   0x7DFF5C, // Grass Green
 		TintFaces:   map[world.BlockFace]bool{world.FaceTop: true},
+		Hardness:    0.6,
 	})
 
 	// Dirt
@@ -78,6 +80,7 @@ func InitRegistry() {
 		TextureSide: "dirt.png",
 		TextureBot:  "dirt.png",
 		IsSolid:     true,
+		Hardness:    0.5,
 	})
 
 	// Stone
@@ -88,6 +91,7 @@ func InitRegistry() {
 		TextureSide: "stone.png",
 		TextureBot:  "stone.png",
 		IsSolid:     true,
+		Hardness:    1.5,
 	})
 
 	// Bedrock
@@ -98,6 +102,7 @@ func InitRegistry() {
 		TextureSide: "bedrock.png",
 		TextureBot:  "bedrock.png",
 		IsSolid:     true,
+		Hardness:    -1.0, // Unbreakable
 	})
 
 	// Stone Brick
@@ -108,6 +113,7 @@ func InitRegistry() {
 		TextureSide: "stonebrick.png",
 		TextureBot:  "stonebrick.png",
 		IsSolid:     true,
+		Hardness:    1.5,
 	})
 
 	// Oak Planks
@@ -118,6 +124,7 @@ func InitRegistry() {
 		TextureSide: "planks_oak.png",
 		TextureBot:  "planks_oak.png",
 		IsSolid:     true,
+		Hardness:    2.0,
 	})
 
 	// Birch Planks
@@ -128,6 +135,7 @@ func InitRegistry() {
 		TextureSide: "planks_birch.png",
 		TextureBot:  "planks_birch.png",
 		IsSolid:     true,
+		Hardness:    2.0,
 	})
 
 	// Spruce Planks
@@ -138,6 +146,7 @@ func InitRegistry() {
 		TextureSide: "planks_spruce.png",
 		TextureBot:  "planks_spruce.png",
 		IsSolid:     true,
+		Hardness:    2.0,
 	})
 
 	// Jungle Planks
@@ -148,6 +157,7 @@ func InitRegistry() {
 		TextureSide: "planks_jungle.png",
 		TextureBot:  "planks_jungle.png",
 		IsSolid:     true,
+		Hardness:    2.0,
 	})
 
 	// Acacia Planks
@@ -158,6 +168,7 @@ func InitRegistry() {
 		TextureSide: "planks_acacia.png",
 		TextureBot:  "planks_acacia.png",
 		IsSolid:     true,
+		Hardness:    2.0,
 	})
 }
 

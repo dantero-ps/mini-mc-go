@@ -35,6 +35,7 @@ func ShutdownMeshSystem() {
 	if meshPool != nil {
 		meshPool.Shutdown()
 	}
+	CleanupAtlas()
 }
 
 // ProcessMeshResults processes completed mesh results from worker pool

@@ -12,6 +12,14 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 )
 
+type MenuAction int
+
+const (
+	MenuActionNone MenuAction = iota
+	MenuActionResume
+	MenuActionQuitToMenu
+)
+
 const (
 	minFPSCap = 30
 	maxFPSCap = 240
@@ -51,8 +59,8 @@ func (pm *PauseMenu) initSliders() {
 }
 
 // Render draws the pause menu and handles interactions.
-// Returns true if the game should resume.
-func (pm *PauseMenu) Render(window *glfw.Window, uiRenderer *ui.UI, hudRenderer *hud.HUD, p *player.Player) bool {
+// Returns the action taken by the user.
+func (pm *PauseMenu) Render(window *glfw.Window, uiRenderer *ui.UI, hudRenderer *hud.HUD, p *player.Player) MenuAction {
 	// Dim background
 	uiRenderer.DrawFilledRect(0, 0, 900, 600, mgl32.Vec3{0, 0, 0}, 0.45)
 
@@ -63,12 +71,61 @@ func (pm *PauseMenu) Render(window *glfw.Window, uiRenderer *ui.UI, hudRenderer 
 	pm.renderFPSLimitSlider(window, uiRenderer, hudRenderer)
 
 	// Resume button
-	return pm.renderResumeButton(window, uiRenderer, hudRenderer, p)
+	if pm.renderResumeButton(window, uiRenderer, hudRenderer, p) {
+		pm.mouseWasDown = true
+		return MenuActionResume
+	}
+
+	// Main Menu button
+	if pm.renderMainMenuButton(window, uiRenderer, hudRenderer) {
+		pm.mouseWasDown = true
+		return MenuActionQuitToMenu
+	}
+
+	// Update mouse state at the end of frame
+	pm.mouseWasDown = window.GetMouseButton(glfw.MouseButtonLeft) == glfw.Press
+
+	return MenuActionNone
+}
+
+func (pm *PauseMenu) renderMainMenuButton(window *glfw.Window, uiRenderer *ui.UI, hudRenderer *hud.HUD) bool {
+	// Read mouse once for UI interactions
+	cx, cy := window.GetCursorPos()
+	mouseDown := window.GetMouseButton(glfw.MouseButtonLeft) == glfw.Press
+
+	label := "Ana Menü"
+	scale := float32(0.5)
+	tw, th := hudRenderer.MeasureText(label, scale)
+	paddingX := float32(24)
+	paddingY := float32(14)
+	btnW := tw + paddingX*2
+	btnH := th + paddingY*2
+	btnX := (900 - btnW) / 2
+	btnY := float32(380)
+
+	hover := float32(cx) >= btnX && float32(cx) <= btnX+btnW && float32(cy) >= btnY && float32(cy) <= btnY+btnH
+	base := mgl32.Vec3{0.20, 0.20, 0.20}
+	if hover {
+		base = mgl32.Vec3{0.30, 0.30, 0.30}
+	}
+	uiRenderer.DrawFilledRect(btnX, btnY, btnW, btnH, base, 0.85)
+
+	// Text
+	tx := btnX + paddingX
+	ty := btnY + paddingY + th
+	hudRenderer.RenderText(label, tx, ty, scale, mgl32.Vec3{1, 1, 1})
+
+	shouldQuit := false
+	if mouseDown && !pm.mouseWasDown && hover {
+		shouldQuit = true
+	}
+
+	return shouldQuit
 }
 
 func (pm *PauseMenu) renderRenderDistanceSlider(window *glfw.Window, uiRenderer *ui.UI, hudRenderer *hud.HUD) {
 	sliderLabel := "Render Distance"
-	sliderScale := float32(0.8)
+	sliderScale := float32(0.4)
 	_, sliderTH := hudRenderer.MeasureText(sliderLabel, sliderScale)
 	sliderX := float32(350)
 	sliderY := float32(200)
@@ -96,7 +153,7 @@ func (pm *PauseMenu) renderRenderDistanceSlider(window *glfw.Window, uiRenderer 
 
 func (pm *PauseMenu) renderFPSLimitSlider(window *glfw.Window, uiRenderer *ui.UI, hudRenderer *hud.HUD) {
 	fpsLabel := "FPS Limit"
-	fpsScale := float32(0.9)
+	fpsScale := float32(0.45)
 	_, fpsTH := hudRenderer.MeasureText(fpsLabel, fpsScale)
 	fpsX := float32(350)
 	fpsY := float32(250)
@@ -136,7 +193,7 @@ func (pm *PauseMenu) renderResumeButton(window *glfw.Window, uiRenderer *ui.UI, 
 	mouseDown := window.GetMouseButton(glfw.MouseButtonLeft) == glfw.Press
 
 	label := "Devam Et"
-	scale := float32(1.0)
+	scale := float32(0.5)
 	tw, th := hudRenderer.MeasureText(label, scale)
 	paddingX := float32(24)
 	paddingY := float32(14)
@@ -163,7 +220,6 @@ func (pm *PauseMenu) renderResumeButton(window *glfw.Window, uiRenderer *ui.UI, 
 		window.SetInputMode(glfw.CursorMode, glfw.CursorDisabled)
 		p.FirstMouse = true
 	}
-	pm.mouseWasDown = mouseDown
 
 	return shouldResume
 }

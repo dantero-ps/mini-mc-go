@@ -3,6 +3,7 @@ package hand
 import (
 	"math"
 	"mini-mc/internal/graphics"
+	"mini-mc/internal/graphics/renderables/items"
 	renderer "mini-mc/internal/graphics/renderer"
 	"mini-mc/internal/player"
 	"mini-mc/internal/profiling"
@@ -27,11 +28,14 @@ type Hand struct {
 	vao         uint32
 	vbo         uint32
 	vertexCount int32
+	items       *items.Items
 }
 
 // NewHand creates a new hand renderable
-func NewHand() *Hand {
-	return &Hand{}
+func NewHand(items *items.Items) *Hand {
+	return &Hand{
+		items: items,
+	}
 }
 
 // Init initializes the hand rendering system
@@ -126,42 +130,80 @@ func (h *Hand) renderHand(p *player.Player, dt float64) {
 	swing := p.GetHandSwingProgress()
 	equip := p.GetHandEquipProgress()
 
-	f := float32(-0.3 * math.Sin(math.Sqrt(float64(swing))*math.Pi))
-	f1 := float32(0.4 * math.Sin(math.Sqrt(float64(swing))*math.Pi*2.0))
-	f2 := float32(-0.4 * math.Sin(float64(swing)*math.Pi))
-	f3 := float32(math.Sin(float64(swing*swing) * math.Pi))
-	f4 := float32(math.Sin(math.Sqrt(float64(swing)) * math.Pi))
+	// Arm swing constants (renderPlayerArm)
+	asX := float32(-0.3 * math.Sin(math.Sqrt(float64(swing))*math.Pi))
+	asY := float32(0.4 * math.Sin(math.Sqrt(float64(swing))*math.Pi*2.0))
+	asZ := float32(-0.4 * math.Sin(float64(swing)*math.Pi))
 
-	model := mgl32.Ident4()
-	model = h.setupViewBobbing(p, model, dt)
-	model = model.Mul4(mgl32.Translate3D(f, f1, f2))
-	model = model.Mul4(mgl32.Translate3D(0.64000005, -0.3, -0.72))
-	model = model.Mul4(mgl32.Translate3D(0.0, -0.6*equip, 0.0))
-	model = model.Mul4(mgl32.HomogRotate3D(mgl32.DegToRad(45.0), mgl32.Vec3{0, 1, 0}))
-	model = model.Mul4(mgl32.HomogRotate3D(mgl32.DegToRad(70.0)*f4, mgl32.Vec3{0, 1, 0}))
-	model = model.Mul4(mgl32.HomogRotate3D(mgl32.DegToRad(-20.0)*f3, mgl32.Vec3{0, 0, 1}))
-	model = model.Mul4(mgl32.Translate3D(-1.0, 3.6, 3.5))
-	model = model.Mul4(mgl32.HomogRotate3D(mgl32.DegToRad(120.0), mgl32.Vec3{0, 0, 1}))
-	model = model.Mul4(mgl32.HomogRotate3D(mgl32.DegToRad(200.0), mgl32.Vec3{1, 0, 0}))
-	model = model.Mul4(mgl32.HomogRotate3D(mgl32.DegToRad(-135.0), mgl32.Vec3{0, 1, 0}))
-	model = model.Mul4(mgl32.Translate3D(5.6, 0.0, 0.0))
-	model = model.Mul4(mgl32.Scale3D(0.0625, 0.0625, 0.0625))
+	// Item swing constants (doItemUsedTransformations)
+	isX := float32(-0.4 * math.Sin(math.Sqrt(float64(swing))*math.Pi))
+	isY := float32(0.2 * math.Sin(math.Sqrt(float64(swing))*math.Pi*2.0))
+	isZ := float32(-0.2 * math.Sin(float64(swing)*math.Pi))
 
-	h.shader.Use()
-	h.shader.SetMatrix4("proj", &proj[0])
-	h.shader.SetMatrix4("model", &model[0])
+	// Rotation components
+	rotS1 := float32(math.Sin(float64(swing*swing) * math.Pi))
+	rotS2 := float32(math.Sin(math.Sqrt(float64(swing)) * math.Pi))
 
-	lightPos := mgl32.Vec3{2, 55, 2}
-	h.shader.SetVector3("lightPos", lightPos.X(), lightPos.Y(), lightPos.Z())
+	// Render either item or hand (like Minecraft ItemRenderer.java:406-411)
+	if p.EquippedItem != nil && h.items != nil {
+		itemModel := mgl32.Ident4()
+		itemModel = h.setupViewBobbing(p, itemModel, dt)
 
-	viewPos := mgl32.Vec3{0, 50, 0}
-	h.shader.SetVector3("viewPos", viewPos.X(), viewPos.Y(), viewPos.Z())
+		// Item used transformations (bobbing during swing)
+		itemModel = itemModel.Mul4(mgl32.Translate3D(isX, isY, isZ))
 
-	gl.Disable(gl.CULL_FACE)
-	gl.BindVertexArray(h.vao)
-	gl.DrawArrays(gl.TRIANGLES, 0, h.vertexCount)
-	gl.BindVertexArray(0)
-	gl.Enable(gl.CULL_FACE)
+		// transformFirstPersonItem (Minecraft ItemRenderer.java:296)
+		itemModel = itemModel.Mul4(mgl32.Translate3D(0.48, -0.46, -0.85))
+		itemModel = itemModel.Mul4(mgl32.Translate3D(0.0, (1.0-equip)*-0.6, 0.0))
+		itemModel = itemModel.Mul4(mgl32.HomogRotate3DY(mgl32.DegToRad(45.0)))
+
+		// Item rotations during swing
+		itemModel = itemModel.Mul4(mgl32.HomogRotate3DY(mgl32.DegToRad(rotS1 * -20.0)))
+		itemModel = itemModel.Mul4(mgl32.HomogRotate3DZ(mgl32.DegToRad(rotS2 * -20.0)))
+		itemModel = itemModel.Mul4(mgl32.HomogRotate3DX(mgl32.DegToRad(rotS2 * -80.0)))
+
+		// Minecraft block in hand scale
+		itemModel = itemModel.Mul4(mgl32.Scale3D(0.4, 0.4, 0.4))
+
+		h.items.RenderHand(p.EquippedItem, proj, itemModel)
+	} else if !p.IsSneaking { // Only show hand if not sneaking
+		model := mgl32.Ident4()
+		model = h.setupViewBobbing(p, model, dt)
+		model = model.Mul4(mgl32.Translate3D(asX, asY, asZ))
+
+		// Hand position/rotation (renderPlayerArm)
+		model = model.Mul4(mgl32.Translate3D(0.64000005, -0.3, -0.72))
+		model = model.Mul4(mgl32.Translate3D(0.0, (1.0-equip)*-0.6, 0.0))
+		model = model.Mul4(mgl32.HomogRotate3DY(mgl32.DegToRad(45.0)))
+
+		// Swing rotations
+		model = model.Mul4(mgl32.HomogRotate3DY(mgl32.DegToRad(rotS2 * 70.0)))
+		model = model.Mul4(mgl32.HomogRotate3DZ(mgl32.DegToRad(rotS1 * -20.0)))
+
+		// Final hand orientations
+		model = model.Mul4(mgl32.Translate3D(-1.0, 3.6, 3.5))
+		model = model.Mul4(mgl32.HomogRotate3DZ(mgl32.DegToRad(120.0)))
+		model = model.Mul4(mgl32.HomogRotate3DX(mgl32.DegToRad(200.0)))
+		model = model.Mul4(mgl32.HomogRotate3DY(mgl32.DegToRad(-135.0)))
+		model = model.Mul4(mgl32.Translate3D(5.6, 0.0, 0.0))
+		model = model.Mul4(mgl32.Scale3D(0.0625, 0.0625, 0.0625))
+
+		h.shader.Use()
+		h.shader.SetMatrix4("proj", &proj[0])
+		h.shader.SetMatrix4("model", &model[0])
+
+		lightPos := mgl32.Vec3{2, 55, 2}
+		h.shader.SetVector3("lightPos", lightPos.X(), lightPos.Y(), lightPos.Z())
+
+		viewPos := mgl32.Vec3{0, 50, 0}
+		h.shader.SetVector3("viewPos", viewPos.X(), viewPos.Y(), viewPos.Z())
+
+		gl.Disable(gl.CULL_FACE)
+		gl.BindVertexArray(h.vao)
+		gl.DrawArrays(gl.TRIANGLES, 0, h.vertexCount)
+		gl.BindVertexArray(0)
+		gl.Enable(gl.CULL_FACE)
+	}
 }
 
 func (h *Hand) setupViewBobbing(p *player.Player, model mgl32.Mat4, dt float64) mgl32.Mat4 {

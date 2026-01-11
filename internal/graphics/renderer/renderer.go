@@ -1,4 +1,4 @@
-package graphics
+package renderer
 
 import (
 	"mini-mc/internal/graphics"
@@ -20,10 +20,6 @@ type Renderer struct {
 
 // NewRenderer creates a new renderer with the given renderables
 func NewRenderer(rs ...Renderable) (*Renderer, error) {
-	if err := gl.Init(); err != nil {
-		return nil, err
-	}
-
 	// Configure OpenGL
 	gl.Enable(gl.DEPTH_TEST)
 	gl.Enable(gl.CULL_FACE)

@@ -19,13 +19,19 @@ const (
 var (
 	UIVertShader = filepath.Join(ShadersDir, "ui.vert")
 	UIFragShader = filepath.Join(ShadersDir, "ui.frag")
+	// Textured UI shaders
+	TexUIVertShader = filepath.Join(ShadersDir, "textured_ui.vert")
+	TexUIFragShader = filepath.Join(ShadersDir, "textured_ui.frag")
 )
 
 // UI implements UI rendering for rectangles and text
 type UI struct {
 	shader           *graphics.Shader
+	texShader        *graphics.Shader
 	vao              uint32
 	vbo              uint32
+	texVao           uint32
+	texVbo           uint32
 	isDraggingSlider bool
 	activeSliderID   string
 }
@@ -37,14 +43,20 @@ func NewUI() *UI {
 
 // Init initializes the UI rendering system
 func (u *UI) Init() error {
-	// Create shader from external files
+	// Create flat color shader
 	var err error
 	u.shader, err = graphics.NewShader(UIVertShader, UIFragShader)
 	if err != nil {
 		return err
 	}
 
-	// Setup VAO and VBO
+	// Create textured shader
+	u.texShader, err = graphics.NewShader(TexUIVertShader, TexUIFragShader)
+	if err != nil {
+		return err
+	}
+
+	// Setup VAO and VBO for flat rects
 	gl.GenVertexArrays(1, &u.vao)
 	gl.GenBuffers(1, &u.vbo)
 	gl.BindVertexArray(u.vao)
@@ -55,13 +67,30 @@ func (u *UI) Init() error {
 	gl.BindBuffer(gl.ARRAY_BUFFER, 0)
 	gl.BindVertexArray(0)
 
+	// Setup VAO and VBO for textured rects
+	gl.GenVertexArrays(1, &u.texVao)
+	gl.GenBuffers(1, &u.texVbo)
+	gl.BindVertexArray(u.texVao)
+	gl.BindBuffer(gl.ARRAY_BUFFER, u.texVbo)
+	// Pos(2) + UV(2) = 4 floats per vertex, 6 vertices
+	gl.BufferData(gl.ARRAY_BUFFER, 6*4*4, nil, gl.DYNAMIC_DRAW)
+
+	// Pos
+	gl.EnableVertexAttribArray(0)
+	gl.VertexAttribPointer(0, 2, gl.FLOAT, false, 4*4, gl.PtrOffset(0))
+	// UV
+	gl.EnableVertexAttribArray(1)
+	gl.VertexAttribPointer(1, 2, gl.FLOAT, false, 4*4, gl.PtrOffset(2*4))
+
+	gl.BindBuffer(gl.ARRAY_BUFFER, 0)
+	gl.BindVertexArray(0)
+
 	return nil
 }
 
 // Render handles UI rendering - this is mainly called for text and HUD rendering
 func (u *UI) Render(ctx renderer.RenderContext) {
 	// UI rendering is mainly handled by HUD feature now
-	// This could be extended for other UI elements
 }
 
 // Dispose cleans up OpenGL resources
@@ -72,6 +101,89 @@ func (u *UI) Dispose() {
 	if u.vbo != 0 {
 		gl.DeleteBuffers(1, &u.vbo)
 	}
+	if u.texVao != 0 {
+		gl.DeleteVertexArrays(1, &u.texVao)
+	}
+	if u.texVbo != 0 {
+		gl.DeleteBuffers(1, &u.texVbo)
+	}
+}
+
+// DrawTexturedRect draws a screen-space rectangle with a texture.
+// u0, v0, u1, v1 are UV coordinates (0.0-1.0).
+func (u *UI) DrawTexturedRect(x, y, w, h float32, textureID uint32, u0, v0, u1, v1 float32, color mgl32.Vec3, alpha float32) {
+	// Convert to NDC [-1,1]
+	x0 := (x/float32(WinWidth))*2 - 1
+	y0 := 1 - (y/float32(WinHeight))*2
+	x1 := ((x+w)/float32(WinWidth))*2 - 1
+	y1 := 1 - ((y+h)/float32(WinHeight))*2
+
+	verts := []float32{
+		x0, y0, u0, v0,
+		x1, y0, u1, v0,
+		x1, y1, u1, v1,
+		x0, y0, u0, v0,
+		x1, y1, u1, v1,
+		x0, y1, u0, v1,
+	}
+
+	gl.Disable(gl.DEPTH_TEST)
+	gl.Disable(gl.CULL_FACE)
+	gl.Enable(gl.BLEND)
+	gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+
+	u.texShader.Use()
+
+	gl.ActiveTexture(gl.TEXTURE0)
+	gl.BindTexture(gl.TEXTURE_2D, textureID)
+	u.texShader.SetInt("uTexture", 0)
+
+	loc := gl.GetUniformLocation(u.texShader.ID, gl.Str("uColor\x00"))
+	gl.Uniform4f(loc, color.X(), color.Y(), color.Z(), alpha)
+
+	gl.BindVertexArray(u.texVao)
+	gl.BindBuffer(gl.ARRAY_BUFFER, u.texVbo)
+	gl.BufferSubData(gl.ARRAY_BUFFER, 0, len(verts)*4, gl.Ptr(verts))
+	gl.DrawArrays(gl.TRIANGLES, 0, 6)
+
+	gl.Disable(gl.BLEND)
+	gl.Enable(gl.DEPTH_TEST)
+	gl.Enable(gl.CULL_FACE)
+}
+
+// DrawFilledRect draws a screen-space rectangle (pixels, top-left origin) with RGBA color.
+func (u *UI) DrawFilledRect(x, y, w, h float32, color mgl32.Vec3, alpha float32) {
+	// Convert to NDC [-1,1]
+	x0 := (x/float32(WinWidth))*2 - 1
+	y0 := 1 - (y/float32(WinHeight))*2
+	x1 := ((x+w)/float32(WinWidth))*2 - 1
+	y1 := 1 - ((y+h)/float32(WinHeight))*2
+	verts := []float32{
+		x0, y0,
+		x1, y0,
+		x1, y1,
+		x0, y0,
+		x1, y1,
+		x0, y1,
+	}
+
+	gl.Disable(gl.DEPTH_TEST)
+	gl.Disable(gl.CULL_FACE)
+	gl.Enable(gl.BLEND)
+	gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+
+	u.shader.Use()
+	loc := gl.GetUniformLocation(u.shader.ID, gl.Str("uColor\x00"))
+	gl.Uniform4f(loc, color.X(), color.Y(), color.Z(), alpha)
+
+	gl.BindVertexArray(u.vao)
+	gl.BindBuffer(gl.ARRAY_BUFFER, u.vbo)
+	gl.BufferSubData(gl.ARRAY_BUFFER, 0, len(verts)*4, gl.Ptr(verts))
+	gl.DrawArrays(gl.TRIANGLES, 0, 6)
+
+	gl.Disable(gl.BLEND)
+	gl.Enable(gl.DEPTH_TEST)
+	gl.Enable(gl.CULL_FACE)
 }
 
 // DrawSlider draws a horizontal slider with the given value (0.0-1.0) and returns the new value. Supports drag capture and optional step snapping with tick marks.
@@ -178,39 +290,4 @@ func (u *UI) DrawSlider(x, y, w, h float32, value float32, window interface{}, s
 	u.DrawFilledRect(thumbX, y, thumbWidth, thumbHeight, thumbColor, 0.9)
 
 	return value
-}
-
-// DrawFilledRect draws a screen-space rectangle (pixels, top-left origin) with RGBA color.
-func (u *UI) DrawFilledRect(x, y, w, h float32, color mgl32.Vec3, alpha float32) {
-	// Convert to NDC [-1,1]
-	x0 := (x/float32(WinWidth))*2 - 1
-	y0 := 1 - (y/float32(WinHeight))*2
-	x1 := ((x+w)/float32(WinWidth))*2 - 1
-	y1 := 1 - ((y+h)/float32(WinHeight))*2
-	verts := []float32{
-		x0, y0,
-		x1, y0,
-		x1, y1,
-		x0, y0,
-		x1, y1,
-		x0, y1,
-	}
-
-	gl.Disable(gl.DEPTH_TEST)
-	gl.Disable(gl.CULL_FACE)
-	gl.Enable(gl.BLEND)
-	gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
-
-	u.shader.Use()
-	loc := gl.GetUniformLocation(u.shader.ID, gl.Str("uColor\x00"))
-	gl.Uniform4f(loc, color.X(), color.Y(), color.Z(), alpha)
-
-	gl.BindVertexArray(u.vao)
-	gl.BindBuffer(gl.ARRAY_BUFFER, u.vbo)
-	gl.BufferSubData(gl.ARRAY_BUFFER, 0, len(verts)*4, gl.Ptr(verts))
-	gl.DrawArrays(gl.TRIANGLES, 0, 6)
-
-	gl.Disable(gl.BLEND)
-	gl.Enable(gl.DEPTH_TEST)
-	gl.Enable(gl.CULL_FACE)
 }

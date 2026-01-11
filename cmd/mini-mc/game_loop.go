@@ -59,13 +59,17 @@ func (gl *GameLoop) Paused() *bool {
 }
 
 // Run starts the main game loop
-func (gl *GameLoop) Run() {
+// Returns true if the game should return to the main menu
+func (gl *GameLoop) Run() bool {
 	for !gl.window.ShouldClose() {
-		gl.tick()
+		if action := gl.tick(); action == MenuActionQuitToMenu {
+			return true
+		}
 	}
+	return false
 }
 
-func (gl *GameLoop) tick() {
+func (gl *GameLoop) tick() MenuAction {
 	profiling.ResetFrame()
 	now := time.Now()
 	dt := now.Sub(gl.lastTime).Seconds()
@@ -87,7 +91,9 @@ func (gl *GameLoop) tick() {
 	renderDur := gl.renderFrame(dt)
 
 	// Handle pause menu
-	gl.handlePauseMenu()
+	if action := gl.handlePauseMenu(); action != MenuActionNone {
+		return action
+	}
 
 	// Present and pump events
 	func() { defer profiling.Track("glfw.SwapBuffers")(); gl.window.SwapBuffers() }()
@@ -98,6 +104,8 @@ func (gl *GameLoop) tick() {
 
 	// FPS limiting
 	gl.fpsLimiter.Wait(gl.paused)
+
+	return MenuActionNone
 }
 
 func (gl *GameLoop) updateGameState(dt float64) time.Duration {
@@ -105,6 +113,7 @@ func (gl *GameLoop) updateGameState(dt float64) time.Duration {
 	if !gl.paused {
 		updateStart := time.Now()
 		func() { defer profiling.Track("player.Update")(); gl.player.Update(dt, gl.window) }()
+		func() { defer profiling.Track("world.UpdateEntities")(); gl.world.UpdateEntities(dt) }()
 		updateDur = time.Since(updateStart)
 	}
 	return updateDur
@@ -155,12 +164,19 @@ func (gl *GameLoop) renderFrame(dt float64) time.Duration {
 	return renderDur
 }
 
-func (gl *GameLoop) handlePauseMenu() {
+func (gl *GameLoop) handlePauseMenu() MenuAction {
 	if gl.paused {
-		if gl.pauseMenu.Render(gl.window, gl.uiRenderer, gl.hudRenderer, gl.player) {
+		action := gl.pauseMenu.Render(gl.window, gl.uiRenderer, gl.hudRenderer, gl.player)
+		switch action {
+		case MenuActionResume:
 			gl.paused = false
+		case MenuActionQuitToMenu:
+			return MenuActionQuitToMenu
+		default:
+			return MenuActionNone
 		}
 	}
+	return MenuActionNone
 }
 
 func (gl *GameLoop) updateProfiling(frameStart time.Time, updateDur, renderDur time.Duration, playerDur, worldDur, glfwDur, physicsDur time.Duration) {

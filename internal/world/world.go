@@ -9,11 +9,23 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 )
 
+// Ticker interface for updating entities (avoids circular dependency with entity package)
+type Ticker interface {
+	Update(dt float64)
+	IsDead() bool
+	SetDead()
+	Position() mgl32.Vec3
+}
+
 // World represents the game world, composed of chunks
 type World struct {
 	// Map of chunks indexed by their coordinates
 	chunks map[ChunkCoord]*Chunk
 	mu     sync.RWMutex
+
+	// Entities in the world
+	Entities   []Ticker
+	EntitiesMu sync.RWMutex
 
 	// Per-column index for fast XZ radius queries: (chunkX,chunkZ) -> slice indexed by chunkY
 	colIndex map[[2]int][]*Chunk
@@ -50,6 +62,7 @@ type ChunkCoord struct {
 func New() *World {
 	w := &World{
 		chunks:         make(map[ChunkCoord]*Chunk),
+		Entities:       make([]Ticker, 0),
 		jobs:           make(chan ChunkCoord, 4096),
 		pending:        make(map[ChunkCoord]struct{}),
 		colIndex:       make(map[[2]int][]*Chunk),
@@ -78,6 +91,40 @@ func New() *World {
 
 // NewEmpty creates an empty world with no pre-filled terrain (for tests/tools).
 func NewEmpty() *World { return New() }
+
+// Close stops the background generation workers
+func (w *World) Close() {
+	close(w.jobs)
+}
+
+// AddEntity adds an entity to the world
+func (w *World) AddEntity(e Ticker) {
+	w.EntitiesMu.Lock()
+	defer w.EntitiesMu.Unlock()
+	w.Entities = append(w.Entities, e)
+}
+
+// UpdateEntities updates all entities and removes dead ones
+func (w *World) UpdateEntities(dt float64) {
+	defer profiling.Track("world.UpdateEntities")()
+	w.EntitiesMu.Lock()
+	defer w.EntitiesMu.Unlock()
+
+	activeCount := 0
+	for i := 0; i < len(w.Entities); i++ {
+		e := w.Entities[i]
+		if !e.IsDead() {
+			e.Update(dt)
+			if !e.IsDead() {
+				// Keep alive
+				w.Entities[activeCount] = e
+				activeCount++
+			}
+		}
+	}
+	// Trim slice to remove dead entities
+	w.Entities = w.Entities[:activeCount]
+}
 
 // GetChunk returns the chunk at the specified chunk coordinates
 // If the chunk doesn't exist and create is true, it will be created
