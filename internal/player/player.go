@@ -198,13 +198,11 @@ func (p *Player) HandleScroll(w *glfw.Window, xoff, yoff float64) {
 	} else if yoff < 0 {
 		p.Inventory.ChangeCurrentItem(-1)
 	}
-	fmt.Printf("Seçili Slot: %d\n", p.Inventory.CurrentItem)
 }
 
 func (p *Player) HandleNumKey(slot int) {
 	if slot >= 0 && slot < 9 {
 		p.Inventory.SetCurrentItem(slot)
-		fmt.Printf("Seçili Slot: %d\n", p.Inventory.CurrentItem)
 	}
 }
 
