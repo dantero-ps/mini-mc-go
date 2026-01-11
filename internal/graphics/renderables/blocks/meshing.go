@@ -67,7 +67,10 @@ func applyMeshResult(result meshing.MeshResult) {
 
 	existing := chunkMeshes[coord]
 	if existing == nil {
-		existing = &chunkMesh{}
+		existing = &chunkMesh{
+			firstFloat:  -1,
+			firstVertex: -1,
+		}
 		gl.GenVertexArrays(1, &existing.vao)
 		gl.GenBuffers(1, &existing.vbo)
 		// Setup VAO attribute layout (pos.xyz, normal.xyz)
@@ -84,12 +87,13 @@ func applyMeshResult(result meshing.MeshResult) {
 
 	verts := result.Vertices
 	if len(verts) > 0 {
-		gl.BufferData(gl.ARRAY_BUFFER, len(verts)*4, gl.Ptr(verts), gl.STATIC_DRAW)
+		gl.BufferData(gl.ARRAY_BUFFER, len(verts)*2, gl.Ptr(verts), gl.STATIC_DRAW)
 		existing.vertexCount = int32(len(verts) / 4)
-		// Keep CPU copy for atlas updates
+		// Keep CPU copy for column meshing
 		existing.cpuVerts = verts
-		// Append/update in atlas
-		appendOrUpdateAtlas(existing)
+		// Note: We don't upload individual chunks to atlas anymore, only combined columns.
+		// appendOrUpdateAtlas(coord.X, coord.Z, existing)
+
 		// Invalidate combined column mesh
 		key := [2]int{coord.X, coord.Z}
 		if col := columnMeshes[key]; col != nil {
@@ -172,10 +176,43 @@ func PruneMeshesByWorld(w *world.World, centerX, centerZ float32, radiusChunks i
 				if m.vao != 0 {
 					gl.DeleteVertexArrays(1, &m.vao)
 				}
+				m.cpuVerts = nil
 			}
 			delete(chunkMeshes, coord)
+			colKey := [2]int{coord.X, coord.Z}
+			if col := columnMeshes[colKey]; col != nil {
+				col.dirty = true
+				// col.cpuVerts removed to save memory
+				col.vertexCount = 0
+				col.firstFloat = -1
+				col.firstVertex = -1
+
+				// HACK: Also remove from atlas region immediately?
+				// No, atlas compaction handles holes. But we must ensure the column is marked dirty so it gets rebuilt/cleared.
+				// However, if we just zero out vertexCount, maybeCompactRegions sees it as "nothing to draw".
+				// But we also need to reclaim the space in Atlas eventually.
+				// For now, let's just make sure we don't hold references.
+			}
 			freed++
 		}
 	}
+
+	// Also prune column meshes that are completely out of range?
+	for key, col := range columnMeshes {
+		dx := key[0] - cx
+		dz := key[1] - cz
+		if dx*dx+dz*dz > radiusChunks*radiusChunks {
+			// Mark as empty
+			col.vertexCount = 0
+			col.firstFloat = -1
+			col.firstVertex = -1
+			col.dirty = true
+			// We remove it from the map so it can be GC'd.
+			// The reference in atlasRegion.orderedColumns will be dropped during the next compaction
+			// because we set vertexCount=0 and made it dirty (which might trigger re-check but since it's out of range, no new chunks will populate it).
+			delete(columnMeshes, key)
+		}
+	}
+
 	return freed
 }

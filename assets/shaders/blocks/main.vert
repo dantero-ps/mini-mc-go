@@ -21,7 +21,7 @@ vec3 decodeNormal(float encoded) {
 }
 
 void main() {
-	vec3 pos = aPos + instancePos;
+	vec3 pos = vec3(aPos) + instancePos - vec3(0.5, 1.0, 0.5);
 	FragPos = pos;
 	
 	// Decode normal and set FaceIndex

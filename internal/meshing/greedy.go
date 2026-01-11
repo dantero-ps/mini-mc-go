@@ -5,18 +5,19 @@ import (
 	"mini-mc/internal/world"
 )
 
-// VertexStride is number of float32 per vertex (pos.xyz + encodedNormal as float)
+// VertexStride is number of int16 per vertex (pos.xyz + encodedNormal)
 const VertexStride = 4
 
 // BuildGreedyMeshForChunk builds a greedy-meshed triangle list (pos+normal interleaved)
 // for the given chunk using world coordinates to decide face visibility across chunk borders.
-func BuildGreedyMeshForChunk(w *world.World, c *world.Chunk) []float32 {
+// Returns []int16 where each vertex is 4 components: x, y, z, normalIndex.
+func BuildGreedyMeshForChunk(w *world.World, c *world.Chunk) []int16 {
 	defer profiling.Track("meshing.BuildGreedyMeshForChunk")()
 	if c == nil {
 		return nil
 	}
 
-	vertices := make([]float32, 0, 1024)
+	vertices := make([]int16, 0, 1024)
 
 	// World-space offset of this chunk
 	baseX := c.X * world.ChunkSizeX
@@ -42,54 +43,51 @@ func BuildGreedyMeshForChunk(w *world.World, c *world.Chunk) []float32 {
 // buildGreedyForDirection performs 2D greedy meshing for one face direction.
 // The direction is specified by a normal (nx,ny,nz) where exactly one component is -1 or +1 and the others are 0.
 // It returns interleaved vertices (pos+normal) forming triangles.
-func buildGreedyForDirection(w *world.World, c *world.Chunk, baseX, baseY, baseZ int, nx, ny, nz int) []float32 {
+func buildGreedyForDirection(w *world.World, c *world.Chunk, baseX, baseY, baseZ int, nx, ny, nz int) []int16 {
 	defer profiling.Track("meshing.buildGreedyForDirection")()
 	// Determine the axis fixed by the face normal and the two in-plane axes (u,v)
 	// We will iterate layers along the normal axis, and build a UxV mask for each layer.
 	var (
 		// size along x,y,z
 		sx, sy, sz = world.ChunkSizeX, world.ChunkSizeY, world.ChunkSizeZ
-		vertices   []float32
+		vertices   []int16
 	)
 
-	// encodeNormal converts normal vector to a single float encoding (0-5 for 6 face directions)
-	encodeNormal := func(nx, ny, nz float32) float32 {
+	// encodeNormal converts normal vector to a single int16 encoding (0-5 for 6 face directions)
+	encodeNormal := func(nx, ny, nz float32) int16 {
 		if nz > 0.5 {
-			return 0.0 // North (+Z)
+			return 0 // North (+Z)
 		} else if nz < -0.5 {
-			return 1.0 // South (-Z)
+			return 1 // South (-Z)
 		} else if nx > 0.5 {
-			return 2.0 // East (+X)
+			return 2 // East (+X)
 		} else if nx < -0.5 {
-			return 3.0 // West (-X)
+			return 3 // West (-X)
 		} else if ny > 0.5 {
-			return 4.0 // Top (+Y)
+			return 4 // Top (+Y)
 		} else if ny < -0.5 {
-			return 5.0 // Bottom (-Y)
+			return 5 // Bottom (-Y)
 		}
-		return 6.0 // Default/unknown
+		return 6 // Default/unknown
 	}
 
 	// Helper lambda to push a quad made of two triangles with given 4 corners and normal
-	emitQuad := func(x0, y0, z0, x1, y1, z1, x2, y2, z2, x3, y3, z3 float32, fnx, fny, fnz float32) {
-		// Axis mapping offsets:
-		// - X and Z remain centered at integer coordinates (0.5)
-		// - Y uses top-face-at-integer mapping (1.0)
-		ox := float32(0.5)
-		oy := float32(1.0)
-		oz := float32(0.5)
+	emitQuad := func(x0, y0, z0, x1, y1, z1, x2, y2, z2, x3, y3, z3 int, fnx, fny, fnz float32) {
+		// Vertices are now passed as World Space Integers.
+		// Shader handles offset (subtraction of 0.5/1.0).
+
 		encodedNormal := encodeNormal(fnx, fny, fnz)
 		// Triangle 1: v0,v1,v2
 		vertices = append(vertices,
-			x0-ox, y0-oy, z0-oz, encodedNormal,
-			x1-ox, y1-oy, z1-oz, encodedNormal,
-			x2-ox, y2-oy, z2-oz, encodedNormal,
+			int16(x0), int16(y0), int16(z0), encodedNormal,
+			int16(x1), int16(y1), int16(z1), encodedNormal,
+			int16(x2), int16(y2), int16(z2), encodedNormal,
 		)
 		// Triangle 2: v2,v3,v0
 		vertices = append(vertices,
-			x2-ox, y2-oy, z2-oz, encodedNormal,
-			x3-ox, y3-oy, z3-oz, encodedNormal,
-			x0-ox, y0-oy, z0-oz, encodedNormal,
+			int16(x2), int16(y2), int16(z2), encodedNormal,
+			int16(x3), int16(y3), int16(z3), encodedNormal,
+			int16(x0), int16(y0), int16(z0), encodedNormal,
 		)
 	}
 
@@ -152,14 +150,14 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, baseX, baseY, baseZ
 					hHeight++
 				}
 				// emit quad at plane x or x+1 depending on nx sign
-				fx := float32(baseX + x)
+				fx := baseX + x
 				if nx > 0 {
-					fx = float32(baseX + x + 1)
+					fx = baseX + x + 1
 				}
-				fy0 := float32(baseY + y0)
-				fz0 := float32(baseZ + z0)
-				fy1 := float32(baseY + y0 + hHeight)
-				fz1 := float32(baseZ + z0 + wWidth)
+				fy0 := baseY + y0
+				fz0 := baseZ + z0
+				fy1 := baseY + y0 + hHeight
+				fz1 := baseZ + z0 + wWidth
 				fnx := float32(nx)
 				fny := float32(0)
 				fnz := float32(0)
@@ -245,14 +243,14 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, baseX, baseY, baseZ
 					}
 					hHeight++
 				}
-				fy := float32(baseY + y)
+				fy := baseY + y
 				if ny > 0 {
-					fy = float32(baseY + y + 1)
+					fy = baseY + y + 1
 				}
-				fx0 := float32(baseX + x0)
-				fz0 := float32(baseZ + z0)
-				fx1 := float32(baseX + x0 + hHeight)
-				fz1 := float32(baseZ + z0 + wWidth)
+				fx0 := baseX + x0
+				fz0 := baseZ + z0
+				fx1 := baseX + x0 + hHeight
+				fz1 := baseZ + z0 + wWidth
 				fnx := float32(0)
 				fny := float32(ny)
 				fnz := float32(0)
@@ -335,14 +333,14 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, baseX, baseY, baseZ
 				}
 				hHeight++
 			}
-			fz := float32(baseZ + z)
+			fz := baseZ + z
 			if nz > 0 {
-				fz = float32(baseZ + z + 1)
+				fz = baseZ + z + 1
 			}
-			fx0 := float32(baseX + x0)
-			fy0 := float32(baseY + y0)
-			fx1 := float32(baseX + x0 + hHeight)
-			fy1 := float32(baseY + y0 + wWidth)
+			fx0 := baseX + x0
+			fy0 := baseY + y0
+			fx1 := baseX + x0 + hHeight
+			fy1 := baseY + y0 + wWidth
 			fnx := float32(0)
 			fny := float32(0)
 			fnz := float32(nz)

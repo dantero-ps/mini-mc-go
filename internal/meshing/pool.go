@@ -18,7 +18,7 @@ type MeshJob struct {
 // MeshResult contains the result of a meshing operation
 type MeshResult struct {
 	Coord    world.ChunkCoord
-	Vertices []float32
+	Vertices []int16
 	Error    error
 }
 

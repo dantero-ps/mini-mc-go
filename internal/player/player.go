@@ -21,6 +21,7 @@ const (
 	Gravity          = 32.0
 	JumpVelocity     = 9.4
 	TerminalVelocity = -78.4 // Maximum fall speed
+	FlySpeed         = 200.0 // Flight mode movement speed
 )
 
 type Player struct {
@@ -30,6 +31,7 @@ type Player struct {
 	OnGround         bool
 	IsSprinting      bool
 	IsSneaking       bool
+	IsFlying         bool
 	PrevHeadBobYaw   float64
 	HeadBobYaw       float64
 	PrevHeadBobPitch float64
@@ -54,25 +56,32 @@ type Player struct {
 	handSwingDuration float64
 	HandSwingProgress float32
 	EquipProgress     float32
+
+	// Flight mode double-tap detection
+	lastSpacePressTime float64
+	lastSpaceState     bool
 }
 
 func New(world *world.World) *Player {
 	return &Player{
-		Position:          mgl32.Vec3{0, 2.8, 0},
-		Velocity:          mgl32.Vec3{0, 0, 0},
-		OnGround:          false,
-		IsSprinting:       false,
-		IsSneaking:        false,
-		CamYaw:            0.0,
-		CamPitch:          0.0,
-		LastMouseX:        0,
-		LastMouseY:        0,
-		FirstMouse:        true,
-		World:             world,
-		handSwingTimer:    0,
-		handSwingDuration: 0.25,
-		HandSwingProgress: 0,
-		EquipProgress:     0,
+		Position:           mgl32.Vec3{0, 2.8, 0},
+		Velocity:           mgl32.Vec3{0, 0, 0},
+		OnGround:           false,
+		IsSprinting:        false,
+		IsSneaking:         false,
+		IsFlying:           false,
+		CamYaw:             0.0,
+		CamPitch:           0.0,
+		LastMouseX:         0,
+		LastMouseY:         0,
+		FirstMouse:         true,
+		World:              world,
+		handSwingTimer:     0,
+		handSwingDuration:  0.25,
+		HandSwingProgress:  0,
+		EquipProgress:      0,
+		lastSpacePressTime: -1,
+		lastSpaceState:     false,
 	}
 }
 
@@ -143,6 +152,15 @@ func (p *Player) Update(dt float64, window *glfw.Window) {
 	// Update hovered block
 	p.UpdateHoveredBlock()
 
+	// Update flight mode double-tap timer
+	if p.lastSpacePressTime >= 0 {
+		p.lastSpacePressTime += dt
+		// Reset after 0.5 seconds (longer than double-tap window)
+		if p.lastSpacePressTime > 0.5 {
+			p.lastSpacePressTime = -1
+		}
+	}
+
 	// Process movement
 	p.UpdatePosition(dt, window)
 
@@ -177,6 +195,27 @@ func (p *Player) UpdateHoveredBlock() {
 }
 
 func (p *Player) UpdatePosition(dt float64, window *glfw.Window) {
+	// Handle double-tap space for flight mode
+	spacePressed := window.GetKey(glfw.KeySpace) == glfw.Press
+	spaceJustPressed := spacePressed && !p.lastSpaceState
+
+	if spaceJustPressed {
+		if p.lastSpacePressTime >= 0 && p.lastSpacePressTime < 0.3 {
+			// Double tap detected - toggle flight mode
+			p.IsFlying = !p.IsFlying
+			if p.IsFlying {
+				p.Velocity[1] = 0 // Stop vertical velocity when entering flight
+				fmt.Println("Uçma modu: AÇIK")
+			} else {
+				fmt.Println("Uçma modu: KAPALI")
+			}
+			p.lastSpacePressTime = -1 // Reset after double tap
+		} else {
+			p.lastSpacePressTime = 0 // Start timing from first press
+		}
+	}
+	p.lastSpaceState = spacePressed
+
 	// Handle sprint and sneak
 	if window.GetKey(glfw.KeyLeftControl) == glfw.Press {
 		p.IsSprinting = true
@@ -277,63 +316,115 @@ func (p *Player) UpdatePosition(dt float64, window *glfw.Window) {
 		p.Velocity[2] *= airDragFactor
 	}
 
-	// Jump
-	if window.GetKey(glfw.KeySpace) == glfw.Press && p.OnGround {
-		p.Velocity[1] = JumpVelocity
-		p.OnGround = false
-
-		// Sprint jump boost
-		if p.IsSprinting && (forward != 0 || strafe != 0) {
-			jumpBoostX := (frontX*forward + strafeX*strafe) * 2.0
-			jumpBoostZ := (frontZ*forward + strafeZ*strafe) * 2.0
-			p.Velocity[0] += jumpBoostX
-			p.Velocity[2] += jumpBoostZ
+	// Flight mode movement
+	if p.IsFlying {
+		// Vertical movement in flight mode
+		verticalSpeed := float32(FlySpeed)
+		if window.GetKey(glfw.KeySpace) == glfw.Press {
+			p.Velocity[1] = verticalSpeed
+		} else if window.GetKey(glfw.KeyLeftShift) == glfw.Press {
+			p.Velocity[1] = -verticalSpeed
+		} else {
+			// No vertical input - stop vertical movement
+			p.Velocity[1] = 0
 		}
-	}
 
-	// Apply gravity
-	if !p.OnGround {
-		p.Velocity[1] -= Gravity * float32(dt)
-		if p.Velocity[1] < TerminalVelocity {
-			p.Velocity[1] = TerminalVelocity
+		// Horizontal movement in flight mode (similar to ground movement)
+		if forward != 0 || strafe != 0 {
+			flightSpeed := float32(FlySpeed)
+			if p.IsSprinting {
+				flightSpeed *= SprintMultiplier
+			}
+			targetVelX := (frontX*forward + strafeX*strafe) * flightSpeed
+			targetVelZ := (frontZ*forward + strafeZ*strafe) * flightSpeed
+
+			blendFactor := float32(0.3)
+			p.Velocity[0] = p.Velocity[0]*(1-blendFactor) + targetVelX*blendFactor
+			p.Velocity[2] = p.Velocity[2]*(1-blendFactor) + targetVelZ*blendFactor
+		} else {
+			// Apply friction when no input
+			frictionFactor := float32(math.Pow(0.7, dt*20))
+			p.Velocity[0] *= frictionFactor
+			p.Velocity[2] *= frictionFactor
+
+			if math.Abs(float64(p.Velocity[0])) < 0.005 {
+				p.Velocity[0] = 0
+			}
+			if math.Abs(float64(p.Velocity[2])) < 0.005 {
+				p.Velocity[2] = 0
+			}
+		}
+	} else {
+		// Normal ground/air movement
+		// Jump
+		if window.GetKey(glfw.KeySpace) == glfw.Press && p.OnGround {
+			p.Velocity[1] = JumpVelocity
+			p.OnGround = false
+
+			// Sprint jump boost
+			if p.IsSprinting && (forward != 0 || strafe != 0) {
+				jumpBoostX := (frontX*forward + strafeX*strafe) * 2.0
+				jumpBoostZ := (frontZ*forward + strafeZ*strafe) * 2.0
+				p.Velocity[0] += jumpBoostX
+				p.Velocity[2] += jumpBoostZ
+			}
+		}
+
+		// Apply gravity
+		if !p.OnGround {
+			p.Velocity[1] -= Gravity * float32(dt)
+			if p.Velocity[1] < TerminalVelocity {
+				p.Velocity[1] = TerminalVelocity
+			}
 		}
 	}
 
 	// Calculate new position
 	newPos := p.Position.Add(p.Velocity.Mul(float32(dt)))
 
-	// Resolve Y first to avoid stepping up vertical walls
-	testPosY := mgl32.Vec3{p.Position[0], newPos[1], p.Position[2]}
-	if !physics.Collides(testPosY, PlayerHeight, p.World) {
-		p.Position[1] = newPos[1]
-		if p.Velocity[1] > 0 {
-			// Clamp to ceiling if head intersects
-			ceiling := physics.FindCeilingLevel(p.Position[0], p.Position[2], p.Position, PlayerHeight, p.World)
-			if p.Position[1]+PlayerHeight > ceiling {
-				p.Position[1] = ceiling - PlayerHeight
-				p.Velocity[1] = 0
-				p.OnGround = false
-			}
+	if p.IsFlying {
+		// In flight mode, check collisions but allow movement through blocks
+		// Only prevent movement if we would collide
+		testPosY := mgl32.Vec3{p.Position[0], newPos[1], p.Position[2]}
+		if !physics.Collides(testPosY, PlayerHeight, p.World) {
+			p.Position[1] = newPos[1]
 		} else {
-			p.OnGround = false
+			p.Velocity[1] = 0
 		}
 	} else {
-		if p.Velocity[1] <= 0 {
-			// Landing on ground (only if ground exists)
-			groundLevel := physics.FindGroundLevel(p.Position[0], p.Position[2], p.Position, p.World)
-			if !float32IsInfNeg(groundLevel) {
-				p.OnGround = true
-				p.Position[1] = groundLevel
+		// Resolve Y first to avoid stepping up vertical walls
+		testPosY := mgl32.Vec3{p.Position[0], newPos[1], p.Position[2]}
+		if !physics.Collides(testPosY, PlayerHeight, p.World) {
+			p.Position[1] = newPos[1]
+			if p.Velocity[1] > 0 {
+				// Clamp to ceiling if head intersects
+				ceiling := physics.FindCeilingLevel(p.Position[0], p.Position[2], p.Position, PlayerHeight, p.World)
+				if p.Position[1]+PlayerHeight > ceiling {
+					p.Position[1] = ceiling - PlayerHeight
+					p.Velocity[1] = 0
+					p.OnGround = false
+				}
 			} else {
 				p.OnGround = false
 			}
 		} else {
-			// Hitting ceiling
-			ceiling := physics.FindCeilingLevel(p.Position[0], p.Position[2], p.Position, PlayerHeight, p.World)
-			p.Position[1] = ceiling - PlayerHeight
-			p.OnGround = false
+			if p.Velocity[1] <= 0 {
+				// Landing on ground (only if ground exists)
+				groundLevel := physics.FindGroundLevel(p.Position[0], p.Position[2], p.Position, p.World)
+				if !float32IsInfNeg(groundLevel) {
+					p.OnGround = true
+					p.Position[1] = groundLevel
+				} else {
+					p.OnGround = false
+				}
+			} else {
+				// Hitting ceiling
+				ceiling := physics.FindCeilingLevel(p.Position[0], p.Position[2], p.Position, PlayerHeight, p.World)
+				p.Position[1] = ceiling - PlayerHeight
+				p.OnGround = false
+			}
+			p.Velocity[1] = 0
 		}
-		p.Velocity[1] = 0
 	}
 
 	// Then resolve X at updated Y
@@ -352,33 +443,38 @@ func (p *Player) UpdatePosition(dt float64, window *glfw.Window) {
 		p.Velocity[2] = 0
 	}
 
-	// Final ground settle to avoid micro fall/jitter when hugging walls
-	groundLevel := physics.FindGroundLevel(p.Position[0], p.Position[2], p.Position, p.World)
-	if !float32IsInfNeg(groundLevel) {
-		delta := p.Position[1] - groundLevel
-		if p.Velocity[1] <= 0 {
-			if delta < -0.001 {
-				// We're slightly inside ground due to numerical issues
-				p.Position[1] = groundLevel
-				p.Velocity[1] = 0
-				p.OnGround = true
-			} else if delta <= 0.08 {
-				// Close enough to ground: stick
-				p.Position[1] = groundLevel
-				p.Velocity[1] = 0
-				p.OnGround = true
+	// Final ground settle to avoid micro fall/jitter when hugging walls (only when not flying)
+	if !p.IsFlying {
+		groundLevel := physics.FindGroundLevel(p.Position[0], p.Position[2], p.Position, p.World)
+		if !float32IsInfNeg(groundLevel) {
+			delta := p.Position[1] - groundLevel
+			if p.Velocity[1] <= 0 {
+				if delta < -0.001 {
+					// We're slightly inside ground due to numerical issues
+					p.Position[1] = groundLevel
+					p.Velocity[1] = 0
+					p.OnGround = true
+				} else if delta <= 0.08 {
+					// Close enough to ground: stick
+					p.Position[1] = groundLevel
+					p.Velocity[1] = 0
+					p.OnGround = true
+				}
+			} else if delta > 0.1 {
+				p.OnGround = false
 			}
-		} else if delta > 0.1 {
-			p.OnGround = false
 		}
-	}
 
-	// Double check if on ground
-	if p.OnGround {
-		checkPos := mgl32.Vec3{p.Position[0], p.Position[1] - 0.01, p.Position[2]}
-		if !physics.Collides(checkPos, PlayerHeight, p.World) {
-			p.OnGround = false
+		// Double check if on ground
+		if p.OnGround {
+			checkPos := mgl32.Vec3{p.Position[0], p.Position[1] - 0.01, p.Position[2]}
+			if !physics.Collides(checkPos, PlayerHeight, p.World) {
+				p.OnGround = false
+			}
 		}
+	} else {
+		// In flight mode, we're never on ground
+		p.OnGround = false
 	}
 
 	positionChange := p.Position.Sub(p.PrevPosition)

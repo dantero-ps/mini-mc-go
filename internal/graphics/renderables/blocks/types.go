@@ -13,25 +13,43 @@ var (
 	MainFragShader = filepath.Join(ShadersDir, "main.frag")
 )
 
+type atlasWrite struct {
+	offsetBytes int
+	data        []int16
+}
+
+type atlasRegion struct {
+	key            [2]int
+	vao            uint32
+	vbo            uint32
+	capacityBytes  int
+	totalFloats    int // Now refers to total int16 count (totalShorts), name kept to minimize diff
+	orderedColumns []*columnMesh
+	pendingWrites  []atlasWrite
+	lastCompact    uint64
+	growthCount    int
+}
+
 type chunkMesh struct {
 	vao         uint32 // legacy per-chunk VAO (kept for now)
 	vbo         uint32 // legacy per-chunk VBO (kept for cleanup)
 	vertexCount int32
-	cpuVerts    []float32 // kept for atlas updates
-	firstFloat  int       // offset into atlas in floats (pos+encodedNormal interleaved)
-	firstVertex int32     // offset into atlas in vertices (firstFloat/4)
+	cpuVerts    []int16 // kept for atlas updates
+	firstFloat  int     // offset into atlas in shorts
+	firstVertex int32   // offset into atlas in vertices
+	regionKey   [2]int  // atlas region owning this mesh data
 }
 
 type columnMesh struct {
 	x            int
 	z            int
-	cpuVerts     []float32
 	vertexCount  int32
 	firstFloat   int
 	dirty        bool
 	firstVertex  int32  // offset into atlas in vertices (firstFloat/4)
 	drawnFrame   uint64 // last frame this column participated in a merged draw call
 	visibleFrame uint64 // last frame this column was marked visible
+	regionKey    [2]int // atlas region owning this column data
 }
 
 type plane struct {

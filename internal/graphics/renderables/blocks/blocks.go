@@ -104,11 +104,16 @@ func (b *Blocks) Dispose() {
 	}
 
 	// Clean up atlas resources
-	if atlasVAO != 0 {
-		gl.DeleteVertexArrays(1, &atlasVAO)
-	}
-	if atlasVBO != 0 {
-		gl.DeleteBuffers(1, &atlasVBO)
+	for _, r := range atlasRegions {
+		if r == nil {
+			continue
+		}
+		if r.vao != 0 {
+			gl.DeleteVertexArrays(1, &r.vao)
+		}
+		if r.vbo != 0 {
+			gl.DeleteBuffers(1, &r.vbo)
+		}
 	}
 
 	// Clean up chunk meshes
@@ -256,22 +261,27 @@ func (b *Blocks) renderBlocksInternal(ctx renderer.RenderContext) {
 				col.visibleFrame = currentFrame
 			}
 		}
-		// Draw ready columns using a single pass over orderedColumns (already ordered by firstVertex)
-		if len(colSet) > 0 {
-			if cap(firstsScratch) < len(colSet) {
-				firstsScratch = make([]int32, len(colSet))
-				countsScratch = make([]int32, len(colSet))
+		flushAllRegionWrites()
+		maybeCompactRegions()
+
+		// Draw ready columns per region using multi-draw
+		for _, r := range atlasRegions {
+			if r == nil || len(r.orderedColumns) == 0 {
+				continue
+			}
+			if cap(firstsScratch) < len(r.orderedColumns) {
+				firstsScratch = make([]int32, len(r.orderedColumns))
+				countsScratch = make([]int32, len(r.orderedColumns))
 			}
 			firsts := firstsScratch[:0]
 			counts := countsScratch[:0]
 			var lastFirst int32
 			var lastCount int32
 			hasRun := false
-			for _, c := range orderedColumns {
+			for _, c := range r.orderedColumns {
 				if c == nil {
 					continue
 				}
-				// Skip if not visible this frame or already drawn via a duplicate entry
 				if c.visibleFrame != currentFrame || c.drawnFrame == currentFrame {
 					continue
 				}
@@ -296,46 +306,12 @@ func (b *Blocks) renderBlocksInternal(ctx renderer.RenderContext) {
 				c.drawnFrame = currentFrame
 			}
 			if len(counts) > 0 {
-				gl.BindVertexArray(atlasVAO)
+				gl.BindVertexArray(r.vao)
 				gl.MultiDrawArrays(gl.TRIANGLES, &firsts[0], &counts[0], int32(len(counts)))
+				glCheckError("atlas multi-draw columns")
 			}
 		}
-		// Collect and draw fallback chunks (columns not drawn this frame)
-		if cap(fallbackScratch) < len(visible) {
-			fallbackScratch = make([]*chunkMesh, 0, len(visible))
-		}
-		fallbackChunks := fallbackScratch[:0]
-		for _, vc := range visible {
-			key := [2]int{vc.Coord.X, vc.Coord.Z}
-			col := columnMeshes[key]
-			if col != nil && col.drawnFrame == currentFrame {
-				continue
-			}
-			if m := chunkMeshes[vc.Coord]; m != nil && m.vertexCount > 0 && m.firstFloat >= 0 {
-				if m.firstVertex < 0 {
-					m.firstVertex = int32(m.firstFloat / 4)
-				}
-				fallbackChunks = append(fallbackChunks, m)
-			}
-		}
-		if len(fallbackChunks) > 0 {
-			if cap(firstsScratch) < len(fallbackChunks) {
-				firstsScratch = make([]int32, len(fallbackChunks))
-				countsScratch = make([]int32, len(fallbackChunks))
-			}
-			firsts := firstsScratch[:0]
-			counts := countsScratch[:0]
-			for _, m := range fallbackChunks {
-				if m.firstVertex < 0 || m.vertexCount <= 0 {
-					continue
-				}
-				firsts = append(firsts, m.firstVertex)
-				counts = append(counts, m.vertexCount)
-			}
-			if len(counts) > 0 {
-				gl.BindVertexArray(atlasVAO)
-				gl.MultiDrawArrays(gl.TRIANGLES, &firsts[0], &counts[0], int32(len(counts)))
-			}
-		}
+
+		// Fallback rendering removed: we only render via aggregated columns now.
 	}()
 }
