@@ -31,13 +31,11 @@ type atlasRegion struct {
 }
 
 type chunkMesh struct {
-	vao         uint32 // legacy per-chunk VAO (kept for now)
-	vbo         uint32 // legacy per-chunk VBO (kept for cleanup)
 	vertexCount int32
-	cpuVerts    []int16 // kept for atlas updates
-	firstFloat  int     // offset into atlas in shorts
-	firstVertex int32   // offset into atlas in vertices
-	regionKey   [2]int  // atlas region owning this mesh data
+	cpuVerts    []uint32 // Packed vertices
+	firstFloat  int      // offset into atlas in shorts
+	firstVertex int32    // offset into atlas in vertices
+	regionKey   [2]int   // atlas region owning this mesh data
 }
 
 type columnMesh struct {

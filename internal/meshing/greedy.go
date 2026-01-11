@@ -5,56 +5,72 @@ import (
 	"mini-mc/internal/world"
 )
 
-// VertexStride is number of int16 per vertex (pos.xyz + encodedNormal)
-const VertexStride = 4
+// VertexStride is number of uint32 per vertex (packed data)
+const VertexStride = 1
 
-// BuildGreedyMeshForChunk builds a greedy-meshed triangle list (pos+normal interleaved)
+// BuildGreedyMeshForChunk builds a greedy-meshed triangle list (packed uint32)
 // for the given chunk using world coordinates to decide face visibility across chunk borders.
-// Returns []int16 where each vertex is 4 components: x, y, z, normalIndex.
-func BuildGreedyMeshForChunk(w *world.World, c *world.Chunk) []int16 {
+// Returns []uint32 where each vertex is a single packed uint32 containing:
+// X (4 bits), Y (8 bits), Z (4 bits), Normal (3 bits)
+func BuildGreedyMeshForChunk(w *world.World, c *world.Chunk) []uint32 {
 	defer profiling.Track("meshing.BuildGreedyMeshForChunk")()
 	if c == nil {
 		return nil
 	}
 
-	vertices := make([]int16, 0, 1024)
+	vertices := make([]uint32, 0, 1024)
 
-	// World-space offset of this chunk
-	baseX := c.X * world.ChunkSizeX
-	baseY := c.Y * world.ChunkSizeY
-	baseZ := c.Z * world.ChunkSizeZ
+	// World-space offset of this chunk is NOT baked into vertices anymore to save bits.
+	// We use chunk-local coordinates (0-15 for X/Z, 0-255 for Y).
 
 	// +X faces (east)
-	vertices = append(vertices, buildGreedyForDirection(w, c, baseX, baseY, baseZ, +1, 0, 0)...)
+	vertices = append(vertices, buildGreedyForDirection(w, c, +1, 0, 0)...)
 	// -X faces (west)
-	vertices = append(vertices, buildGreedyForDirection(w, c, baseX, baseY, baseZ, -1, 0, 0)...)
+	vertices = append(vertices, buildGreedyForDirection(w, c, -1, 0, 0)...)
 	// +Y faces (top)
-	vertices = append(vertices, buildGreedyForDirection(w, c, baseX, baseY, baseZ, 0, +1, 0)...)
+	vertices = append(vertices, buildGreedyForDirection(w, c, 0, +1, 0)...)
 	// -Y faces (bottom)
-	vertices = append(vertices, buildGreedyForDirection(w, c, baseX, baseY, baseZ, 0, -1, 0)...)
+	vertices = append(vertices, buildGreedyForDirection(w, c, 0, -1, 0)...)
 	// +Z faces (north)
-	vertices = append(vertices, buildGreedyForDirection(w, c, baseX, baseY, baseZ, 0, 0, +1)...)
+	vertices = append(vertices, buildGreedyForDirection(w, c, 0, 0, +1)...)
 	// -Z faces (south)
-	vertices = append(vertices, buildGreedyForDirection(w, c, baseX, baseY, baseZ, 0, 0, -1)...)
+	vertices = append(vertices, buildGreedyForDirection(w, c, 0, 0, -1)...)
 
 	return vertices
 }
 
 // buildGreedyForDirection performs 2D greedy meshing for one face direction.
 // The direction is specified by a normal (nx,ny,nz) where exactly one component is -1 or +1 and the others are 0.
-// It returns interleaved vertices (pos+normal) forming triangles.
-func buildGreedyForDirection(w *world.World, c *world.Chunk, baseX, baseY, baseZ int, nx, ny, nz int) []int16 {
+// It returns packed vertices forming triangles.
+func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int) []uint32 {
 	defer profiling.Track("meshing.buildGreedyForDirection")()
 	// Determine the axis fixed by the face normal and the two in-plane axes (u,v)
 	// We will iterate layers along the normal axis, and build a UxV mask for each layer.
 	var (
 		// size along x,y,z
 		sx, sy, sz = world.ChunkSizeX, world.ChunkSizeY, world.ChunkSizeZ
-		vertices   []int16
+		vertices   []uint32
 	)
 
-	// encodeNormal converts normal vector to a single int16 encoding (0-5 for 6 face directions)
-	encodeNormal := func(nx, ny, nz float32) int16 {
+	// Base coordinates for world lookups (still needed for neighbor checks)
+	baseX := c.X * world.ChunkSizeX
+	baseY := c.Y * world.ChunkSizeY
+	baseZ := c.Z * world.ChunkSizeZ
+
+	// packVertex encodes local x,y,z and normal into a single uint32
+	// Limits: X: 0-16 (5 bits), Y: 0-256 (9 bits), Z: 0-16 (5 bits), Normal: 0-7 (3 bits)
+	// Note: We need 0-16 because greedy meshing can produce coordinates up to size (e.g. 16)
+	// Layout:
+	// X: bits 0-4   (5 bits)
+	// Y: bits 5-13  (9 bits)
+	// Z: bits 14-18 (5 bits)
+	// N: bits 19-21 (3 bits)
+	packVertex := func(x, y, z int, normal byte) uint32 {
+		return uint32(x) | (uint32(y) << 5) | (uint32(z) << 14) | (uint32(normal) << 19)
+	}
+
+	// encodeNormal converts normal vector to a single byte encoding (0-5 for 6 face directions)
+	encodeNormal := func(nx, ny, nz float32) byte {
 		if nz > 0.5 {
 			return 0 // North (+Z)
 		} else if nz < -0.5 {
@@ -73,21 +89,21 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, baseX, baseY, baseZ
 
 	// Helper lambda to push a quad made of two triangles with given 4 corners and normal
 	emitQuad := func(x0, y0, z0, x1, y1, z1, x2, y2, z2, x3, y3, z3 int, fnx, fny, fnz float32) {
-		// Vertices are now passed as World Space Integers.
-		// Shader handles offset (subtraction of 0.5/1.0).
+		// Vertices are passed as Chunk-Local Integers.
 
 		encodedNormal := encodeNormal(fnx, fny, fnz)
+
 		// Triangle 1: v0,v1,v2
 		vertices = append(vertices,
-			int16(x0), int16(y0), int16(z0), encodedNormal,
-			int16(x1), int16(y1), int16(z1), encodedNormal,
-			int16(x2), int16(y2), int16(z2), encodedNormal,
+			packVertex(x0, y0, z0, encodedNormal),
+			packVertex(x1, y1, z1, encodedNormal),
+			packVertex(x2, y2, z2, encodedNormal),
 		)
 		// Triangle 2: v2,v3,v0
 		vertices = append(vertices,
-			int16(x2), int16(y2), int16(z2), encodedNormal,
-			int16(x3), int16(y3), int16(z3), encodedNormal,
-			int16(x0), int16(y0), int16(z0), encodedNormal,
+			packVertex(x2, y2, z2, encodedNormal),
+			packVertex(x3, y3, z3, encodedNormal),
+			packVertex(x0, y0, z0, encodedNormal),
 		)
 	}
 
@@ -150,32 +166,29 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, baseX, baseY, baseZ
 					hHeight++
 				}
 				// emit quad at plane x or x+1 depending on nx sign
-				fx := baseX + x
+				fx := x
 				if nx > 0 {
-					fx = baseX + x + 1
+					fx = x + 1
 				}
-				fy0 := baseY + y0
-				fz0 := baseZ + z0
-				fy1 := baseY + y0 + hHeight
-				fz1 := baseZ + z0 + wWidth
+				// Local coordinates are used directly
 				fnx := float32(nx)
 				fny := float32(0)
 				fnz := float32(0)
 				// CCW winding for outward normal
 				if nx > 0 { // +X
 					emitQuad(
-						fx, fy0, fz0,
-						fx, fy1, fz0,
-						fx, fy1, fz1,
-						fx, fy0, fz1,
+						fx, y0, z0,
+						fx, y0+hHeight, z0,
+						fx, y0+hHeight, z0+wWidth,
+						fx, y0, z0+wWidth,
 						fnx, fny, fnz,
 					)
 				} else { // -X
 					emitQuad(
-						fx, fy0, fz0,
-						fx, fy0, fz1,
-						fx, fy1, fz1,
-						fx, fy1, fz0,
+						fx, y0, z0,
+						fx, y0, z0+wWidth,
+						fx, y0+hHeight, z0+wWidth,
+						fx, y0+hHeight, z0,
 						fnx, fny, fnz,
 					)
 				}
@@ -243,31 +256,29 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, baseX, baseY, baseZ
 					}
 					hHeight++
 				}
-				fy := baseY + y
+
+				fy := y
 				if ny > 0 {
-					fy = baseY + y + 1
+					fy = y + 1
 				}
-				fx0 := baseX + x0
-				fz0 := baseZ + z0
-				fx1 := baseX + x0 + hHeight
-				fz1 := baseZ + z0 + wWidth
+
 				fnx := float32(0)
 				fny := float32(ny)
 				fnz := float32(0)
 				if ny > 0 { // +Y (top) — CCW
 					emitQuad(
-						fx0, fy, fz0,
-						fx0, fy, fz1,
-						fx1, fy, fz1,
-						fx1, fy, fz0,
+						x0, fy, z0,
+						x0, fy, z0+wWidth,
+						x0+hHeight, fy, z0+wWidth,
+						x0+hHeight, fy, z0,
 						fnx, fny, fnz,
 					)
 				} else { // -Y (bottom) — CCW
 					emitQuad(
-						fx0, fy, fz0,
-						fx1, fy, fz0,
-						fx1, fy, fz1,
-						fx0, fy, fz1,
+						x0, fy, z0,
+						x0+hHeight, fy, z0,
+						x0+hHeight, fy, z0+wWidth,
+						x0, fy, z0+wWidth,
 						fnx, fny, fnz,
 					)
 				}
@@ -333,31 +344,29 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, baseX, baseY, baseZ
 				}
 				hHeight++
 			}
-			fz := baseZ + z
+
+			fz := z
 			if nz > 0 {
-				fz = baseZ + z + 1
+				fz = z + 1
 			}
-			fx0 := baseX + x0
-			fy0 := baseY + y0
-			fx1 := baseX + x0 + hHeight
-			fy1 := baseY + y0 + wWidth
+
 			fnx := float32(0)
 			fny := float32(0)
 			fnz := float32(nz)
 			if nz > 0 { // +Z (north) — CCW outward (matches gl.FrontFace(CCW))
 				emitQuad(
-					fx0, fy0, fz,
-					fx1, fy0, fz,
-					fx1, fy1, fz,
-					fx0, fy1, fz,
+					x0, y0, fz,
+					x0+hHeight, y0, fz,
+					x0+hHeight, y0+wWidth, fz,
+					x0, y0+wWidth, fz,
 					fnx, fny, fnz,
 				)
 			} else { // -Z (south) — CCW outward
 				emitQuad(
-					fx0, fy0, fz,
-					fx0, fy1, fz,
-					fx1, fy1, fz,
-					fx1, fy0, fz,
+					x0, y0, fz,
+					x0, y0+wWidth, fz,
+					x0+hHeight, y0+wWidth, fz,
+					x0+hHeight, y0, fz,
 					fnx, fny, fnz,
 				)
 			}

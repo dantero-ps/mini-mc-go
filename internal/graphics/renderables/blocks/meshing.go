@@ -4,8 +4,6 @@ import (
 	"mini-mc/internal/meshing"
 	"mini-mc/internal/world"
 	"sync"
-
-	"github.com/go-gl/gl/v4.1-core/gl"
 )
 
 // Chunk meshes cache per chunk
@@ -71,24 +69,12 @@ func applyMeshResult(result meshing.MeshResult) {
 			firstFloat:  -1,
 			firstVertex: -1,
 		}
-		gl.GenVertexArrays(1, &existing.vao)
-		gl.GenBuffers(1, &existing.vbo)
-		// Setup VAO attribute layout (pos.xyz, normal.xyz)
-		gl.BindVertexArray(existing.vao)
-		gl.BindBuffer(gl.ARRAY_BUFFER, existing.vbo)
-		gl.EnableVertexAttribArray(0)
-		gl.VertexAttribPointer(0, 3, gl.FLOAT, false, 4*4, gl.PtrOffset(0))
-		gl.EnableVertexAttribArray(1)
-		gl.VertexAttribPointer(1, 1, gl.FLOAT, false, 4*4, gl.PtrOffset(3*4))
-	} else {
-		gl.BindVertexArray(existing.vao)
-		gl.BindBuffer(gl.ARRAY_BUFFER, existing.vbo)
 	}
 
 	verts := result.Vertices
 	if len(verts) > 0 {
-		gl.BufferData(gl.ARRAY_BUFFER, len(verts)*2, gl.Ptr(verts), gl.STATIC_DRAW)
-		existing.vertexCount = int32(len(verts) / 4)
+		// Vertex count is just length of packed array (one uint32 per vertex)
+		existing.vertexCount = int32(len(verts))
 		// Keep CPU copy for column meshing
 		existing.cpuVerts = verts
 		// Note: We don't upload individual chunks to atlas anymore, only combined columns.
@@ -102,8 +88,6 @@ func applyMeshResult(result meshing.MeshResult) {
 	} else {
 		existing.vertexCount = 0
 		existing.cpuVerts = nil
-		// Still upload zero to keep state valid
-		gl.BufferData(gl.ARRAY_BUFFER, 0, nil, gl.STATIC_DRAW)
 	}
 	chunkMeshes[coord] = existing
 }
@@ -170,12 +154,6 @@ func PruneMeshesByWorld(w *world.World, centerX, centerZ float32, radiusChunks i
 		dz := coord.Z - cz
 		if !present || dx*dx+dz*dz > radiusChunks*radiusChunks {
 			if m != nil {
-				if m.vbo != 0 {
-					gl.DeleteBuffers(1, &m.vbo)
-				}
-				if m.vao != 0 {
-					gl.DeleteVertexArrays(1, &m.vao)
-				}
 				m.cpuVerts = nil
 			}
 			delete(chunkMeshes, coord)

@@ -119,12 +119,8 @@ func (b *Blocks) Dispose() {
 	// Clean up chunk meshes
 	for _, m := range chunkMeshes {
 		if m != nil {
-			if m.vao != 0 {
-				gl.DeleteVertexArrays(1, &m.vao)
-			}
-			if m.vbo != 0 {
-				gl.DeleteBuffers(1, &m.vbo)
-			}
+			// Legacy VAO/VBOs are removed, just dropping reference is enough
+			m.cpuVerts = nil
 		}
 	}
 }

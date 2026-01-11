@@ -190,6 +190,7 @@ func flushAllRegionWrites() {
 }
 
 // Helper to gather vertices for a column (from X,Z) by checking relevant Y chunks
+// It unpacks the compressed chunk-local uint32 vertices into world-space int16 atlas format.
 func collectColumnVerts(x, z int) []int16 {
 	var buf []int16
 	// We assume a reasonable max height.
@@ -199,7 +200,29 @@ func collectColumnVerts(x, z int) []int16 {
 	for y := 0; y < 16; y++ {
 		coord := world.ChunkCoord{X: x, Y: y, Z: z}
 		if cm := chunkMeshes[coord]; cm != nil && cm.vertexCount > 0 && len(cm.cpuVerts) > 0 {
-			buf = append(buf, cm.cpuVerts...)
+			// Unpack vertices
+			baseX := x * world.ChunkSizeX
+			baseY := y * world.ChunkSizeY
+			baseZ := z * world.ChunkSizeZ
+
+			for _, packed := range cm.cpuVerts {
+				// Layout:
+				// X: bits 0-4   (5 bits)
+				// Y: bits 5-13  (9 bits)
+				// Z: bits 14-18 (5 bits)
+				// N: bits 19-21 (3 bits)
+
+				lx := int(packed & 0x1F)
+				ly := int((packed >> 5) & 0x1FF)
+				lz := int((packed >> 14) & 0x1F)
+				norm := int16((packed >> 19) & 0x7)
+
+				wx := int16(baseX + lx)
+				wy := int16(baseY + ly)
+				wz := int16(baseZ + lz)
+
+				buf = append(buf, wx, wy, wz, norm)
+			}
 		}
 	}
 	return buf
@@ -211,7 +234,7 @@ func calculateColumnFloats(x, z int) int {
 	for y := 0; y < 16; y++ {
 		coord := world.ChunkCoord{X: x, Y: y, Z: z}
 		if cm := chunkMeshes[coord]; cm != nil && cm.vertexCount > 0 && len(cm.cpuVerts) > 0 {
-			total += len(cm.cpuVerts)
+			total += len(cm.cpuVerts) * 4 // 1 packed vertex expands to 4 int16s (x,y,z,norm)
 		}
 	}
 	return total
