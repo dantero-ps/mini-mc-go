@@ -177,6 +177,9 @@ func (h *HUD) Render(ctx renderer.RenderContext) {
 			h.RenderProfilingInfo()
 		}()
 	}
+
+	// Flush any remaining UI commands (should be minimal; main flush points are inside renderHotbar/renderInventory)
+	h.uiRenderer.Flush()
 }
 
 func (h *HUD) renderHotbar(p *player.Player) {
@@ -244,6 +247,9 @@ func (h *HUD) renderHotbar(p *player.Player) {
 
 	h.uiRenderer.DrawTexturedRect(selXScreen, selYScreen, selW, selH, h.widgetsTexture, selU0, selV0, selU1, selV1, color, 1.0)
 
+	// IMPORTANT: UI quads are FIFO-batched; flush backgrounds before rendering items/text so they don't draw over items.
+	h.uiRenderer.Flush()
+
 	// Draw Items
 	for i := 0; i < 9; i++ {
 		stack := p.Inventory.MainInventory[i]
@@ -310,7 +316,10 @@ func (h *HUD) renderInventory(p *player.Player) {
 	// Use inventoryTexture
 	h.uiRenderer.DrawTexturedRect(x, y, invW, invH, h.inventoryTexture, 0, 0, u1, v1, color, 1.0)
 
-	// Render "Crafting" text
+	// Flush background UI first so items/text draw on top
+	h.uiRenderer.Flush()
+
+	// Render "Crafting" text (on top of background)
 	craftingX := x + 86*scale
 	craftingY := y + 16*scale
 	h.fontRenderer.Render("Crafting", craftingX, craftingY, 0.35, mgl32.Vec3{0.3, 0.3, 0.3})
@@ -391,6 +400,9 @@ func (h *HUD) renderInventory(p *player.Player) {
 			h.itemRenderer.RenderGUI(stack, slotX, slotY, itemSize)
 		}
 	}
+
+	// Flush hover overlays (and any other filled UI drawn during inventory) above items.
+	h.uiRenderer.Flush()
 
 	// Render Cursor Stack
 	if p.Inventory.CursorStack != nil {

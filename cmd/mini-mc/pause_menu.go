@@ -65,22 +65,31 @@ func (pm *PauseMenu) Render(window *glfw.Window, uiRenderer *ui.UI, hudRenderer 
 	uiRenderer.DrawFilledRect(0, 0, 900, 600, mgl32.Vec3{0, 0, 0}, 0.45)
 
 	// Render Distance Slider
-	pm.renderRenderDistanceSlider(window, uiRenderer, hudRenderer)
+	pm.renderRenderDistanceSlider(window, uiRenderer)
 
 	// FPS Limit Slider
-	pm.renderFPSLimitSlider(window, uiRenderer, hudRenderer)
+	pm.renderFPSLimitSlider(window, uiRenderer)
 
 	// Resume button
-	if pm.renderResumeButton(window, uiRenderer, hudRenderer, p) {
+	if pm.renderResumeButton(window, uiRenderer, p) {
 		pm.mouseWasDown = true
 		return MenuActionResume
 	}
 
 	// Main Menu button
-	if pm.renderMainMenuButton(window, uiRenderer, hudRenderer) {
+	if pm.renderMainMenuButton(window, uiRenderer) {
 		pm.mouseWasDown = true
 		return MenuActionQuitToMenu
 	}
+
+	// Flush UI geometry first so it stays behind text.
+	uiRenderer.Flush()
+
+	// Draw texts on top (font renderer is immediate-mode).
+	pm.renderRenderDistanceSliderText(hudRenderer)
+	pm.renderFPSLimitSliderText(hudRenderer)
+	pm.renderResumeButtonText(hudRenderer)
+	pm.renderMainMenuButtonText(hudRenderer)
 
 	// Update mouse state at the end of frame
 	pm.mouseWasDown = window.GetMouseButton(glfw.MouseButtonLeft) == glfw.Press
@@ -88,14 +97,13 @@ func (pm *PauseMenu) Render(window *glfw.Window, uiRenderer *ui.UI, hudRenderer 
 	return MenuActionNone
 }
 
-func (pm *PauseMenu) renderMainMenuButton(window *glfw.Window, uiRenderer *ui.UI, hudRenderer *hud.HUD) bool {
+func (pm *PauseMenu) renderMainMenuButton(window *glfw.Window, uiRenderer *ui.UI) bool {
 	// Read mouse once for UI interactions
 	cx, cy := window.GetCursorPos()
 	mouseDown := window.GetMouseButton(glfw.MouseButtonLeft) == glfw.Press
 
-	label := "Ana Menü"
-	scale := float32(0.5)
-	tw, th := hudRenderer.MeasureText(label, scale)
+	// Approximate size; exact text is drawn after Flush() in renderMainMenuButtonText().
+	tw, th := float32(140), float32(18)
 	paddingX := float32(24)
 	paddingY := float32(14)
 	btnW := tw + paddingX*2
@@ -110,11 +118,6 @@ func (pm *PauseMenu) renderMainMenuButton(window *glfw.Window, uiRenderer *ui.UI
 	}
 	uiRenderer.DrawFilledRect(btnX, btnY, btnW, btnH, base, 0.85)
 
-	// Text
-	tx := btnX + paddingX
-	ty := btnY + paddingY + th
-	hudRenderer.RenderText(label, tx, ty, scale, mgl32.Vec3{1, 1, 1})
-
 	shouldQuit := false
 	if mouseDown && !pm.mouseWasDown && hover {
 		shouldQuit = true
@@ -123,17 +126,15 @@ func (pm *PauseMenu) renderMainMenuButton(window *glfw.Window, uiRenderer *ui.UI
 	return shouldQuit
 }
 
-func (pm *PauseMenu) renderRenderDistanceSlider(window *glfw.Window, uiRenderer *ui.UI, hudRenderer *hud.HUD) {
+func (pm *PauseMenu) renderRenderDistanceSlider(window *glfw.Window, uiRenderer *ui.UI) {
 	sliderLabel := "Render Distance"
 	sliderScale := float32(0.4)
-	_, sliderTH := hudRenderer.MeasureText(sliderLabel, sliderScale)
+	_ = sliderLabel
+	_ = sliderScale
 	sliderX := float32(350)
 	sliderY := float32(200)
 	sliderW := float32(200)
 	sliderH := float32(20)
-
-	// Draw slider label
-	hudRenderer.RenderText(sliderLabel, sliderX, sliderY-10, sliderScale, mgl32.Vec3{1, 1, 1})
 
 	// Draw and handle slider (snap to steps equal to render distance range)
 	steps := 50 - 5 + 1 // inclusive range [5..50]
@@ -144,23 +145,17 @@ func (pm *PauseMenu) renderRenderDistanceSlider(window *glfw.Window, uiRenderer 
 		newDistance := int(float32(5) + pm.renderDistanceSlider*float32(50-5) + 0.5)
 		config.SetRenderDistance(newDistance)
 	}
-
-	// Show current render distance value
-	currentDistance := config.GetRenderDistance()
-	distanceText := fmt.Sprintf("%d chunks", currentDistance)
-	hudRenderer.RenderText(distanceText, sliderX+sliderW+10, sliderY+sliderH/2+sliderTH/2, sliderScale, mgl32.Vec3{0.8, 0.8, 0.8})
 }
 
-func (pm *PauseMenu) renderFPSLimitSlider(window *glfw.Window, uiRenderer *ui.UI, hudRenderer *hud.HUD) {
+func (pm *PauseMenu) renderFPSLimitSlider(window *glfw.Window, uiRenderer *ui.UI) {
 	fpsLabel := "FPS Limit"
 	fpsScale := float32(0.45)
-	_, fpsTH := hudRenderer.MeasureText(fpsLabel, fpsScale)
+	_ = fpsLabel
+	_ = fpsScale
 	fpsX := float32(350)
 	fpsY := float32(250)
 	fpsW := float32(200)
 	fpsH := float32(20)
-
-	hudRenderer.RenderText(fpsLabel, fpsX, fpsY-10, fpsScale, mgl32.Vec3{1, 1, 1})
 
 	// 30..240 inclusive -> snapping, rightmost => uncapped
 	newFPSValue := uiRenderer.DrawSlider(fpsX, fpsY, fpsW, fpsH, pm.fpsLimitSlider, window, (maxFPSCap-minFPSCap)+1, "fpsLimit")
@@ -175,26 +170,16 @@ func (pm *PauseMenu) renderFPSLimitSlider(window *glfw.Window, uiRenderer *ui.UI
 		}
 		config.SetFPSLimit(newLimit)
 	}
-
-	// Show current FPS limit value
-	currentFPSLimit := config.GetFPSLimit()
-	var limitText string
-	if currentFPSLimit <= 0 {
-		limitText = "Uncapped"
-	} else {
-		limitText = fmt.Sprintf("%d FPS", currentFPSLimit)
-	}
-	hudRenderer.RenderText(limitText, fpsX+fpsW+10, fpsY+fpsH/2+fpsTH/2, fpsScale, mgl32.Vec3{0.8, 0.8, 0.8})
 }
 
-func (pm *PauseMenu) renderResumeButton(window *glfw.Window, uiRenderer *ui.UI, hudRenderer *hud.HUD, p *player.Player) bool {
+func (pm *PauseMenu) renderResumeButton(window *glfw.Window, uiRenderer *ui.UI, p *player.Player) bool {
 	// Read mouse once for UI interactions
 	cx, cy := window.GetCursorPos()
 	mouseDown := window.GetMouseButton(glfw.MouseButtonLeft) == glfw.Press
 
-	label := "Devam Et"
-	scale := float32(0.5)
-	tw, th := hudRenderer.MeasureText(label, scale)
+	// We compute exact sizes later when drawing text; here we just need stable button rects.
+	// Use an approximate size so hitbox matches visual reasonably well.
+	tw, th := float32(140), float32(18)
 	paddingX := float32(24)
 	paddingY := float32(14)
 	btnW := tw + paddingX*2
@@ -209,11 +194,6 @@ func (pm *PauseMenu) renderResumeButton(window *glfw.Window, uiRenderer *ui.UI, 
 	}
 	uiRenderer.DrawFilledRect(btnX, btnY, btnW, btnH, base, 0.85)
 
-	// Text
-	tx := btnX + paddingX
-	ty := btnY + paddingY + th
-	hudRenderer.RenderText(label, tx, ty, scale, mgl32.Vec3{1, 1, 1})
-
 	shouldResume := false
 	if mouseDown && !pm.mouseWasDown && hover {
 		shouldResume = true
@@ -222,4 +202,71 @@ func (pm *PauseMenu) renderResumeButton(window *glfw.Window, uiRenderer *ui.UI, 
 	}
 
 	return shouldResume
+}
+
+func (pm *PauseMenu) renderRenderDistanceSliderText(hudRenderer *hud.HUD) {
+	sliderLabel := "Render Distance"
+	sliderScale := float32(0.4)
+	_, sliderTH := hudRenderer.MeasureText(sliderLabel, sliderScale)
+	sliderX := float32(350)
+	sliderY := float32(200)
+	sliderW := float32(200)
+	sliderH := float32(20)
+
+	hudRenderer.RenderText(sliderLabel, sliderX, sliderY-10, sliderScale, mgl32.Vec3{1, 1, 1})
+
+	currentDistance := config.GetRenderDistance()
+	distanceText := fmt.Sprintf("%d chunks", currentDistance)
+	hudRenderer.RenderText(distanceText, sliderX+sliderW+10, sliderY+sliderH/2+sliderTH/2, sliderScale, mgl32.Vec3{0.8, 0.8, 0.8})
+}
+
+func (pm *PauseMenu) renderFPSLimitSliderText(hudRenderer *hud.HUD) {
+	fpsLabel := "FPS Limit"
+	fpsScale := float32(0.45)
+	_, fpsTH := hudRenderer.MeasureText(fpsLabel, fpsScale)
+	fpsX := float32(350)
+	fpsY := float32(250)
+	fpsW := float32(200)
+	fpsH := float32(20)
+
+	hudRenderer.RenderText(fpsLabel, fpsX, fpsY-10, fpsScale, mgl32.Vec3{1, 1, 1})
+
+	currentFPSLimit := config.GetFPSLimit()
+	var limitText string
+	if currentFPSLimit <= 0 {
+		limitText = "Uncapped"
+	} else {
+		limitText = fmt.Sprintf("%d FPS", currentFPSLimit)
+	}
+	hudRenderer.RenderText(limitText, fpsX+fpsW+10, fpsY+fpsH/2+fpsTH/2, fpsScale, mgl32.Vec3{0.8, 0.8, 0.8})
+}
+
+func (pm *PauseMenu) renderResumeButtonText(hudRenderer *hud.HUD) {
+	label := "Devam Et"
+	scale := float32(0.5)
+	tw, th := hudRenderer.MeasureText(label, scale)
+	paddingX := float32(24)
+	paddingY := float32(14)
+	btnW := tw + paddingX*2
+	btnX := (900 - btnW) / 2
+	btnY := float32(300)
+
+	tx := btnX + paddingX
+	ty := btnY + paddingY + th
+	hudRenderer.RenderText(label, tx, ty, scale, mgl32.Vec3{1, 1, 1})
+}
+
+func (pm *PauseMenu) renderMainMenuButtonText(hudRenderer *hud.HUD) {
+	label := "Ana Menü"
+	scale := float32(0.5)
+	tw, th := hudRenderer.MeasureText(label, scale)
+	paddingX := float32(24)
+	paddingY := float32(14)
+	btnW := tw + paddingX*2
+	btnX := (900 - btnW) / 2
+	btnY := float32(380)
+
+	tx := btnX + paddingX
+	ty := btnY + paddingY + th
+	hudRenderer.RenderText(label, tx, ty, scale, mgl32.Vec3{1, 1, 1})
 }

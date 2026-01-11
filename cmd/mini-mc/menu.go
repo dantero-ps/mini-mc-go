@@ -52,10 +52,6 @@ func showMenu(window *glfw.Window) player.GameMode {
 		// Also wait until initial mouse down is released if it started pressed
 		isClick := mouseDown && !wasMouseDown
 
-		// Render title
-		menuHUD.RenderText("MINI MC", 350, 100, 1.0, mgl32.Vec3{1, 1, 1})
-		menuHUD.RenderText("Select Game Mode:", 340, 160, 0.5, mgl32.Vec3{0.8, 0.8, 0.8})
-
 		// Survival Button
 		btnW, btnH := 400.0, 80.0
 		btn1X, btn1Y := (900.0-btnW)/2, 220.0
@@ -69,8 +65,6 @@ func showMenu(window *glfw.Window) player.GameMode {
 			}
 		}
 		uiRenderer.DrawFilledRect(float32(btn1X), float32(btn1Y), float32(btnW), float32(btnH), btn1Color, 1.0)
-		menuHUD.RenderText("Survival", float32(btn1X)+20, float32(btn1Y)+37, 0.6, mgl32.Vec3{0, 1, 0})
-		menuHUD.RenderText("No Flying, Normal Mining", float32(btn1X)+20, float32(btn1Y)+65, 0.35, mgl32.Vec3{0.8, 0.8, 0.8})
 
 		// Creative Button
 		btn2X, btn2Y := (900.0-btnW)/2, 320.0
@@ -84,6 +78,15 @@ func showMenu(window *glfw.Window) player.GameMode {
 			}
 		}
 		uiRenderer.DrawFilledRect(float32(btn2X), float32(btn2Y), float32(btnW), float32(btnH), btn2Color, 1.0)
+
+		// 1) Flush UI geometry first so it stays behind text.
+		uiRenderer.Flush()
+
+		// 2) Draw text on top (font renderer is immediate-mode).
+		menuHUD.RenderText("MINI MC", 350, 100, 1.0, mgl32.Vec3{1, 1, 1})
+		menuHUD.RenderText("Select Game Mode:", 340, 160, 0.5, mgl32.Vec3{0.8, 0.8, 0.8})
+		menuHUD.RenderText("Survival", float32(btn1X)+20, float32(btn1Y)+37, 0.6, mgl32.Vec3{0, 1, 0})
+		menuHUD.RenderText("No Flying, Normal Mining", float32(btn1X)+20, float32(btn1Y)+65, 0.35, mgl32.Vec3{0.8, 0.8, 0.8})
 		menuHUD.RenderText("Creative", float32(btn2X)+20, float32(btn2Y)+37, 0.6, mgl32.Vec3{0, 0.8, 1})
 		menuHUD.RenderText("Flying, Instant Break", float32(btn2X)+20, float32(btn2Y)+65, 0.35, mgl32.Vec3{0.8, 0.8, 0.8})
 
