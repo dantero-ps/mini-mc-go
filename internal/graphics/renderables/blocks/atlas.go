@@ -48,11 +48,10 @@ func copyAtlasBuffer(oldVBO, newVBO uint32, bytes int) {
 		src := unsafe.Slice((*int16)(srcPtr), bytes/2)
 		dst := unsafe.Slice((*int16)(dstPtr), bytes/2)
 		copy(dst, src)
-		gl.UnmapBuffer(gl.ARRAY_BUFFER) // unmap newVBO
+		gl.UnmapBuffer(gl.ARRAY_BUFFER)
 		gl.BindBuffer(gl.ARRAY_BUFFER, oldVBO)
-		gl.UnmapBuffer(gl.ARRAY_BUFFER) // unmap oldVBO
+		gl.UnmapBuffer(gl.ARRAY_BUFFER)
 	} else {
-		// clean up any mapped buffers
 		if dstPtr != nil {
 			gl.UnmapBuffer(gl.ARRAY_BUFFER)
 		}
@@ -130,7 +129,7 @@ func ensureRegionCapacity(r *atlasRegion, requiredBytes int) bool {
 
 	// Create new buffer
 	var newVBO uint32
-	gl.GenBuffers(1, &newVBO)
+	gl.GenVertexArrays(1, &newVBO)
 	gl.BindBuffer(gl.ARRAY_BUFFER, newVBO)
 	gl.BufferData(gl.ARRAY_BUFFER, newCap, nil, gl.DYNAMIC_DRAW)
 

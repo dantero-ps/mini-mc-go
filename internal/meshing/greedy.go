@@ -120,7 +120,6 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int) []u
 		encodedNormal := encodeNormal(fnx, fny, fnz)
 
 		// Calculate brightness based on normal (Top=255, Bottom=128, Sides=204)
-		// This logic is now on CPU as requested.
 		var brightness byte = 204 // Sides (0.8 * 255)
 		if encodedNormal == 4 {   // Top
 			brightness = 255 // 1.0 * 255

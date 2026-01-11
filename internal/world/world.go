@@ -79,8 +79,6 @@ func New() *World {
 // NewEmpty creates an empty world with no pre-filled terrain (for tests/tools).
 func NewEmpty() *World { return New() }
 
-// abs removed (no longer used)
-
 // GetChunk returns the chunk at the specified chunk coordinates
 // If the chunk doesn't exist and create is true, it will be created
 func (w *World) GetChunk(chunkX, chunkY, chunkZ int, create bool) *Chunk {

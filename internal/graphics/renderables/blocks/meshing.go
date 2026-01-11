@@ -160,7 +160,6 @@ func PruneMeshesByWorld(w *world.World, centerX, centerZ float32, radiusChunks i
 			colKey := [2]int{coord.X, coord.Z}
 			if col := columnMeshes[colKey]; col != nil {
 				col.dirty = true
-				// col.cpuVerts removed to save memory
 				col.vertexCount = 0
 				col.firstFloat = -1
 				col.firstVertex = -1

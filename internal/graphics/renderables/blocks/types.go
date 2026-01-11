@@ -23,7 +23,7 @@ type atlasRegion struct {
 	vao            uint32
 	vbo            uint32
 	capacityBytes  int
-	totalFloats    int // Now refers to total int16 count (totalShorts), name kept to minimize diff
+	totalFloats    int // Total int16 count in the atlas
 	orderedColumns []*columnMesh
 	pendingWrites  []atlasWrite
 	lastCompact    uint64

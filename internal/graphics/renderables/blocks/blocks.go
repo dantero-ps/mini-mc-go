@@ -111,7 +111,6 @@ func (b *Blocks) Dispose() {
 	// Clean up chunk meshes
 	for _, m := range chunkMeshes {
 		if m != nil {
-			// Legacy VAO/VBOs are removed, just dropping reference is enough
 			m.cpuVerts = nil
 		}
 	}
@@ -314,7 +313,5 @@ func (b *Blocks) renderBlocksInternal(ctx renderer.RenderContext) {
 				glCheckError("atlas multi-draw columns")
 			}
 		}
-
-		// Fallback rendering removed: we only render via aggregated columns now.
 	}()
 }
