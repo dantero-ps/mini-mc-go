@@ -166,7 +166,7 @@ func (h *Hand) renderHand(p *player.Player, dt float64) {
 		itemModel = itemModel.Mul4(mgl32.Scale3D(0.4, 0.4, 0.4))
 
 		h.items.RenderHand(p.EquippedItem, proj, itemModel)
-	} else if !p.IsSneaking { // Only show hand if not sneaking
+	} else { // Show hand even when sneaking
 		model := mgl32.Ident4()
 		model = h.setupViewBobbing(p, model, dt)
 		model = model.Mul4(mgl32.Translate3D(asX, asY, asZ))

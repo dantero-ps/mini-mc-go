@@ -245,9 +245,9 @@ func (b *Breaking) renderBreakingBlock(blockPos [3]int, progress float32, view, 
 	// Scale slightly larger than 1.0 to overlay the block (z-fighting fix)
 	scale := float32(1.002)
 	model := mgl32.Translate3D(
-		float32(blockPos[0]),
+		float32(blockPos[0])+0.5,
 		float32(blockPos[1])-0.5,
-		float32(blockPos[2]),
+		float32(blockPos[2])+0.5,
 	).Mul4(mgl32.Scale3D(scale, scale, scale))
 
 	b.shader.SetMatrix4("model", &model[0])

@@ -335,6 +335,7 @@ func (p *Player) UpdateMining(dt float64) {
 			// Start breaking new block instantly if off cooldown
 			p.BreakingBlock = p.HoveredBlock
 			p.IsBreaking = true
+			p.TriggerHandSwing()
 			p.BreakBlock()
 			// Set cooldown to prevent instant chain breaking (e.g. 0.15s)
 			p.breakCooldown = 0.15
@@ -728,7 +729,11 @@ func (p *Player) UpdatePosition(dt float64, window *glfw.Window) {
 	// Then resolve X at updated Y
 	testPosX := mgl32.Vec3{newPos[0], p.Position[1], p.Position[2]}
 	if !physics.Collides(testPosX, PlayerHeight, p.World) {
-		p.Position[0] = newPos[0]
+		if p.IsSneaking && p.Velocity[1] == 0 && physics.FindGroundLevel(newPos[0], p.Position[2], p.Position, p.World) < p.Position[1]-0.1 {
+			p.Velocity[0] = 0
+		} else {
+			p.Position[0] = newPos[0]
+		}
 	} else {
 		p.Velocity[0] = 0
 	}
@@ -736,7 +741,11 @@ func (p *Player) UpdatePosition(dt float64, window *glfw.Window) {
 	// Finally resolve Z at updated Y
 	testPosZ := mgl32.Vec3{p.Position[0], p.Position[1], newPos[2]}
 	if !physics.Collides(testPosZ, PlayerHeight, p.World) {
-		p.Position[2] = newPos[2]
+		if p.IsSneaking && p.Velocity[1] == 0 && physics.FindGroundLevel(p.Position[0], newPos[2], p.Position, p.World) < p.Position[1]-0.1 {
+			p.Velocity[2] = 0
+		} else {
+			p.Position[2] = newPos[2]
+		}
 	} else {
 		p.Velocity[2] = 0
 	}

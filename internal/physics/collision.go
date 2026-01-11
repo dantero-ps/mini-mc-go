@@ -12,45 +12,52 @@ import (
 // Checks if a position collides with any block in the world
 func Collides(pos mgl32.Vec3, playerHeight float32, world *world.World) bool {
 	defer profiling.Track("physics.Collides")()
-	minX := int(math.Floor(float64(pos.X() - 0.3 + 0.5)))
-	maxX := int(math.Floor(float64(pos.X() + 0.3 + 0.5)))
+	minX := int(math.Floor(float64(pos.X() - 0.3)))
+	maxX := int(math.Floor(float64(pos.X() + 0.3)))
 	// Y uses top-at-integer mapping
 	minY := int(math.Ceil(float64(pos.Y())))
 	maxY := int(math.Ceil(float64(pos.Y() + playerHeight)))
-	minZ := int(math.Floor(float64(pos.Z() - 0.3 + 0.5)))
-	maxZ := int(math.Floor(float64(pos.Z() + 0.3 + 0.5)))
+	minZ := int(math.Floor(float64(pos.Z() - 0.3)))
+	maxZ := int(math.Floor(float64(pos.Z() + 0.3)))
 
 	for x := minX - 1; x <= maxX+1; x++ {
 		for y := minY - 1; y <= maxY+1; y++ {
 			for z := minZ - 1; z <= maxZ+1; z++ {
 				if !world.IsAir(x, y, z) {
-					blockMinX := float32(x) - 0.5
-					blockMaxX := float32(x) + 0.5
+					blockMinX := float32(x)
+					blockMaxX := float32(x) + 1.0
 					// With top-at-integer mapping, Y range is (y-1, y]
 					blockMinY := float32(y) - 1.0
 					blockMaxY := float32(y)
-					blockMinZ := float32(z) - 0.5
-					blockMaxZ := float32(z) + 0.5
+					blockMinZ := float32(z)
+					blockMaxZ := float32(z) + 1.0
 
-					if pos.X()-0.3 < blockMaxX && pos.X()+0.3 > blockMinX &&
-						pos.Y() < blockMaxY && pos.Y()+playerHeight > blockMinY &&
-						pos.Z()-0.3 < blockMaxZ && pos.Z()+0.3 > blockMinZ {
+					isCollidingMaxX := pos.X()-0.3 < blockMaxX
+					isCollidingMinX := pos.X()+0.3 > blockMinX
+					isCollidingMaxY := pos.Y() < blockMaxY
+					isCollidingMinY := pos.Y()+playerHeight > blockMinY
+					isCollidingMaxZ := pos.Z()-0.3 < blockMaxZ
+					isCollidingMinZ := pos.Z()+0.3 > blockMinZ
+					if isCollidingMaxX && isCollidingMinX &&
+						isCollidingMaxY && isCollidingMinY &&
+						isCollidingMaxZ && isCollidingMinZ {
 						return true
 					}
 				}
 			}
 		}
 	}
+
 	return false
 }
 
 // FindGroundLevel finds the highest block below the player
 func FindGroundLevel(x, z float32, playerPos mgl32.Vec3, world *world.World) float32 {
 	defer profiling.Track("physics.FindGroundLevel")()
-	minX := int(math.Floor(float64(x - 0.3 + 0.5)))
-	maxX := int(math.Floor(float64(x + 0.3 + 0.5)))
-	minZ := int(math.Floor(float64(z - 0.3 + 0.5)))
-	maxZ := int(math.Floor(float64(z + 0.3 + 0.5)))
+	minX := int(math.Floor(float64(x - 0.3)))
+	maxX := int(math.Floor(float64(x + 0.3)))
+	minZ := int(math.Floor(float64(z - 0.3)))
+	maxZ := int(math.Floor(float64(z + 0.3)))
 
 	// Player horizontal AABB (XZ)
 	playerMinX := x - 0.3
@@ -63,10 +70,10 @@ func FindGroundLevel(x, z float32, playerPos mgl32.Vec3, world *world.World) flo
 	for bx := minX; bx <= maxX; bx++ {
 		for bz := minZ; bz <= maxZ; bz++ {
 			// Only consider blocks that overlap horizontally with player footprint
-			blockMinX := float32(bx) - 0.5
-			blockMaxX := float32(bx) + 0.5
-			blockMinZ := float32(bz) - 0.5
-			blockMaxZ := float32(bz) + 0.5
+			blockMinX := float32(bx)
+			blockMaxX := float32(bx) + 1.0
+			blockMinZ := float32(bz)
+			blockMaxZ := float32(bz) + 1.0
 			if !(playerMinX < blockMaxX && playerMaxX > blockMinX && playerMinZ < blockMaxZ && playerMaxZ > blockMinZ) {
 				continue
 			}
@@ -87,12 +94,13 @@ func FindGroundLevel(x, z float32, playerPos mgl32.Vec3, world *world.World) flo
 
 // IntersectsBlock checks if the player's AABB would intersect with the given block coordinates
 func IntersectsBlock(playerPos mgl32.Vec3, playerHeight float32, bx, by, bz int) bool {
-	blockMinX := float32(bx) - 0.5
-	blockMaxX := float32(bx) + 0.5
-	blockMinY := float32(by) - 0.5
-	blockMaxY := float32(by) + 0.5
-	blockMinZ := float32(bz) - 0.5
-	blockMaxZ := float32(bz) + 0.5
+	blockMinX := float32(bx)
+	blockMaxX := float32(bx) + 1.0
+	// With top-at-integer mapping, Y range is (y-1, y]
+	blockMinY := float32(by) - 1.0
+	blockMaxY := float32(by)
+	blockMinZ := float32(bz)
+	blockMaxZ := float32(bz) + 1.0
 
 	// Player half-width around X/Z and height along Y
 	playerMinX := playerPos.X() - 0.3
@@ -110,10 +118,10 @@ func IntersectsBlock(playerPos mgl32.Vec3, playerHeight float32, bx, by, bz int)
 // FindCeilingLevel finds the lowest ceiling (bottom face of a block) above the player's head
 func FindCeilingLevel(x, z float32, playerPos mgl32.Vec3, playerHeight float32, world *world.World) float32 {
 	defer profiling.Track("physics.FindCeilingLevel")()
-	minX := int(math.Floor(float64(x - 0.3 + 0.5)))
-	maxX := int(math.Floor(float64(x + 0.3 + 0.5)))
-	minZ := int(math.Floor(float64(z - 0.3 + 0.5)))
-	maxZ := int(math.Floor(float64(z + 0.3 + 0.5)))
+	minX := int(math.Floor(float64(x - 0.3)))
+	maxX := int(math.Floor(float64(x + 0.3)))
+	minZ := int(math.Floor(float64(z - 0.3)))
+	maxZ := int(math.Floor(float64(z + 0.3)))
 
 	// Player horizontal AABB (XZ)
 	playerMinX := x - 0.3
@@ -132,10 +140,10 @@ func FindCeilingLevel(x, z float32, playerPos mgl32.Vec3, playerHeight float32, 
 	for bx := minX; bx <= maxX; bx++ {
 		for bz := minZ; bz <= maxZ; bz++ {
 			// Only consider blocks that overlap horizontally with player footprint
-			blockMinX := float32(bx) - 0.5
-			blockMaxX := float32(bx) + 0.5
-			blockMinZ := float32(bz) - 0.5
-			blockMaxZ := float32(bz) + 0.5
+			blockMinX := float32(bx)
+			blockMaxX := float32(bx) + 1.0
+			blockMinZ := float32(bz)
+			blockMaxZ := float32(bz) + 1.0
 			if !(playerMinX < blockMaxX && playerMaxX > blockMinX && playerMinZ < blockMaxZ && playerMaxZ > blockMinZ) {
 				continue
 			}
