@@ -1,7 +1,6 @@
 package player
 
 import (
-	"fmt"
 	"math"
 	"math/rand"
 
@@ -844,7 +843,6 @@ func float32IsInfNeg(v float32) bool {
 // ToggleWireframeMode, wireframe modunu açıp kapatır
 func (p *Player) ToggleWireframeMode() {
 	WireframeMode = !WireframeMode
-	fmt.Printf("Wireframe mode: %v\n", WireframeMode)
 }
 
 // TriggerHandSwing starts a new right-hand swing animation.
