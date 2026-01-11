@@ -80,14 +80,85 @@ func InitRegistry() {
 		IsSolid:     true,
 	})
 
-	// Example: Stone (Future)
-	/*
-		RegisterBlock(&BlockDefinition{
-			ID: 3,
-			Name: "stone",
-			TextureTop: "stone.png", ...
-		})
-	*/
+	// Stone
+	RegisterBlock(&BlockDefinition{
+		ID:          world.BlockTypeStone,
+		Name:        "stone",
+		TextureTop:  "stone.png",
+		TextureSide: "stone.png",
+		TextureBot:  "stone.png",
+		IsSolid:     true,
+	})
+
+	// Bedrock
+	RegisterBlock(&BlockDefinition{
+		ID:          world.BlockTypeBedrock,
+		Name:        "bedrock",
+		TextureTop:  "bedrock.png",
+		TextureSide: "bedrock.png",
+		TextureBot:  "bedrock.png",
+		IsSolid:     true,
+	})
+
+	// Stone Brick
+	RegisterBlock(&BlockDefinition{
+		ID:          world.BlockTypeStoneBrick,
+		Name:        "stonebrick",
+		TextureTop:  "stonebrick.png",
+		TextureSide: "stonebrick.png",
+		TextureBot:  "stonebrick.png",
+		IsSolid:     true,
+	})
+
+	// Oak Planks
+	RegisterBlock(&BlockDefinition{
+		ID:          world.BlockTypePlanksOak,
+		Name:        "planks_oak",
+		TextureTop:  "planks_oak.png",
+		TextureSide: "planks_oak.png",
+		TextureBot:  "planks_oak.png",
+		IsSolid:     true,
+	})
+
+	// Birch Planks
+	RegisterBlock(&BlockDefinition{
+		ID:          world.BlockTypePlanksBirch,
+		Name:        "planks_birch",
+		TextureTop:  "planks_birch.png",
+		TextureSide: "planks_birch.png",
+		TextureBot:  "planks_birch.png",
+		IsSolid:     true,
+	})
+
+	// Spruce Planks
+	RegisterBlock(&BlockDefinition{
+		ID:          world.BlockTypePlanksSpruce,
+		Name:        "planks_spruce",
+		TextureTop:  "planks_spruce.png",
+		TextureSide: "planks_spruce.png",
+		TextureBot:  "planks_spruce.png",
+		IsSolid:     true,
+	})
+
+	// Jungle Planks
+	RegisterBlock(&BlockDefinition{
+		ID:          world.BlockTypePlanksJungle,
+		Name:        "planks_jungle",
+		TextureTop:  "planks_jungle.png",
+		TextureSide: "planks_jungle.png",
+		TextureBot:  "planks_jungle.png",
+		IsSolid:     true,
+	})
+
+	// Acacia Planks
+	RegisterBlock(&BlockDefinition{
+		ID:          world.BlockTypePlanksAcacia,
+		Name:        "planks_acacia",
+		TextureTop:  "planks_acacia.png",
+		TextureSide: "planks_acacia.png",
+		TextureBot:  "planks_acacia.png",
+		IsSolid:     true,
+	})
 }
 
 // GetTextureLayer returns the texture layer index for a given block and face

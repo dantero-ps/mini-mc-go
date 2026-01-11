@@ -21,7 +21,7 @@ const (
 	Gravity          = 32.0
 	JumpVelocity     = 9.4
 	TerminalVelocity = -78.4 // Maximum fall speed
-	FlySpeed         = 200.0 // Flight mode movement speed
+	FlySpeed         = 10.0  // Flight mode movement speed
 )
 
 type Player struct {

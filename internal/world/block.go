@@ -1,15 +1,19 @@
 package world
 
-import (
-	"github.com/go-gl/mathgl/mgl32"
-)
-
 type BlockType uint16
 
 const (
 	BlockTypeAir BlockType = iota
 	BlockTypeGrass
 	BlockTypeDirt
+	BlockTypeStone
+	BlockTypeBedrock
+	BlockTypeStoneBrick
+	BlockTypePlanksOak
+	BlockTypePlanksBirch
+	BlockTypePlanksSpruce
+	BlockTypePlanksJungle
+	BlockTypePlanksAcacia
 )
 
 // Block data
@@ -97,24 +101,3 @@ const (
 	FaceTop
 	FaceBottom
 )
-
-// GetBlockColor returns the color for a specific block face
-func GetBlockColor(face BlockFace) mgl32.Vec3 {
-	// Different colors for each face
-	switch face {
-	case FaceNorth:
-		return mgl32.Vec3{1.0, 0.0, 0.0} // Red
-	case FaceSouth:
-		return mgl32.Vec3{0.0, 1.0, 0.0} // Green
-	case FaceEast:
-		return mgl32.Vec3{0.0, 0.0, 1.0} // Blue
-	case FaceWest:
-		return mgl32.Vec3{1.0, 1.0, 0.0} // Yellow
-	case FaceTop:
-		return mgl32.Vec3{1.0, 0.0, 1.0} // Magenta
-	case FaceBottom:
-		return mgl32.Vec3{0.0, 1.0, 1.0} // Cyan
-	default:
-		return mgl32.Vec3{0.5, 0.5, 0.5} // Gray (fallback)
-	}
-}
