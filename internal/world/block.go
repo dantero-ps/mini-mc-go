@@ -4,11 +4,12 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 )
 
-type BlockType uint8
+type BlockType uint16
 
 const (
 	BlockTypeAir BlockType = iota
 	BlockTypeGrass
+	BlockTypeDirt
 )
 
 // Block data

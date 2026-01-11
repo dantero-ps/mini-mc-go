@@ -2,16 +2,18 @@ package meshing
 
 import (
 	"mini-mc/internal/profiling"
+	"mini-mc/internal/registry"
 	"mini-mc/internal/world"
 )
 
 // VertexStride is number of uint32 per vertex (packed data)
-const VertexStride = 1
+const VertexStride = 2
 
 // BuildGreedyMeshForChunk builds a greedy-meshed triangle list (packed uint32)
 // for the given chunk using world coordinates to decide face visibility across chunk borders.
-// Returns []uint32 where each vertex is a single packed uint32 containing:
-// X (4 bits), Y (8 bits), Z (4 bits), Normal (3 bits)
+// Returns []uint32 where each vertex is 2 packed uint32s containing:
+// V1: X (5), Y (9), Z (5), Normal (3), Brightness (8)
+// V2: TextureID (16), Tint (1 bit - unused in pack but available)
 func BuildGreedyMeshForChunk(w *world.World, c *world.Chunk) []uint32 {
 	defer profiling.Track("meshing.BuildGreedyMeshForChunk")()
 	if c == nil {
@@ -57,16 +59,20 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int) []u
 	baseY := c.Y * world.ChunkSizeY
 	baseZ := c.Z * world.ChunkSizeZ
 
-	// packVertex encodes local x,y,z and normal into a single uint32
-	// Limits: X: 0-16 (5 bits), Y: 0-256 (9 bits), Z: 0-16 (5 bits), Normal: 0-7 (3 bits)
-	// Note: We need 0-16 because greedy meshing can produce coordinates up to size (e.g. 16)
-	// Layout:
+	// packVertex encodes local x,y,z, normal, brightness, textureID and tint into two uint32s
+	// V1 Layout:
 	// X: bits 0-4   (5 bits)
 	// Y: bits 5-13  (9 bits)
 	// Z: bits 14-18 (5 bits)
 	// N: bits 19-21 (3 bits)
-	packVertex := func(x, y, z int, normal byte) uint32 {
-		return uint32(x) | (uint32(y) << 5) | (uint32(z) << 14) | (uint32(normal) << 19)
+	// B: bits 22-29 (8 bits) - Brightness
+	// V2 Layout:
+	// T: bits 0-15  (16 bits) - Texture Layer ID
+	// C: bits 16-31 (16 bits) - Tint Color (RGB565)
+	packVertex := func(x, y, z int, normal byte, texID int, brightness byte, tint uint16) (uint32, uint32) {
+		v1 := uint32(x) | (uint32(y) << 5) | (uint32(z) << 14) | (uint32(normal) << 19) | (uint32(brightness) << 22)
+		v2 := uint32(texID) | (uint32(tint) << 16)
+		return v1, v2
 	}
 
 	// encodeNormal converts normal vector to a single byte encoding (0-5 for 6 face directions)
@@ -87,24 +93,99 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int) []u
 		return 6 // Default/unknown
 	}
 
-	// Helper lambda to push a quad made of two triangles with given 4 corners and normal
-	emitQuad := func(x0, y0, z0, x1, y1, z1, x2, y2, z2, x3, y3, z3 int, fnx, fny, fnz float32) {
-		// Vertices are passed as Chunk-Local Integers.
+	// Helper to pack RGB to RGB565
+	packColor := func(c uint32) uint16 {
+		if c == 0 {
+			return 0xFFFF // Use White (0xFFFF) for no tint? Or 0?
+			// If we multiply in shader: Color * Tint.
+			// If Tint is 0 (Black), block becomes black.
+			// So default should be White (0xFFFF).
+		}
+		r := (c >> 16) & 0xFF
+		g := (c >> 8) & 0xFF
+		b := c & 0xFF
 
+		r5 := (r >> 3) & 0x1F
+		g6 := (g >> 2) & 0x3F
+		b5 := (b >> 3) & 0x1F
+
+		return uint16((r5 << 11) | (g6 << 5) | b5)
+	}
+
+	defaultTint := uint16(0xFFFF) // White
+
+	// Helper lambda to push a quad made of two triangles with given 4 corners and normal
+	emitQuad := func(x0, y0, z0, x1, y1, z1, x2, y2, z2, x3, y3, z3 int, fnx, fny, fnz float32, texID int, tint uint16) {
+		// Vertices are passed as Chunk-Local Integers.
 		encodedNormal := encodeNormal(fnx, fny, fnz)
 
+		// Calculate brightness based on normal (Top=255, Bottom=128, Sides=204)
+		// This logic is now on CPU as requested.
+		var brightness byte = 204 // Sides (0.8 * 255)
+		if encodedNormal == 4 {   // Top
+			brightness = 255 // 1.0 * 255
+		} else if encodedNormal == 5 { // Bottom
+			brightness = 128 // 0.5 * 255
+		}
+
 		// Triangle 1: v0,v1,v2
-		vertices = append(vertices,
-			packVertex(x0, y0, z0, encodedNormal),
-			packVertex(x1, y1, z1, encodedNormal),
-			packVertex(x2, y2, z2, encodedNormal),
-		)
+		v1a, v2a := packVertex(x0, y0, z0, encodedNormal, texID, brightness, tint)
+		v1b, v2b := packVertex(x1, y1, z1, encodedNormal, texID, brightness, tint)
+		v1c, v2c := packVertex(x2, y2, z2, encodedNormal, texID, brightness, tint)
+
+		vertices = append(vertices, v1a, v2a, v1b, v2b, v1c, v2c)
+
 		// Triangle 2: v2,v3,v0
-		vertices = append(vertices,
-			packVertex(x2, y2, z2, encodedNormal),
-			packVertex(x3, y3, z3, encodedNormal),
-			packVertex(x0, y0, z0, encodedNormal),
-		)
+		v1d, v2d := packVertex(x3, y3, z3, encodedNormal, texID, brightness, tint)
+
+		vertices = append(vertices, v1c, v2c, v1d, v2d, v1a, v2a)
+	}
+
+	// Helper to get texture layer
+	getTex := func(blockType world.BlockType, normalIdx int) int {
+		// Map normal index back to face
+		var face world.BlockFace
+		switch normalIdx {
+		case 0:
+			face = world.FaceNorth // +Z
+		case 1:
+			face = world.FaceSouth // -Z
+		case 2:
+			face = world.FaceEast // +X
+		case 3:
+			face = world.FaceWest // -X
+		case 4:
+			face = world.FaceTop // +Y
+		case 5:
+			face = world.FaceBottom // -Y
+		}
+
+		return registry.GetTextureLayer(blockType, face)
+	}
+
+	// Helper to get tint
+	getTint := func(blockType world.BlockType, normalIdx int) uint16 {
+		if def, ok := registry.Blocks[blockType]; ok && def.TintColor != 0 {
+			var face world.BlockFace
+			switch normalIdx {
+			case 0:
+				face = world.FaceNorth
+			case 1:
+				face = world.FaceSouth
+			case 2:
+				face = world.FaceEast
+			case 3:
+				face = world.FaceWest
+			case 4:
+				face = world.FaceTop
+			case 5:
+				face = world.FaceBottom
+			}
+			if def.TintFaces[face] {
+				return packColor(def.TintColor)
+			}
+		}
+		return defaultTint
 	}
 
 	// Build per-layer masks and greedy-merge
@@ -112,7 +193,7 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int) []u
 	if nx != 0 { // Faces perpendicular to X axis, plane is Y-Z
 		// Layers along X
 		for x := 0; x < sx; x++ {
-			// Mask size sy x sz, store 0 or 1 (face visible)
+			// Mask size sy x sz, store TextureID + 1 (0 means hidden)
 			mask := make([]int, sy*sz)
 			for y := 0; y < sy; y++ {
 				for z := 0; z < sz; z++ {
@@ -120,23 +201,31 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int) []u
 					if bt == world.BlockTypeAir {
 						continue
 					}
-					// Prefer local neighbor when within this chunk; only query world across chunk borders
+					// Check visibility
+					visible := false
 					localNX := x + nx
 					if localNX >= 0 && localNX < sx {
 						if c.IsAir(localNX, y, z) {
-							mask[y*sz+z] = 1
+							visible = true
 						}
 					} else {
-						wx := baseX + x
-						wy := baseY + y
-						wz := baseZ + z
-						nxw := wx + nx
-						nyw := wy
-						nzw := wz
-						// If neighbor chunk missing, treat as air so outward faces render until neighbor arrives
+						wx, wy, wz := baseX+x, baseY+y, baseZ+z
+						nxw, nyw, nzw := wx+nx, wy, wz
 						if w.GetChunkFromBlockCoords(nxw, nyw, nzw, false) == nil || w.IsAir(nxw, nyw, nzw) {
-							mask[y*sz+z] = 1
+							visible = true
 						}
+					}
+
+					if visible {
+						// Determine face
+						faceIdx := 2 // East
+						if nx < 0 {
+							faceIdx = 3
+						} // West
+						texID := getTex(bt, faceIdx)
+						tint := getTint(bt, faceIdx)
+						// Pack tint and texID: (tint << 16) | texID
+						mask[y*sz+z] = (int(tint)<<16 | texID) + 1
 					}
 				}
 			}
@@ -147,11 +236,15 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int) []u
 					i++
 					continue
 				}
+				val := mask[i] - 1
+				texID := val & 0xFFFF
+				tint := uint16(val >> 16)
+
 				// compute width
 				z0 := i % sz
 				y0 := i / sz
 				wWidth := 1
-				for z1 := z0 + 1; z1 < sz && mask[y0*sz+z1] == 1; z1++ {
+				for z1 := z0 + 1; z1 < sz && mask[y0*sz+z1] == mask[i]; z1++ {
 					wWidth++
 				}
 				// compute height
@@ -159,22 +252,20 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int) []u
 			outerYZ:
 				for y1 := y0 + 1; y1 < sy; y1++ {
 					for z1 := z0; z1 < z0+wWidth; z1++ {
-						if mask[y1*sz+z1] != 1 {
+						if mask[y1*sz+z1] != mask[i] {
 							break outerYZ
 						}
 					}
 					hHeight++
 				}
-				// emit quad at plane x or x+1 depending on nx sign
+				// emit quad
 				fx := x
 				if nx > 0 {
 					fx = x + 1
 				}
-				// Local coordinates are used directly
-				fnx := float32(nx)
-				fny := float32(0)
-				fnz := float32(0)
-				// CCW winding for outward normal
+				// Local coordinates
+				fnx, fny, fnz := float32(nx), float32(0), float32(0)
+				// CCW winding
 				if nx > 0 { // +X
 					emitQuad(
 						fx, y0, z0,
@@ -182,6 +273,8 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int) []u
 						fx, y0+hHeight, z0+wWidth,
 						fx, y0, z0+wWidth,
 						fnx, fny, fnz,
+						texID,
+						tint,
 					)
 				} else { // -X
 					emitQuad(
@@ -190,9 +283,11 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int) []u
 						fx, y0+hHeight, z0+wWidth,
 						fx, y0+hHeight, z0,
 						fnx, fny, fnz,
+						texID,
+						tint,
 					)
 				}
-				// zero-out mask region
+				// zero-out mask
 				for yy := y0; yy < y0+hHeight; yy++ {
 					for zz := z0; zz < z0+wWidth; zz++ {
 						mask[yy*sz+zz] = 0
@@ -212,24 +307,28 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int) []u
 					if bt == world.BlockTypeAir {
 						continue
 					}
-					// Prefer local neighbor when within this chunk; only query world across chunk borders
+					visible := false
 					localNY := y + ny
 					if localNY >= 0 && localNY < sy {
 						if c.IsAir(x, localNY, z) {
-							mask[x*sz+z] = 1
+							visible = true
 						}
 					} else {
-						// Crossing into neighbor chunk along Y. Treat missing neighbor as AIR so top/bottom
-						// surfaces at the world boundary are rendered.
-						wx := baseX + x
-						wy := baseY + y
-						wz := baseZ + z
-						nxw := wx
-						nyw := wy + ny
-						nzw := wz
+						wx, wy, wz := baseX+x, baseY+y, baseZ+z
+						nxw, nyw, nzw := wx, wy+ny, wz
 						if w.GetChunkFromBlockCoords(nxw, nyw, nzw, false) == nil || w.IsAir(nxw, nyw, nzw) {
-							mask[x*sz+z] = 1
+							visible = true
 						}
+					}
+
+					if visible {
+						faceIdx := 4 // Top
+						if ny < 0 {
+							faceIdx = 5
+						} // Bottom
+						texID := getTex(bt, faceIdx)
+						tint := getTint(bt, faceIdx)
+						mask[x*sz+z] = (int(tint)<<16 | texID) + 1
 					}
 				}
 			}
@@ -240,17 +339,21 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int) []u
 					i++
 					continue
 				}
+				val := mask[i] - 1
+				texID := val & 0xFFFF
+				tint := uint16(val >> 16)
+
 				x0 := i / sz
 				z0 := i % sz
 				wWidth := 1
-				for z1 := z0 + 1; z1 < sz && mask[x0*sz+z1] == 1; z1++ {
+				for z1 := z0 + 1; z1 < sz && mask[x0*sz+z1] == mask[i]; z1++ {
 					wWidth++
 				}
 				hHeight := 1
 			outerXZ:
 				for x1 := x0 + 1; x1 < sx; x1++ {
 					for z1 := z0; z1 < z0+wWidth; z1++ {
-						if mask[x1*sz+z1] != 1 {
+						if mask[x1*sz+z1] != mask[i] {
 							break outerXZ
 						}
 					}
@@ -261,25 +364,26 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int) []u
 				if ny > 0 {
 					fy = y + 1
 				}
-
-				fnx := float32(0)
-				fny := float32(ny)
-				fnz := float32(0)
-				if ny > 0 { // +Y (top) — CCW
+				fnx, fny, fnz := float32(0), float32(ny), float32(0)
+				if ny > 0 { // +Y
 					emitQuad(
 						x0, fy, z0,
 						x0, fy, z0+wWidth,
 						x0+hHeight, fy, z0+wWidth,
 						x0+hHeight, fy, z0,
 						fnx, fny, fnz,
+						texID,
+						tint,
 					)
-				} else { // -Y (bottom) — CCW
+				} else { // -Y
 					emitQuad(
 						x0, fy, z0,
 						x0+hHeight, fy, z0,
 						x0+hHeight, fy, z0+wWidth,
 						x0, fy, z0+wWidth,
 						fnx, fny, fnz,
+						texID,
+						tint,
 					)
 				}
 				for xx := x0; xx < x0+hHeight; xx++ {
@@ -301,23 +405,28 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int) []u
 				if bt == world.BlockTypeAir {
 					continue
 				}
-				// Prefer local neighbor when within this chunk; only query world across chunk borders
+				visible := false
 				localNZ := z + nz
 				if localNZ >= 0 && localNZ < sz {
 					if c.IsAir(x, y, localNZ) {
-						mask[x*sy+y] = 1
+						visible = true
 					}
 				} else {
-					wx := baseX + x
-					wy := baseY + y
-					wz := baseZ + z
-					nxw := wx
-					nyw := wy
-					nzw := wz + nz
-					// If neighbor chunk missing, treat as air so outward faces render until neighbor arrives
+					wx, wy, wz := baseX+x, baseY+y, baseZ+z
+					nxw, nyw, nzw := wx, wy, wz+nz
 					if w.GetChunkFromBlockCoords(nxw, nyw, nzw, false) == nil || w.IsAir(nxw, nyw, nzw) {
-						mask[x*sy+y] = 1
+						visible = true
 					}
+				}
+
+				if visible {
+					faceIdx := 0 // North
+					if nz < 0 {
+						faceIdx = 1
+					} // South
+					texID := getTex(bt, faceIdx)
+					tint := getTint(bt, faceIdx)
+					mask[x*sy+y] = (int(tint)<<16 | texID) + 1
 				}
 			}
 		}
@@ -328,17 +437,21 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int) []u
 				i++
 				continue
 			}
+			val := mask[i] - 1
+			texID := val & 0xFFFF
+			tint := uint16(val >> 16)
+
 			x0 := i / sy
 			y0 := i % sy
 			wWidth := 1
-			for y1 := y0 + 1; y1 < sy && mask[x0*sy+y1] == 1; y1++ {
+			for y1 := y0 + 1; y1 < sy && mask[x0*sy+y1] == mask[i]; y1++ {
 				wWidth++
 			}
 			hHeight := 1
 		outerXY:
 			for x1 := x0 + 1; x1 < sx; x1++ {
 				for y1 := y0; y1 < y0+wWidth; y1++ {
-					if mask[x1*sy+y1] != 1 {
+					if mask[x1*sy+y1] != mask[i] {
 						break outerXY
 					}
 				}
@@ -349,25 +462,26 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int) []u
 			if nz > 0 {
 				fz = z + 1
 			}
-
-			fnx := float32(0)
-			fny := float32(0)
-			fnz := float32(nz)
-			if nz > 0 { // +Z (north) — CCW outward (matches gl.FrontFace(CCW))
+			fnx, fny, fnz := float32(0), float32(0), float32(nz)
+			if nz > 0 { // +Z
 				emitQuad(
 					x0, y0, fz,
 					x0+hHeight, y0, fz,
 					x0+hHeight, y0+wWidth, fz,
 					x0, y0+wWidth, fz,
 					fnx, fny, fnz,
+					texID,
+					tint,
 				)
-			} else { // -Z (south) — CCW outward
+			} else { // -Z
 				emitQuad(
 					x0, y0, fz,
 					x0, y0+wWidth, fz,
 					x0+hHeight, y0+wWidth, fz,
 					x0+hHeight, y0, fz,
 					fnx, fny, fnz,
+					texID,
+					tint,
 				)
 			}
 			for xx := x0; xx < x0+hHeight; xx++ {
@@ -378,4 +492,5 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int) []u
 		}
 	}
 	return vertices
+
 }

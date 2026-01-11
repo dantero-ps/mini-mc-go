@@ -67,12 +67,21 @@ func copyAtlasBuffer(oldVBO, newVBO uint32, bytes int) {
 func setupRegionVAO(region *atlasRegion) {
 	gl.BindVertexArray(region.vao)
 	gl.BindBuffer(gl.ARRAY_BUFFER, region.vbo)
+
+	// Stride: 6 shorts = 12 bytes
+	stride := int32(6 * 2)
+
 	gl.EnableVertexAttribArray(0)
-	// Position: 3 shorts, NOT normalized (converted to float directly), stride 4*2=8 bytes, offset 0
-	gl.VertexAttribIPointer(0, 3, gl.SHORT, 4*2, gl.PtrOffset(0))
+	// Position: 3 shorts (X,Y,Z), offset 0
+	gl.VertexAttribPointer(0, 3, gl.SHORT, false, stride, gl.PtrOffset(0))
+
 	gl.EnableVertexAttribArray(1)
-	// Normal: 1 short, NOT normalized (0..5), stride 8 bytes, offset 3*2=6
-	gl.VertexAttribPointer(1, 1, gl.SHORT, false, 4*2, gl.PtrOffset(3*2))
+	// Data: 3 shorts (Info, TexID, Tint), offset 6
+	// Info: Normal + Brightness
+	// TexID: Texture Layer
+	// Tint: Reserved
+	gl.VertexAttribPointer(1, 3, gl.UNSIGNED_SHORT, false, stride, gl.PtrOffset(3*2))
+
 	gl.BindVertexArray(0)
 	gl.BindBuffer(gl.ARRAY_BUFFER, 0)
 }
@@ -205,23 +214,49 @@ func collectColumnVerts(x, z int) []int16 {
 			baseY := y * world.ChunkSizeY
 			baseZ := z * world.ChunkSizeZ
 
-			for _, packed := range cm.cpuVerts {
-				// Layout:
-				// X: bits 0-4   (5 bits)
-				// Y: bits 5-13  (9 bits)
-				// Z: bits 14-18 (5 bits)
-				// N: bits 19-21 (3 bits)
+			// VertexStride is 2 uint32s
+			// Output vertex size is 6 int16s
+			count := len(cm.cpuVerts) / 2
 
-				lx := int(packed & 0x1F)
-				ly := int((packed >> 5) & 0x1FF)
-				lz := int((packed >> 14) & 0x1F)
-				norm := int16((packed >> 19) & 0x7)
+			for i := 0; i < count; i++ {
+				v1 := cm.cpuVerts[i*2]
+				v2 := cm.cpuVerts[i*2+1]
+
+				// V1 Layout:
+				// X: 5 bits (0-4)
+				// Y: 9 bits (5-13)
+				// Z: 5 bits (14-18)
+				// N: 3 bits (19-21)
+				// B: 8 bits (22-29) - Brightness
+
+				// V2 Layout:
+				// T: 16 bits (0-15) - TextureID
+
+				lx := int(v1 & 0x1F)
+				ly := int((v1 >> 5) & 0x1FF)
+				lz := int((v1 >> 14) & 0x1F)
+				norm := int((v1 >> 19) & 0x7)
+				brightness := int((v1 >> 22) & 0xFF)
+
+				texID := int(v2 & 0xFFFF)
+				tint := int((v2 >> 16) & 0xFFFF)
 
 				wx := int16(baseX + lx)
 				wy := int16(baseY + ly)
 				wz := int16(baseZ + lz)
 
-				buf = append(buf, wx, wy, wz, norm)
+				// Packed Info:
+				// Lower byte: Normal
+				// Upper byte: Brightness
+				info := int16(norm | (brightness << 8))
+
+				// TextureID as int16
+				texInfo := int16(texID)
+
+				// Extra/Tint
+				extra := int16(tint)
+
+				buf = append(buf, wx, wy, wz, info, texInfo, extra)
 			}
 		}
 	}
@@ -234,7 +269,10 @@ func calculateColumnFloats(x, z int) int {
 	for y := 0; y < 16; y++ {
 		coord := world.ChunkCoord{X: x, Y: y, Z: z}
 		if cm := chunkMeshes[coord]; cm != nil && cm.vertexCount > 0 && len(cm.cpuVerts) > 0 {
-			total += len(cm.cpuVerts) * 4 // 1 packed vertex expands to 4 int16s (x,y,z,norm)
+			// cpuVerts has 2 ints per vertex.
+			// Each vertex becomes 6 shorts.
+			// So total shorts = (len(cpuVerts) / 2) * 6 = len(cpuVerts) * 3
+			total += len(cm.cpuVerts) * 3
 		}
 	}
 	return total
@@ -302,8 +340,8 @@ func compactRegion(r *atlasRegion) {
 
 		copy(dst[offset:], verts)
 		c.firstFloat = offset
-		c.firstVertex = int32(offset / 4)     // Stride is 4 shorts
-		c.vertexCount = int32(len(verts) / 4) // Update just in case
+		c.firstVertex = int32(offset / 6)     // Stride is 6 shorts now
+		c.vertexCount = int32(len(verts) / 6) // Update just in case
 		offset += len(verts)
 		cols = append(cols, c)
 	}
@@ -360,11 +398,14 @@ func ensureColumnMeshForXZ(x, z int) *columnMesh {
 		return col
 	}
 
-	if int32(len(buf)/4) == col.vertexCount && col.firstFloat >= 0 {
+	// 6 shorts per vertex
+	vertexCount := int32(len(buf) / 6)
+
+	if vertexCount == col.vertexCount && col.firstFloat >= 0 {
 		// Size same, try to update in place
 		queueRegionWrite(r, col.firstFloat*2, buf)
 		col.dirty = false
-		col.firstVertex = int32(col.firstFloat / 4)
+		col.firstVertex = int32(col.firstFloat / 6)
 		return col
 	}
 
@@ -380,9 +421,9 @@ func ensureColumnMeshForXZ(x, z int) *columnMesh {
 	// Do NOT store cpuVerts in col
 	// col.cpuVerts = buf
 
-	col.vertexCount = int32(len(buf) / 4)
+	col.vertexCount = vertexCount
 	col.firstFloat = r.totalFloats
-	col.firstVertex = int32(r.totalFloats / 4)
+	col.firstVertex = int32(r.totalFloats / 6)
 	r.totalFloats += len(buf)
 	col.dirty = false
 

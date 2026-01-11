@@ -464,9 +464,10 @@ func (w *World) populateChunk(c *Chunk) {
 			if topLocal >= ChunkSizeY {
 				topLocal = ChunkSizeY - 1
 			}
-			for ly := 0; ly <= topLocal; ly++ {
-				c.SetBlock(lx, ly, lz, BlockTypeGrass)
+			for ly := 0; ly < topLocal; ly++ {
+				c.SetBlock(lx, ly, lz, BlockTypeDirt)
 			}
+			c.SetBlock(lx, topLocal, lz, BlockTypeGrass)
 		}
 	}
 	c.dirty = true

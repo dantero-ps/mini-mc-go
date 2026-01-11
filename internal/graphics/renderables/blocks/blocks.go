@@ -7,6 +7,7 @@ import (
 	renderer "mini-mc/internal/graphics/renderer"
 	"mini-mc/internal/player"
 	"mini-mc/internal/profiling"
+	"mini-mc/internal/registry"
 	"mini-mc/internal/world"
 	"time"
 
@@ -55,24 +56,15 @@ func (b *Blocks) Init() error {
 
 	// Set static face colors once after linking the main shader
 	b.mainShader.Use()
-	northColor := world.GetBlockColor(world.FaceNorth)
-	southColor := world.GetBlockColor(world.FaceSouth)
-	eastColor := world.GetBlockColor(world.FaceEast)
-	westColor := world.GetBlockColor(world.FaceWest)
-	topColor := world.GetBlockColor(world.FaceTop)
-	bottomColor := world.GetBlockColor(world.FaceBottom)
-	defaultColor := mgl32.Vec3{0.5, 0.5, 0.5}
-	b.mainShader.SetVector3("faceColorNorth", northColor.X(), northColor.Y(), northColor.Z())
-	b.mainShader.SetVector3("faceColorSouth", southColor.X(), southColor.Y(), southColor.Z())
-	b.mainShader.SetVector3("faceColorEast", eastColor.X(), eastColor.Y(), eastColor.Z())
-	b.mainShader.SetVector3("faceColorWest", westColor.X(), westColor.Y(), westColor.Z())
-	b.mainShader.SetVector3("faceColorTop", topColor.X(), topColor.Y(), topColor.Z())
-	b.mainShader.SetVector3("faceColorBottom", bottomColor.X(), bottomColor.Y(), bottomColor.Z())
-	b.mainShader.SetVector3("faceColorDefault", defaultColor.X(), defaultColor.Y(), defaultColor.Z())
 
 	// Initialize global data structures
 	chunkMeshes = make(map[world.ChunkCoord]*chunkMesh)
 	columnMeshes = make(map[[2]int]*columnMesh)
+
+	// Initialize texture atlas
+	if err := InitTextureAtlas(); err != nil {
+		return err
+	}
 
 	// Setup atlas
 	setupAtlas()
@@ -130,6 +122,21 @@ func (b *Blocks) renderBlocksInternal(ctx renderer.RenderContext) {
 		defer profiling.Track("renderer.renderBlocks.shaderSetup")()
 		// Track shader binding time (only the Use() call)
 		b.mainShader.Use()
+
+		// Bind texture array
+		if GlobalTextureAtlas != nil {
+			gl.ActiveTexture(gl.TEXTURE0)
+			gl.BindTexture(gl.TEXTURE_2D_ARRAY, GlobalTextureAtlas.TextureID)
+			b.mainShader.SetInt("textureArray", 0)
+
+			// Set tint texture ID (grass_top.png)
+			if id, ok := registry.TextureMap["grass_top.png"]; ok {
+				b.mainShader.SetInt("tintTextureID", int32(id))
+			} else {
+				// Fallback if not found, use -1 to disable tinting
+				b.mainShader.SetInt("tintTextureID", -1)
+			}
+		}
 
 		b.mainShader.SetMatrix4("proj", &ctx.Proj[0])
 		b.mainShader.SetMatrix4("view", &ctx.View[0])
