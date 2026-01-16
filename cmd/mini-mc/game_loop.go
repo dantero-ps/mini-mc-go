@@ -9,6 +9,7 @@ import (
 	"mini-mc/internal/graphics/renderables/hud"
 	"mini-mc/internal/graphics/renderables/ui"
 	renderer "mini-mc/internal/graphics/renderer"
+	"mini-mc/internal/input"
 	"mini-mc/internal/player"
 	"mini-mc/internal/profiling"
 	"mini-mc/internal/world"
@@ -18,12 +19,13 @@ import (
 
 // GameLoop manages the main game loop state
 type GameLoop struct {
-	window      *glfw.Window
-	renderer    *renderer.Renderer
-	uiRenderer  *ui.UI
-	hudRenderer *hud.HUD
-	player      *player.Player
-	world       *world.World
+	window       *glfw.Window
+	renderer     *renderer.Renderer
+	uiRenderer   *ui.UI
+	hudRenderer  *hud.HUD
+	player       *player.Player
+	world        *world.World
+	inputManager *input.InputManager
 
 	paused     bool
 	pauseMenu  *PauseMenu
@@ -37,7 +39,7 @@ type GameLoop struct {
 }
 
 // NewGameLoop creates a new game loop with all components
-func NewGameLoop(window *glfw.Window, r *renderer.Renderer, uiRenderer *ui.UI, hudRenderer *hud.HUD, p *player.Player, w *world.World) *GameLoop {
+func NewGameLoop(window *glfw.Window, r *renderer.Renderer, uiRenderer *ui.UI, hudRenderer *hud.HUD, p *player.Player, w *world.World, im *input.InputManager) *GameLoop {
 	return &GameLoop{
 		window:           window,
 		renderer:         r,
@@ -45,6 +47,7 @@ func NewGameLoop(window *glfw.Window, r *renderer.Renderer, uiRenderer *ui.UI, h
 		hudRenderer:      hudRenderer,
 		player:           p,
 		world:            w,
+		inputManager:     im,
 		pauseMenu:        NewPauseMenu(),
 		fpsLimiter:       NewFPSLimiter(),
 		lastFPSCheckTime: time.Now(),
@@ -75,6 +78,9 @@ func (gl *GameLoop) tick() MenuAction {
 	dt := now.Sub(gl.lastTime).Seconds()
 	gl.lastTime = now
 
+	// Poll events at start
+	func() { defer profiling.Track("glfw.PollEvents")(); glfw.PollEvents() }()
+
 	// Update game state
 	updateDur := gl.updateGameState(dt)
 
@@ -97,7 +103,9 @@ func (gl *GameLoop) tick() MenuAction {
 
 	// Present and pump events
 	func() { defer profiling.Track("glfw.SwapBuffers")(); gl.window.SwapBuffers() }()
-	func() { defer profiling.Track("glfw.PollEvents")(); glfw.PollEvents() }()
+
+	// Clear edge flags at end of frame
+	gl.inputManager.PostUpdate()
 
 	// Update profiling
 	gl.updateProfiling(now, updateDur, renderDur, playerDur, worldDur, glfwDur, physicsDur)
@@ -112,11 +120,133 @@ func (gl *GameLoop) updateGameState(dt float64) time.Duration {
 	var updateDur time.Duration
 	if !gl.paused {
 		updateStart := time.Now()
-		func() { defer profiling.Track("player.Update")(); gl.player.Update(dt, gl.window) }()
+		func() { defer profiling.Track("player.Update")(); gl.player.Update(dt, gl.inputManager) }()
 		func() { defer profiling.Track("world.UpdateEntities")(); gl.world.UpdateEntities(dt) }()
 		updateDur = time.Since(updateStart)
 	}
+
+	gl.handleInputActions()
+
 	return updateDur
+}
+
+func (gl *GameLoop) handleInputActions() {
+	// Hotbar selection
+	if gl.inputManager.JustPressed(input.ActionHotbar1) {
+		if gl.player.IsInventoryOpen {
+			gl.hudRenderer.MoveHoveredItemToHotbar(gl.player, 0)
+		} else {
+			gl.player.HandleNumKey(0)
+		}
+	}
+	if gl.inputManager.JustPressed(input.ActionHotbar2) {
+		if gl.player.IsInventoryOpen {
+			gl.hudRenderer.MoveHoveredItemToHotbar(gl.player, 1)
+		} else {
+			gl.player.HandleNumKey(1)
+		}
+	}
+	if gl.inputManager.JustPressed(input.ActionHotbar3) {
+		if gl.player.IsInventoryOpen {
+			gl.hudRenderer.MoveHoveredItemToHotbar(gl.player, 2)
+		} else {
+			gl.player.HandleNumKey(2)
+		}
+	}
+	if gl.inputManager.JustPressed(input.ActionHotbar4) {
+		if gl.player.IsInventoryOpen {
+			gl.hudRenderer.MoveHoveredItemToHotbar(gl.player, 3)
+		} else {
+			gl.player.HandleNumKey(3)
+		}
+	}
+	if gl.inputManager.JustPressed(input.ActionHotbar5) {
+		if gl.player.IsInventoryOpen {
+			gl.hudRenderer.MoveHoveredItemToHotbar(gl.player, 4)
+		} else {
+			gl.player.HandleNumKey(4)
+		}
+	}
+	if gl.inputManager.JustPressed(input.ActionHotbar6) {
+		if gl.player.IsInventoryOpen {
+			gl.hudRenderer.MoveHoveredItemToHotbar(gl.player, 5)
+		} else {
+			gl.player.HandleNumKey(5)
+		}
+	}
+	if gl.inputManager.JustPressed(input.ActionHotbar7) {
+		if gl.player.IsInventoryOpen {
+			gl.hudRenderer.MoveHoveredItemToHotbar(gl.player, 6)
+		} else {
+			gl.player.HandleNumKey(6)
+		}
+	}
+	if gl.inputManager.JustPressed(input.ActionHotbar8) {
+		if gl.player.IsInventoryOpen {
+			gl.hudRenderer.MoveHoveredItemToHotbar(gl.player, 7)
+		} else {
+			gl.player.HandleNumKey(7)
+		}
+	}
+	if gl.inputManager.JustPressed(input.ActionHotbar9) {
+		if gl.player.IsInventoryOpen {
+			gl.hudRenderer.MoveHoveredItemToHotbar(gl.player, 8)
+		} else {
+			gl.player.HandleNumKey(8)
+		}
+	}
+
+	// Drop Item (with Ctrl modifier check)
+	if gl.inputManager.JustPressed(input.ActionDropItem) {
+		if !gl.paused && !gl.player.IsInventoryOpen {
+			dropStack := gl.inputManager.IsActive(input.ActionModControl)
+			gl.player.DropHeldItem(dropStack)
+		}
+	}
+
+	// Inventory Toggle
+	if gl.inputManager.JustPressed(input.ActionInventory) {
+		if !gl.paused {
+			gl.player.IsInventoryOpen = !gl.player.IsInventoryOpen
+			if gl.player.IsInventoryOpen {
+				gl.window.SetInputMode(glfw.CursorMode, glfw.CursorNormal)
+				width, height := gl.window.GetSize()
+				gl.window.SetCursorPos(float64(width)/2, float64(height)/2)
+			} else {
+				gl.player.DropCursorItem()
+				gl.window.SetInputMode(glfw.CursorMode, glfw.CursorDisabled)
+				gl.player.FirstMouse = true
+			}
+		}
+	}
+
+	// Pause Toggle
+	if gl.inputManager.JustPressed(input.ActionPause) {
+		if gl.player.IsInventoryOpen {
+			gl.player.IsInventoryOpen = false
+			gl.player.DropCursorItem()
+			gl.window.SetInputMode(glfw.CursorMode, glfw.CursorDisabled)
+			gl.player.FirstMouse = true
+		} else {
+			gl.paused = !gl.paused
+			if gl.paused {
+				gl.window.SetInputMode(glfw.CursorMode, glfw.CursorNormal)
+			} else {
+				gl.window.SetInputMode(glfw.CursorMode, glfw.CursorDisabled)
+				gl.player.FirstMouse = true
+			}
+		}
+	}
+
+	// Toggle Wireframe
+	if gl.inputManager.JustPressed(input.ActionToggleWireframe) {
+		config.ToggleWireframeMode()
+	}
+
+	// Toggle Profiling
+	if gl.inputManager.JustPressed(input.ActionToggleProfiling) {
+		gl.hudRenderer.ToggleProfiling()
+	}
 }
 
 func (gl *GameLoop) processWorldUpdates() {

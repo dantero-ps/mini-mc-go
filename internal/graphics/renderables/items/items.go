@@ -1,6 +1,8 @@
 package items
 
 import (
+	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/mathgl/mgl32"
 	"math"
 	"mini-mc/internal/entity"
 	"mini-mc/internal/graphics"
@@ -9,9 +11,6 @@ import (
 	"mini-mc/internal/item"
 	"mini-mc/internal/registry"
 	"mini-mc/internal/world"
-
-	"github.com/go-gl/gl/v4.1-core/gl"
-	"github.com/go-gl/mathgl/mgl32"
 )
 
 type Items struct {
@@ -168,7 +167,7 @@ func (i *Items) RenderGUI(stack *item.ItemStack, x, y, size float32) {
 	i.shader.Use()
 
 	// Orthographic projection for UI
-	proj := mgl32.Ortho(0, i.width, i.height, 0, -100, 100)
+	proj := mgl32.Ortho(0, i.width, 0, i.height, -100, 100)
 	i.shader.SetMatrix4("proj", &proj[0])
 
 	// Identity view for UI
@@ -191,7 +190,7 @@ func (i *Items) RenderGUI(stack *item.ItemStack, x, y, size float32) {
 	// Center of item is at (0,0,0) in model space
 	// Screen coords (x,y) are top-left usually, let's adjust to center
 	cx := x + size/2
-	cy := y + size/2
+	cy := i.height - (y + size/2)
 
 	model := mgl32.Translate3D(cx, cy, 0)
 
@@ -199,7 +198,7 @@ func (i *Items) RenderGUI(stack *item.ItemStack, x, y, size float32) {
 	// We use -size for Y because the UI coordinate system has Y increasing downwards
 	// The 0.65 factor compensates for the isometric expansion to fit inside 16x16 slot area
 	guiScale := size * 0.65
-	model = model.Mul4(mgl32.Scale3D(guiScale, -guiScale, guiScale))
+	model = model.Mul4(mgl32.Scale3D(guiScale, guiScale, guiScale))
 
 	// Minecraft standard GUI item rotation:
 	// 1. Rotate 45 degrees around Y

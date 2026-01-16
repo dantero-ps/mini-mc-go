@@ -5,6 +5,7 @@ import (
 	"math/rand"
 
 	"mini-mc/internal/entity"
+	"mini-mc/internal/input"
 	"mini-mc/internal/inventory"
 	"mini-mc/internal/item"
 	"mini-mc/internal/physics"
@@ -182,11 +183,6 @@ func (p *Player) HandleMouseButton(button glfw.MouseButton, action glfw.Action, 
 			}
 		}
 	}
-
-	// Trigger a hand swing on any primary/secondary press (even if not hitting a block)
-	if action == glfw.Press && (button == glfw.MouseButtonLeft || button == glfw.MouseButtonRight) {
-		p.TriggerHandSwing()
-	}
 }
 
 func (p *Player) HandleScroll(w *glfw.Window, xoff, yoff float64) {
@@ -257,7 +253,7 @@ func (p *Player) CheckEntityCollisions(dt float64) {
 	}
 }
 
-func (p *Player) Update(dt float64, window *glfw.Window) {
+func (p *Player) Update(dt float64, im *input.InputManager) {
 	defer profiling.Track("player.Update.total")()
 	// Update hovered block
 	if !p.IsInventoryOpen {
@@ -279,11 +275,14 @@ func (p *Player) Update(dt float64, window *glfw.Window) {
 	}
 
 	// Process movement
-	p.UpdatePosition(dt, window)
+	p.UpdatePosition(dt, im)
 
 	// Mining logic
-	if !p.IsInventoryOpen && window.GetMouseButton(glfw.MouseButtonLeft) == glfw.Press {
-		p.UpdateMining(dt)
+	justPressed := im.JustPressed(input.ActionMouseLeft)
+	isHeld := im.IsActive(input.ActionMouseLeft)
+
+	if !p.IsInventoryOpen && (justPressed || isHeld) {
+		p.UpdateMining(dt, justPressed && !isHeld)
 	} else {
 		p.ResetMining()
 	}
@@ -320,7 +319,7 @@ func (p *Player) ResetMining() {
 	p.BreakProgress = 0
 }
 
-func (p *Player) UpdateMining(dt float64) {
+func (p *Player) UpdateMining(dt float64, justPressed bool) {
 	if !p.HasHoveredBlock {
 		p.ResetMining()
 		return
@@ -328,14 +327,16 @@ func (p *Player) UpdateMining(dt float64) {
 
 	// Creative mode instant break with cooldown logic
 	if p.GameMode == GameModeCreative {
-		if p.breakCooldown <= 0 {
-			// Start breaking new block instantly if off cooldown
+		// Single click: no cooldown, held: cooldown applies
+		if justPressed || p.breakCooldown <= 0 {
 			p.BreakingBlock = p.HoveredBlock
 			p.IsBreaking = true
 			p.TriggerHandSwing()
 			p.BreakBlock()
-			// Set cooldown to prevent instant chain breaking (e.g. 0.15s)
-			p.breakCooldown = 0.15
+			// Set cooldown only if held (not just pressed)
+			if !justPressed {
+				p.breakCooldown = 0.15
+			}
 		}
 		return
 	}
@@ -477,11 +478,11 @@ func (p *Player) UpdateHoveredBlock() {
 	}
 }
 
-func (p *Player) UpdatePosition(dt float64, window *glfw.Window) {
+func (p *Player) UpdatePosition(dt float64, im *input.InputManager) {
 	// Handle double-tap space for flight mode
 	if p.GameMode == GameModeCreative {
-		spacePressed := window.GetKey(glfw.KeySpace) == glfw.Press
-		spaceJustPressed := spacePressed && !p.lastSpaceState
+		spacePressed := im.IsActive(input.ActionJump)
+		spaceJustPressed := im.JustPressed(input.ActionJump)
 
 		if spaceJustPressed {
 			if p.lastSpacePressTime >= 0 && p.lastSpacePressTime < 0.3 {
@@ -503,10 +504,10 @@ func (p *Player) UpdatePosition(dt float64, window *glfw.Window) {
 
 	// Handle sprint and sneak
 	if !p.IsInventoryOpen {
-		if window.GetKey(glfw.KeyLeftControl) == glfw.Press {
+		if im.IsActive(input.ActionSprint) {
 			p.IsSprinting = true
 			p.IsSneaking = false
-		} else if window.GetKey(glfw.KeyLeftShift) == glfw.Press {
+		} else if im.IsActive(input.ActionSneak) {
 			p.IsSneaking = true
 			p.IsSprinting = false
 		} else {
@@ -526,16 +527,16 @@ func (p *Player) UpdatePosition(dt float64, window *glfw.Window) {
 	strafe := float32(0)
 
 	if !p.IsInventoryOpen {
-		if window.GetKey(glfw.KeyW) == glfw.Press {
+		if im.IsActive(input.ActionMoveForward) {
 			forward += 1
 		}
-		if window.GetKey(glfw.KeyS) == glfw.Press {
+		if im.IsActive(input.ActionMoveBackward) {
 			forward -= 1
 		}
-		if window.GetKey(glfw.KeyA) == glfw.Press {
+		if im.IsActive(input.ActionMoveLeft) {
 			strafe -= 1
 		}
-		if window.GetKey(glfw.KeyD) == glfw.Press {
+		if im.IsActive(input.ActionMoveRight) {
 			strafe += 1
 		}
 	}
@@ -613,9 +614,9 @@ func (p *Player) UpdatePosition(dt float64, window *glfw.Window) {
 		// Vertical movement in flight mode
 		verticalSpeed := float32(FlySpeed)
 		if !p.IsInventoryOpen {
-			if window.GetKey(glfw.KeySpace) == glfw.Press {
+			if im.IsActive(input.ActionJump) {
 				p.Velocity[1] = verticalSpeed
-			} else if window.GetKey(glfw.KeyLeftShift) == glfw.Press {
+			} else if im.IsActive(input.ActionSneak) {
 				p.Velocity[1] = -verticalSpeed
 			} else {
 				// No vertical input - stop vertical movement
@@ -653,7 +654,7 @@ func (p *Player) UpdatePosition(dt float64, window *glfw.Window) {
 	} else {
 		// Normal ground/air movement
 		// Jump
-		if !p.IsInventoryOpen && window.GetKey(glfw.KeySpace) == glfw.Press && p.OnGround {
+		if !p.IsInventoryOpen && im.IsActive(input.ActionJump) && p.OnGround {
 			p.Velocity[1] = JumpVelocity
 			p.OnGround = false
 

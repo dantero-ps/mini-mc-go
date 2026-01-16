@@ -4,6 +4,7 @@ import (
 	"runtime"
 
 	"mini-mc/internal/graphics/renderables/blocks"
+	"mini-mc/internal/input"
 
 	"github.com/go-gl/glfw/v3.3/glfw"
 )
@@ -34,6 +35,9 @@ func main() {
 			panic(err)
 		}
 
+		// Create input manager
+		inputManager := input.NewInputManager()
+
 		// Create game loop
 		gameLoop := NewGameLoop(
 			window,
@@ -42,10 +46,11 @@ func main() {
 			game.HUDRenderer,
 			game.Player,
 			game.World,
+			inputManager,
 		)
 
 		// Setup input handlers
-		setupInputHandlers(window, gameLoop, game.Renderer, game.HUDRenderer, game.Player, gameLoop.Paused())
+		setupInputHandlers(window, gameLoop, game.Renderer, game.HUDRenderer, game.Player, gameLoop.Paused(), inputManager)
 
 		// Run the game
 		shouldRestart := gameLoop.Run()
