@@ -115,3 +115,8 @@ func (r *Renderer) Dispose() {
 func (r *Renderer) GetCamera() *graphics.Camera {
 	return r.camera
 }
+
+// UpdateViewport updates the camera's viewport dimensions
+func (r *Renderer) UpdateViewport(width, height int) {
+	r.camera.SetViewport(width, height)
+}

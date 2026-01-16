@@ -27,6 +27,10 @@ type HUD struct {
 	itemRenderer  *items.Items
 	showProfiling bool
 
+	// Viewport dimensions
+	width  float32
+	height float32
+
 	// Textures
 	widgetsTexture   uint32
 	inventoryTexture uint32
@@ -90,6 +94,8 @@ func NewHUD() *HUD {
 	return &HUD{
 		showProfiling: false,
 		HoveredSlot:   -1,
+		width:         900,
+		height:        600,
 	}
 }
 
@@ -163,9 +169,7 @@ func (h *HUD) Render(ctx renderer.RenderContext) {
 
 	if ctx.Player.IsInventoryOpen {
 		// Dim background
-		width := float32(900)
-		height := float32(600)
-		h.uiRenderer.DrawFilledRect(0, 0, width, height, mgl32.Vec3{0, 0, 0}, 0.70)
+		h.uiRenderer.DrawFilledRect(0, 0, h.width, h.height, mgl32.Vec3{0, 0, 0}, 0.70)
 
 		h.renderInventory(ctx.Player)
 	}
@@ -185,13 +189,13 @@ func (h *HUD) Render(ctx renderer.RenderContext) {
 }
 
 func (h *HUD) renderHotbar(p *player.Player) {
-	if h.uiRenderer == nil || p.Inventory == nil {
+	if p.Inventory == nil {
 		return
 	}
 
-	// Screen dimensions (hardcoded for now in UI, should pass from window)
-	screenWidth := float32(900)
-	screenHeight := float32(600)
+	// Screen dimensions
+	screenWidth := h.width
+	screenHeight := h.height
 
 	// Hotbar dimensions (widgets.png)
 	// Original: 182x22 pixels. Scaled x2 for visibility -> 364x44
@@ -294,13 +298,13 @@ func (h *HUD) renderHotbar(p *player.Player) {
 }
 
 func (h *HUD) renderInventory(p *player.Player) {
-	if h.uiRenderer == nil || p.Inventory == nil {
+	if p.Inventory == nil {
 		return
 	}
 
-	// Screen dimensions (hardcoded for now in UI, should pass from window)
-	screenWidth := float32(900)
-	screenHeight := float32(600)
+	// Screen dimensions
+	screenWidth := h.width
+	screenHeight := h.height
 
 	scale := float32(2.0)
 	invW := 176 * scale
@@ -433,9 +437,9 @@ func (h *HUD) HandleInventoryClick(p *player.Player, x, y float64, button glfw.M
 	invW := 176 * scale
 	invH := 166 * scale
 
-	// Assuming window is 900x600 for UI scaling
-	screenW := float32(900)
-	screenH := float32(600)
+	// Screen dimensions
+	screenW := h.width
+	screenH := h.height
 
 	startX := (screenW - invW) / 2
 	startY := (screenH - invH) / 2
@@ -622,12 +626,8 @@ func (h *HUD) MoveHoveredItemToHotbar(p *player.Player, hotbarSlot int) {
 
 // ... Rest of file (Dispose, Profiling, etc) kept same ...
 func (h *HUD) Dispose() {
-	if h.uiRenderer != nil {
-		h.uiRenderer.Dispose()
-	}
-	if h.itemRenderer != nil {
-		h.itemRenderer.Dispose()
-	}
+	h.uiRenderer.Dispose()
+	h.itemRenderer.Dispose()
 	// Font resources are managed by graphics package
 }
 
@@ -698,9 +698,6 @@ func (h *HUD) ProfilingSetRenderDuration(d time.Duration) {
 }
 
 func (h *HUD) renderPlayerPosition(p *player.Player) {
-	if h.fontRenderer == nil {
-		return
-	}
 	// Build text and draw at top-left
 	text := fmt.Sprintf("Pos: %.2f, %.2f, %.2f", p.Position[0], p.Position[1], p.Position[2])
 	x := float32(10)
@@ -711,9 +708,6 @@ func (h *HUD) renderPlayerPosition(p *player.Player) {
 
 // renderFPS renders the current FPS value on screen
 func (h *HUD) renderFPS() {
-	if h.fontRenderer == nil {
-		return
-	}
 	text := fmt.Sprintf("FPS: %d", h.currentFPS)
 	x := float32(10)
 	y := float32(46)
@@ -868,29 +862,29 @@ func (h *HUD) estimateBufferMemoryUsage() int64 {
 }
 
 func (h *HUD) estimateTextureMemoryUsage() int64 {
-	var total int64
-	if h.fontAtlas != nil {
-		total += int64(h.fontAtlas.AtlasW * h.fontAtlas.AtlasH * 4) // RGBA
-	}
-	return total
+	return int64(h.fontAtlas.AtlasW * h.fontAtlas.AtlasH * 4) // RGBA
 }
 
 // RenderText renders text using the font renderer
 func (h *HUD) RenderText(text string, x, y float32, size float32, color mgl32.Vec3) {
-	if h.fontRenderer != nil {
-		h.fontRenderer.Render(text, x, y, size, color)
-	}
+	h.fontRenderer.Render(text, x, y, size, color)
 }
 
 // MeasureText returns width and height in pixels for the given text at scale
 func (h *HUD) MeasureText(text string, scale float32) (float32, float32) {
-	if h.fontRenderer != nil {
-		return h.fontRenderer.Measure(text, scale)
-	}
-	return 0, 0
+	return h.fontRenderer.Measure(text, scale)
 }
 
 // FontRenderer exposes the HUD's font renderer for UI systems that want to enqueue text.
 func (h *HUD) FontRenderer() *graphics.FontRenderer {
 	return h.fontRenderer
+}
+
+// SetViewport updates the HUD viewport dimensions
+func (h *HUD) SetViewport(width, height int) {
+	h.width = float32(width)
+	h.height = float32(height)
+	h.uiRenderer.SetViewport(width, height)
+	h.itemRenderer.SetViewport(width, height)
+	h.fontRenderer.SetViewport(float32(width), float32(height))
 }

@@ -57,7 +57,7 @@ func (h *Hand) Init() error {
 func (h *Hand) Render(ctx renderer.RenderContext) {
 	func() {
 		defer profiling.Track("renderer.renderHand")()
-		h.renderHand(ctx.Player, ctx.DT)
+		h.renderHand(ctx.Player, ctx.DT, ctx.Camera)
 	}()
 }
 
@@ -123,9 +123,9 @@ func (h *Hand) setupHandVAO() {
 	h.vertexCount = int32(len(vertexData) / 6)
 }
 
-func (h *Hand) renderHand(p *player.Player, dt float64) {
+func (h *Hand) renderHand(p *player.Player, dt float64, camera *graphics.Camera) {
 	gl.Clear(gl.DEPTH_BUFFER_BIT)
-	proj := mgl32.Perspective(mgl32.DegToRad(60.0), 900.0/600.0, 0.1, 1000.0)
+	proj := mgl32.Perspective(mgl32.DegToRad(camera.FOV), camera.AspectRatio, camera.NearPlane, camera.FarPlane)
 
 	swing := p.GetHandSwingProgress()
 	equip := p.GetHandEquipProgress()

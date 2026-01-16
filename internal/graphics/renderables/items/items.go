@@ -19,10 +19,17 @@ type Items struct {
 	vao    uint32
 	vbo    uint32
 	cube   []float32
+
+	// Viewport dimensions for GUI rendering
+	width  float32
+	height float32
 }
 
 func NewItems() *Items {
-	return &Items{}
+	return &Items{
+		width:  900,
+		height: 600,
+	}
 }
 
 func (i *Items) Init() error {
@@ -161,8 +168,7 @@ func (i *Items) RenderGUI(stack *item.ItemStack, x, y, size float32) {
 	i.shader.Use()
 
 	// Orthographic projection for UI
-	// Assuming 900x600 window for now, needs to match UI context
-	proj := mgl32.Ortho(0, 900, 600, 0, -100, 100)
+	proj := mgl32.Ortho(0, i.width, i.height, 0, -100, 100)
 	i.shader.SetMatrix4("proj", &proj[0])
 
 	// Identity view for UI
@@ -263,6 +269,12 @@ func (i *Items) drawBlock(blockType world.BlockType) {
 
 		gl.DrawArrays(gl.TRIANGLES, int32(fIdx*6), 6)
 	}
+}
+
+// SetViewport updates the items renderer viewport dimensions for GUI rendering
+func (i *Items) SetViewport(width, height int) {
+	i.width = float32(width)
+	i.height = float32(height)
 }
 
 func (i *Items) Dispose() {

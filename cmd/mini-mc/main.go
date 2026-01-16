@@ -45,7 +45,7 @@ func main() {
 		)
 
 		// Setup input handlers
-		setupInputHandlers(window, game.HUDRenderer, game.Player, gameLoop.Paused())
+		setupInputHandlers(window, gameLoop, game.Renderer, game.HUDRenderer, game.Player, gameLoop.Paused())
 
 		// Run the game
 		shouldRestart := gameLoop.Run()

@@ -4,8 +4,7 @@ import (
 	"math"
 	"mini-mc/internal/config"
 	"mini-mc/internal/graphics"
-	renderer "mini-mc/internal/graphics/renderer"
-	"mini-mc/internal/player"
+	"mini-mc/internal/graphics/renderer"
 	"mini-mc/internal/profiling"
 	"mini-mc/internal/registry"
 	"mini-mc/internal/world"
@@ -75,7 +74,7 @@ func (b *Blocks) Init() error {
 // Render renders all visible blocks
 func (b *Blocks) Render(ctx renderer.RenderContext) {
 	// Apply wireframe polygon mode if toggled, then always reset to FILL after drawing blocks
-	if player.WireframeMode {
+	if config.GetWireframeMode() {
 		gl.PolygonMode(gl.FRONT_AND_BACK, gl.LINE)
 		defer gl.PolygonMode(gl.FRONT_AND_BACK, gl.FILL)
 	} else {

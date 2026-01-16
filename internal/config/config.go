@@ -5,13 +5,15 @@ import "sync"
 // RenderSettings holds render configuration
 type RenderSettings struct {
 	mu             sync.RWMutex
-	renderDistance int // in chunks
-	fpsLimit       int // 0 means uncapped, otherwise target FPS
+	renderDistance int  // in chunks
+	fpsLimit       int  // 0 means uncapped, otherwise target FPS
+	wireframeMode  bool // wireframe rendering mode
 }
 
 var globalRenderSettings = &RenderSettings{
 	renderDistance: 25,  // default value
 	fpsLimit:       180, // default FPS cap
+	wireframeMode:  false,
 }
 
 // GetRenderDistance returns the current render distance in chunks
@@ -71,4 +73,25 @@ func GetChunkEvictRadius() int {
 func GetMaxRenderRadius() int {
 	rd := GetRenderDistance()
 	return rd
+}
+
+// GetWireframeMode returns whether wireframe mode is enabled
+func GetWireframeMode() bool {
+	globalRenderSettings.mu.RLock()
+	defer globalRenderSettings.mu.RUnlock()
+	return globalRenderSettings.wireframeMode
+}
+
+// SetWireframeMode sets the wireframe mode
+func SetWireframeMode(enabled bool) {
+	globalRenderSettings.mu.Lock()
+	defer globalRenderSettings.mu.Unlock()
+	globalRenderSettings.wireframeMode = enabled
+}
+
+// ToggleWireframeMode toggles wireframe mode
+func ToggleWireframeMode() {
+	globalRenderSettings.mu.Lock()
+	defer globalRenderSettings.mu.Unlock()
+	globalRenderSettings.wireframeMode = !globalRenderSettings.wireframeMode
 }

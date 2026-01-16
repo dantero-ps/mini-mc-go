@@ -30,3 +30,8 @@ func (c *Camera) GetProjectionMatrix() mgl32.Mat4 {
 func (c *Camera) GetViewMatrix(player *player.Player) mgl32.Mat4 {
 	return player.GetViewMatrix()
 }
+
+// SetViewport updates the camera's aspect ratio based on new window dimensions
+func (c *Camera) SetViewport(width, height int) {
+	c.AspectRatio = float32(width) / float32(height)
+}

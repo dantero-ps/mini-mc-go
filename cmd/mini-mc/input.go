@@ -1,13 +1,16 @@
 package main
 
 import (
+	"mini-mc/internal/config"
 	"mini-mc/internal/graphics/renderables/hud"
+	"mini-mc/internal/graphics/renderer"
 	"mini-mc/internal/player"
 
+	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/glfw/v3.3/glfw"
 )
 
-func setupInputHandlers(window *glfw.Window, hudRenderer *hud.HUD, p *player.Player, paused *bool) {
+func setupInputHandlers(window *glfw.Window, gameLoop *GameLoop, r *renderer.Renderer, hudRenderer *hud.HUD, p *player.Player, paused *bool) {
 	// Mouse position callback
 	window.SetCursorPosCallback(func(w *glfw.Window, xpos, ypos float64) {
 		p.MouseX = xpos
@@ -45,7 +48,7 @@ func setupInputHandlers(window *glfw.Window, hudRenderer *hud.HUD, p *player.Pla
 			}
 		}
 		if key == glfw.KeyF && action == glfw.Press {
-			p.ToggleWireframeMode()
+			config.ToggleWireframeMode()
 		}
 		if key == glfw.KeyV && action == glfw.Press {
 			hudRenderer.ToggleProfiling()
@@ -94,5 +97,24 @@ func setupInputHandlers(window *glfw.Window, hudRenderer *hud.HUD, p *player.Pla
 				}
 			}
 		}
+	})
+
+	// Framebuffer size callback
+	window.SetFramebufferSizeCallback(func(w *glfw.Window, fbWidth, fbHeight int) {
+		gl.Viewport(0, 0, int32(fbWidth), int32(fbHeight))
+		winW, winH := w.GetSize()
+		r.UpdateViewport(winW, winH)
+		hudRenderer.SetViewport(winW, winH)
+	})
+
+	// Window size callback
+	window.SetSizeCallback(func(w *glfw.Window, width, height int) {
+		r.UpdateViewport(width, height)
+		hudRenderer.SetViewport(width, height)
+	})
+
+	// Refresh callback (called during window resize to prevent visual glitches)
+	window.SetRefreshCallback(func(w *glfw.Window) {
+		gameLoop.RefreshRender()
 	})
 }

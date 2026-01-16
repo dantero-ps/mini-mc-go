@@ -374,3 +374,7 @@ func (fr *FontRenderer) buildCharVertices(fc FontCharacter, x, y, scale float32)
 		xPos + w, yPos + h, atlasX + wA, atlasY + hA,
 	}
 }
+
+func (fr *FontRenderer) SetViewport(width, height float32) {
+	fr.projection = mgl32.Ortho(0, width, height, 0, 0, 1)
+}

@@ -455,7 +455,7 @@ func (p *Player) DropHeldItem(dropStack bool) {
 func (p *Player) spawnItemEntity(stack item.ItemStack) {
 	// Start slightly in front and at eye level
 	front := p.GetFrontVector()
-	pos := p.GetEyePosition().Sub(mgl32.Vec3{0, 0.3, 0}).Add(front.Mul(0.3))
+	pos := p.GetEyePosition().Add(mgl32.Vec3{0, 0.65, 0}).Add(front.Mul(0.3))
 
 	// Add some velocity in look direction
 	velocity := front.Mul(5.0)
@@ -833,16 +833,9 @@ func (p *Player) GetViewMatrix() mgl32.Mat4 {
 	return mgl32.LookAtV(eyePos, target, mgl32.Vec3{0, 1, 0})
 }
 
-var WireframeMode bool = false
-
 // float32IsInfNeg reports whether v is negative infinity.
 func float32IsInfNeg(v float32) bool {
 	return math.IsInf(float64(v), -1)
-}
-
-// ToggleWireframeMode, wireframe modunu açıp kapatır
-func (p *Player) ToggleWireframeMode() {
-	WireframeMode = !WireframeMode
 }
 
 // TriggerHandSwing starts a new right-hand swing animation.

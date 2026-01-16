@@ -164,6 +164,20 @@ func (gl *GameLoop) renderFrame(dt float64) time.Duration {
 	return renderDur
 }
 
+// RefreshRender renders a frame without updating game state (used during window resize)
+func (gl *GameLoop) RefreshRender() {
+	// Use a small dt to keep FOV transitions smooth, but don't update game state
+	dt := 0.016 // ~60fps
+	gl.renderer.Render(gl.world, gl.player, dt)
+
+	// Render pause menu if paused
+	if gl.paused {
+		gl.pauseMenu.Render(gl.window, gl.uiRenderer, gl.hudRenderer, gl.player)
+	}
+
+	gl.window.SwapBuffers()
+}
+
 func (gl *GameLoop) handlePauseMenu() MenuAction {
 	if gl.paused {
 		action := gl.pauseMenu.Render(gl.window, gl.uiRenderer, gl.hudRenderer, gl.player)

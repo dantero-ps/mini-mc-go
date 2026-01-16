@@ -68,6 +68,10 @@ type UI struct {
 	isDraggingSlider bool
 	activeSliderID   string
 
+	// Viewport dimensions
+	width  float32
+	height float32
+
 	// FIFO draw list (strict draw order)
 	cmds []drawCmd
 
@@ -85,6 +89,8 @@ func NewUI() *UI {
 		cmds:            make([]drawCmd, 0, 2048),
 		filledVerts:     make([]float32, 0, 2048),
 		unifiedTexVerts: make([]float32, 0, 8192),
+		width:           WinWidth,
+		height:          WinHeight,
 	}
 }
 
@@ -346,10 +352,10 @@ func (u *UI) Flush() {
 		cmd := &u.cmds[i]
 		switch cmd.kind {
 		case cmdFilledRect:
-			x0 := (cmd.x/float32(WinWidth))*2 - 1
-			y0 := 1 - (cmd.y/float32(WinHeight))*2
-			x1 := ((cmd.x+cmd.w)/float32(WinWidth))*2 - 1
-			y1 := 1 - ((cmd.y+cmd.h)/float32(WinHeight))*2
+			x0 := (cmd.x/u.width)*2 - 1
+			y0 := 1 - (cmd.y/u.height)*2
+			x1 := ((cmd.x+cmd.w)/u.width)*2 - 1
+			y1 := 1 - ((cmd.y+cmd.h)/u.height)*2
 
 			cmd.first = filledVertexCount
 			cmd.count = 6
@@ -365,10 +371,10 @@ func (u *UI) Flush() {
 			)
 
 		case cmdTexturedRect:
-			x0 := (cmd.x/float32(WinWidth))*2 - 1
-			y0 := 1 - (cmd.y/float32(WinHeight))*2
-			x1 := ((cmd.x+cmd.w)/float32(WinWidth))*2 - 1
-			y1 := 1 - ((cmd.y+cmd.h)/float32(WinHeight))*2
+			x0 := (cmd.x/u.width)*2 - 1
+			y0 := 1 - (cmd.y/u.height)*2
+			x1 := ((cmd.x+cmd.w)/u.width)*2 - 1
+			y1 := 1 - ((cmd.y+cmd.h)/u.height)*2
 
 			cmd.first = texVertexCount
 			cmd.count = 6
@@ -451,7 +457,7 @@ func (u *UI) Flush() {
 			}
 			gl.DrawArrays(gl.TRIANGLES, cmd.first, cmd.count)
 		case cmdText:
-			if u.fontRenderer != nil && cmd.text != "" {
+			if cmd.text != "" {
 				// Ensure UI VAOs don't interfere with font rendering
 				gl.BindVertexArray(0)
 				gl.BindBuffer(gl.ARRAY_BUFFER, 0)
@@ -479,4 +485,10 @@ func (u *UI) Flush() {
 
 	// Clear FIFO
 	u.cmds = u.cmds[:0]
+}
+
+// SetViewport updates the UI viewport dimensions
+func (u *UI) SetViewport(width, height int) {
+	u.width = float32(width)
+	u.height = float32(height)
 }
