@@ -25,6 +25,16 @@ const (
 	maxFPSCap = 240
 )
 
+// Layout constants for pause menu elements
+const (
+	renderDistanceSliderY = float32(130)
+	renderDistanceSliderH = float32(20)
+	sliderSpacing         = float32(60) // Spacing between sliders
+	buttonSpacing         = float32(20) // Spacing between toggle and buttons
+	sliderHeight          = float32(20) // Height of sliders
+	toggleHeight          = float32(20) // Height of toggle
+)
+
 // PauseMenu handles the pause menu UI and state
 type PauseMenu struct {
 	renderDistanceSlider float32
@@ -56,6 +66,16 @@ func (pm *PauseMenu) initSliders() {
 		}
 		pm.fpsLimitSlider = float32(fpsLimit-minFPSCap) / float32(maxFPSCap-minFPSCap)
 	}
+}
+
+// getElementPositions calculates Y positions for all pause menu elements
+// Returns: renderDistanceY, fpsY, viewBobbingY, resumeBtnY
+func getElementPositions(resumeBtnH float32) (renderDistanceY, fpsY, viewBobbingY, resumeBtnY float32) {
+	renderDistanceY = renderDistanceSliderY
+	fpsY = renderDistanceY + renderDistanceSliderH + sliderSpacing
+	viewBobbingY = fpsY + sliderHeight + sliderSpacing
+	resumeBtnY = viewBobbingY + toggleHeight + buttonSpacing
+	return
 }
 
 // Render draws the pause menu and handles interactions.
@@ -119,19 +139,15 @@ func (pm *PauseMenu) renderMainMenuButton(window *glfw.Window, uiRenderer *ui.UI
 	btnW := tw + paddingX*2
 	btnH := th + paddingY*2
 	btnX := (float32(winWidth) - btnW) / 2
-	// Position below Resume button
-	renderDistanceSliderY := float32(200)
-	renderDistanceSliderH := float32(20)
-	fpsY := renderDistanceSliderY + renderDistanceSliderH + 60
-	fpsH := float32(20)
-	resumeBtnY := fpsY + fpsH + 60
 	// Calculate Resume button height using same scale and padding
 	resumeLabel := "Devam Et"
 	resumeScale := float32(0.5)
 	_, resumeTH := hudRenderer.MeasureText(resumeLabel, resumeScale)
 	resumePaddingY := float32(14)
 	resumeBtnH := resumeTH + resumePaddingY*2
-	btnY := resumeBtnY + resumeBtnH + 20
+	// Position below Resume button
+	_, _, _, resumeBtnY := getElementPositions(resumeBtnH)
+	btnY := resumeBtnY + resumeBtnH + buttonSpacing
 
 	hover := float32(cx) >= btnX && float32(cx) <= btnX+btnW && float32(cy) >= btnY && float32(cy) <= btnY+btnH
 	base := mgl32.Vec3{0.20, 0.20, 0.20}
@@ -157,9 +173,9 @@ func (pm *PauseMenu) renderRenderDistanceSlider(window *glfw.Window, uiRenderer 
 	_ = sliderLabel
 	_ = sliderScale
 	sliderW := float32(200)
-	sliderH := float32(20)
+	sliderH := sliderHeight
 	sliderX := (float32(winWidth) - sliderW) / 2
-	sliderY := float32(200)
+	sliderY, _, _, _ := getElementPositions(0)
 
 	// Draw and handle slider (snap to steps equal to render distance range)
 	steps := 50 - 5 + 1 // inclusive range [5..50]
@@ -181,12 +197,10 @@ func (pm *PauseMenu) renderFPSLimitSlider(window *glfw.Window, uiRenderer *ui.UI
 	_ = fpsLabel
 	_ = fpsScale
 	fpsW := float32(200)
-	fpsH := float32(20)
+	fpsH := sliderHeight
 	fpsX := (float32(winWidth) - fpsW) / 2
 	// Position below Render Distance slider
-	renderDistanceSliderY := float32(200)
-	renderDistanceSliderH := float32(20)
-	fpsY := renderDistanceSliderY + renderDistanceSliderH + 60
+	_, fpsY, _, _ := getElementPositions(0)
 
 	// 30..240 inclusive -> snapping, rightmost => uncapped
 	newFPSValue := uiRenderer.DrawSlider(fpsX, fpsY, fpsW, fpsH, pm.fpsLimitSlider, window, (maxFPSCap-minFPSCap)+1, "fpsLimit")
@@ -216,14 +230,10 @@ func (pm *PauseMenu) renderViewBobbingToggle(window *glfw.Window, uiRenderer *ui
 
 	// Toggle button dimensions
 	toggleW := float32(40)
-	toggleH := float32(20)
+	toggleH := toggleHeight
 	toggleX := (float32(winWidth) - toggleW) / 2
 	// Position below FPS Limit slider
-	renderDistanceSliderY := float32(200)
-	renderDistanceSliderH := float32(20)
-	fpsY := renderDistanceSliderY + renderDistanceSliderH + 60
-	fpsH := float32(20)
-	toggleY := fpsY + fpsH + 60
+	_, _, toggleY, _ := getElementPositions(0)
 
 	// Check if mouse is over toggle
 	hover := float32(cx) >= toggleX && float32(cx) <= toggleX+toggleW && float32(cy) >= toggleY && float32(cy) <= toggleY+toggleH
@@ -275,13 +285,7 @@ func (pm *PauseMenu) renderResumeButton(window *glfw.Window, uiRenderer *ui.UI, 
 	btnH := th + paddingY*2
 	btnX := (float32(winWidth) - btnW) / 2
 	// Position below View Bobbing toggle
-	renderDistanceSliderY := float32(200)
-	renderDistanceSliderH := float32(20)
-	fpsY := renderDistanceSliderY + renderDistanceSliderH + 60
-	fpsH := float32(20)
-	viewBobbingY := fpsY + fpsH + 60
-	viewBobbingH := float32(20)
-	btnY := viewBobbingY + viewBobbingH + 60
+	_, _, _, btnY := getElementPositions(btnH)
 
 	hover := float32(cx) >= btnX && float32(cx) <= btnX+btnW && float32(cy) >= btnY && float32(cy) <= btnY+btnH
 	base := mgl32.Vec3{0.20, 0.20, 0.20}
@@ -307,9 +311,9 @@ func renderRenderDistanceSliderText(uiRenderer *ui.UI, hudRenderer *hud.HUD, win
 	sliderScale := float32(0.4)
 	_, sliderTH := hudRenderer.MeasureText(sliderLabel, sliderScale)
 	sliderW := float32(200)
-	sliderH := float32(20)
+	sliderH := sliderHeight
 	sliderX := (float32(winWidth) - sliderW) / 2
-	sliderY := float32(200)
+	sliderY, _, _, _ := getElementPositions(0)
 	tw, _ := hudRenderer.MeasureText(sliderLabel, sliderScale)
 	labelX := (float32(winWidth) - tw) / 2
 	uiRenderer.DrawText(sliderLabel, labelX, sliderY-10, sliderScale, mgl32.Vec3{1, 1, 1})
@@ -323,12 +327,10 @@ func renderFPSLimitSliderText(uiRenderer *ui.UI, hudRenderer *hud.HUD, winWidth 
 	fpsScale := float32(0.45)
 	_, fpsTH := hudRenderer.MeasureText(fpsLabel, fpsScale)
 	fpsW := float32(200)
-	fpsH := float32(20)
+	fpsH := sliderHeight
 	fpsX := (float32(winWidth) - fpsW) / 2
 	// Position below Render Distance slider
-	renderDistanceSliderY := float32(200)
-	renderDistanceSliderH := float32(20)
-	fpsY := renderDistanceSliderY + renderDistanceSliderH + 60
+	_, fpsY, _, _ := getElementPositions(0)
 	tw, _ := hudRenderer.MeasureText(fpsLabel, fpsScale)
 	labelX := (float32(winWidth) - tw) / 2
 	uiRenderer.DrawText(fpsLabel, labelX, fpsY-10, fpsScale, mgl32.Vec3{1, 1, 1})
