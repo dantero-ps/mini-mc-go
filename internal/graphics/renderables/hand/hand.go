@@ -224,7 +224,7 @@ func (h *Hand) setupViewBobbing(p *player.Player, model mgl32.Mat4, dt float64) 
 	angX1 := float32(math.Abs(math.Cos(f1*math.Pi-0.2)*f2)*5.0) * float32(deg2rad)
 	model = model.Mul4(mgl32.HomogRotate3D(angX1, mgl32.Vec3{1, 0, 0}))
 
-	angX2 := float32(f3) * float32(deg2rad) / 50
+	angX2 := float32(f3) * float32(deg2rad) / 15
 	model = model.Mul4(mgl32.HomogRotate3D(angX2, mgl32.Vec3{1, 0, 0}))
 
 	return model

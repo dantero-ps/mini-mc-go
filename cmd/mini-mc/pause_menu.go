@@ -78,6 +78,9 @@ func (pm *PauseMenu) Render(window *glfw.Window, uiRenderer *ui.UI, hudRenderer 
 	// FPS Limit Slider
 	pm.renderFPSLimitSlider(window, uiRenderer, hudRenderer)
 
+	// View Bobbing Toggle
+	pm.renderViewBobbingToggle(window, uiRenderer, hudRenderer)
+
 	// Resume button
 	resume := pm.renderResumeButton(window, uiRenderer, hudRenderer, p)
 
@@ -202,6 +205,61 @@ func (pm *PauseMenu) renderFPSLimitSlider(window *glfw.Window, uiRenderer *ui.UI
 	renderFPSLimitSliderText(uiRenderer, hudRenderer, winWidth)
 }
 
+func (pm *PauseMenu) renderViewBobbingToggle(window *glfw.Window, uiRenderer *ui.UI, hudRenderer *hud.HUD) {
+	winWidth, _ := window.GetSize()
+	cx, cy := window.GetCursorPos()
+	mouseDown := window.GetMouseButton(glfw.MouseButtonLeft) == glfw.Press
+
+	label := "View Bobbing"
+	scale := float32(0.4)
+	tw, _ := hudRenderer.MeasureText(label, scale)
+
+	// Toggle button dimensions
+	toggleW := float32(40)
+	toggleH := float32(20)
+	toggleX := (float32(winWidth) - toggleW) / 2
+	// Position below FPS Limit slider
+	renderDistanceSliderY := float32(200)
+	renderDistanceSliderH := float32(20)
+	fpsY := renderDistanceSliderY + renderDistanceSliderH + 60
+	fpsH := float32(20)
+	toggleY := fpsY + fpsH + 60
+
+	// Check if mouse is over toggle
+	hover := float32(cx) >= toggleX && float32(cx) <= toggleX+toggleW && float32(cy) >= toggleY && float32(cy) <= toggleY+toggleH
+
+	// Toggle on click
+	if mouseDown && !pm.mouseWasDown && hover {
+		config.ToggleViewBobbing()
+	}
+
+	// Draw toggle background
+	enabled := config.GetViewBobbing()
+	bgColor := mgl32.Vec3{0.2, 0.2, 0.2}
+	if enabled {
+		bgColor = mgl32.Vec3{0.2, 0.5, 0.2} // Green when enabled
+	} else {
+		bgColor = mgl32.Vec3{0.5, 0.2, 0.2} // Red when disabled
+	}
+	if hover {
+		bgColor = bgColor.Mul(1.2) // Brighten on hover
+	}
+	uiRenderer.DrawFilledRect(toggleX, toggleY, toggleW, toggleH, bgColor, 0.85)
+
+	// Draw label
+	labelX := (float32(winWidth) - tw) / 2
+	uiRenderer.DrawText(label, labelX, toggleY-10, scale, mgl32.Vec3{1, 1, 1})
+
+	// Draw status text
+	statusText := "Açık"
+	if !enabled {
+		statusText = "Kapalı"
+	}
+	statusScale := float32(0.35)
+	_, statusTH := hudRenderer.MeasureText(statusText, statusScale)
+	uiRenderer.DrawText(statusText, toggleX+toggleW+10, toggleY+toggleH/2+statusTH/2, statusScale, mgl32.Vec3{0.8, 0.8, 0.8})
+}
+
 func (pm *PauseMenu) renderResumeButton(window *glfw.Window, uiRenderer *ui.UI, hudRenderer *hud.HUD, p *player.Player) bool {
 	// Read mouse once for UI interactions
 	cx, cy := window.GetCursorPos()
@@ -216,12 +274,14 @@ func (pm *PauseMenu) renderResumeButton(window *glfw.Window, uiRenderer *ui.UI, 
 	btnW := tw + paddingX*2
 	btnH := th + paddingY*2
 	btnX := (float32(winWidth) - btnW) / 2
-	// Position below FPS Limit slider
+	// Position below View Bobbing toggle
 	renderDistanceSliderY := float32(200)
 	renderDistanceSliderH := float32(20)
 	fpsY := renderDistanceSliderY + renderDistanceSliderH + 60
 	fpsH := float32(20)
-	btnY := fpsY + fpsH + 60
+	viewBobbingY := fpsY + fpsH + 60
+	viewBobbingH := float32(20)
+	btnY := viewBobbingY + viewBobbingH + 60
 
 	hover := float32(cx) >= btnX && float32(cx) <= btnX+btnW && float32(cy) >= btnY && float32(cy) <= btnY+btnH
 	base := mgl32.Vec3{0.20, 0.20, 0.20}

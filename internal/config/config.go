@@ -8,12 +8,14 @@ type RenderSettings struct {
 	renderDistance int  // in chunks
 	fpsLimit       int  // 0 means uncapped, otherwise target FPS
 	wireframeMode  bool // wireframe rendering mode
+	viewBobbing    bool // view bobbing animation
 }
 
 var globalRenderSettings = &RenderSettings{
 	renderDistance: 25,  // default value
 	fpsLimit:       180, // default FPS cap
 	wireframeMode:  false,
+	viewBobbing:    true, // default enabled
 }
 
 // GetRenderDistance returns the current render distance in chunks
@@ -94,4 +96,25 @@ func ToggleWireframeMode() {
 	globalRenderSettings.mu.Lock()
 	defer globalRenderSettings.mu.Unlock()
 	globalRenderSettings.wireframeMode = !globalRenderSettings.wireframeMode
+}
+
+// GetViewBobbing returns whether view bobbing is enabled
+func GetViewBobbing() bool {
+	globalRenderSettings.mu.RLock()
+	defer globalRenderSettings.mu.RUnlock()
+	return globalRenderSettings.viewBobbing
+}
+
+// SetViewBobbing sets the view bobbing setting
+func SetViewBobbing(enabled bool) {
+	globalRenderSettings.mu.Lock()
+	defer globalRenderSettings.mu.Unlock()
+	globalRenderSettings.viewBobbing = enabled
+}
+
+// ToggleViewBobbing toggles view bobbing
+func ToggleViewBobbing() {
+	globalRenderSettings.mu.Lock()
+	defer globalRenderSettings.mu.Unlock()
+	globalRenderSettings.viewBobbing = !globalRenderSettings.viewBobbing
 }
