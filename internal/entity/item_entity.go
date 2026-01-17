@@ -19,6 +19,13 @@ type ItemEntity struct {
 	OnGround    bool
 	Dead        bool
 	PickupDelay float64
+	Owner       string // Owner name for pickup delay (empty if no owner)
+
+	// Pickup animation (visual only, not physical movement)
+	IsPickingUp     bool
+	PickupProgress  float64 // 0.0 to 1.0
+	PickupStartPos  mgl32.Vec3
+	PickupTargetPos mgl32.Vec3
 }
 
 func NewItemEntity(w WorldSource, pos mgl32.Vec3, stack item.ItemStack) *ItemEntity {
@@ -34,7 +41,8 @@ func NewItemEntity(w WorldSource, pos mgl32.Vec3, stack item.ItemStack) *ItemEnt
 		World:       w,
 		HoverStart:  rand.Float64() * math.Pi * 2.0,
 		RotationYaw: rand.Float64() * 360.0,
-		PickupDelay: 1.0, // 1 second delay
+		PickupDelay: 0.5, // 0.5 second delay (10 ticks = 0.5 second at 20 ticks/s, Minecraft default)
+		Owner:       "",  // No owner by default
 	}
 }
 
@@ -42,9 +50,29 @@ func (e *ItemEntity) Update(dt float64) {
 	if e.Dead {
 		return
 	}
+
+	// Update pickup animation
+	if e.IsPickingUp {
+		e.PickupProgress += dt * 10.0 // Animation duration: 0.1 seconds (2 ticks at 20 ticks/s)
+		if e.PickupProgress >= 1.0 {
+			e.PickupProgress = 1.0
+			e.Dead = true // Item is fully picked up, remove it
+			return
+		}
+		// Don't update physics during pickup animation
+		return
+	}
+
 	e.Age += dt
 	if e.PickupDelay > 0 {
 		e.PickupDelay -= dt
+	}
+
+	// Minecraft: items despawn after 6000 ticks (300 seconds at 20 ticks/s)
+	// Age is in seconds, so 300 seconds = 5 minutes
+	if e.Age >= 300.0 {
+		e.Dead = true
+		return
 	}
 
 	// Apply Gravity
@@ -123,7 +151,22 @@ func (e *ItemEntity) checkCollision(x, y, z float32) bool {
 }
 
 func (e *ItemEntity) Position() mgl32.Vec3 {
+	// During pickup animation, return interpolated position
+	if e.IsPickingUp {
+		// Interpolate from start to target (easing: f^2 for smooth acceleration)
+		t := float32(e.PickupProgress)
+		t = t * t // Quadratic easing
+		return e.PickupStartPos.Add(e.PickupTargetPos.Sub(e.PickupStartPos).Mul(t))
+	}
 	return e.Pos
+}
+
+// StartPickupAnimation starts the visual pickup animation towards target position
+func (e *ItemEntity) StartPickupAnimation(targetPos mgl32.Vec3) {
+	e.IsPickingUp = true
+	e.PickupProgress = 0.0
+	e.PickupStartPos = e.Pos
+	e.PickupTargetPos = targetPos
 }
 
 func (e *ItemEntity) IsDead() bool {

@@ -213,51 +213,87 @@ func (p *Player) HandleNumKey(slot int) {
 }
 
 func (p *Player) CheckEntityCollisions(dt float64) {
-	// Simple distance check for pickup
+	// Minecraft-style pickup: only when player collides with item
+	// No magnet effect - items don't move towards player
 	p.World.EntitiesMu.RLock()
 	defer p.World.EntitiesMu.RUnlock()
 
+	// Player collision box: 0.6 width, 1.8 height
+	// Item collision box: 0.25x0.25x0.25
+	// Check if item is within pickup range (based on collision boxes)
+	// Using larger collision box for easier pickup
 	playerPos := p.Position
-	targetPos := playerPos.Add(mgl32.Vec3{0, 0.5, 0}) // Pull towards body center
-
-	pickupRadius := float32(1.5)
-	magnetRadius := float32(5.0) // Start pulling from 5 blocks away
+	playerHalfWidth := float32(1.0) // Half of 2.0 (very large for easier pickup)
+	playerHeight := float32(1.8)
+	itemHalfSize := float32(0.125) // Half of 0.25
 
 	for _, e := range p.World.Entities {
 		if itemEnt, ok := e.(*entity.ItemEntity); ok {
-			if itemEnt.IsDead() || itemEnt.PickupDelay > 0 {
+			if itemEnt.IsDead() {
 				continue
 			}
 
-			// Distance check
-			itemPos := itemEnt.Position()
-			distVec := targetPos.Sub(itemPos)
-			dist := distVec.Len()
+			// Check pickup delay (must be 0 or less)
+			if itemEnt.PickupDelay > 0 {
+				continue
+			}
 
-			// Magnet effect
-			if dist < magnetRadius {
-				// Normalize direction
-				dir := distVec.Normalize()
-
-				// Pull strength increases as it gets closer, but clamp it
-				// This is a simplified version of XP orb magnetic effect
-				pullStrength := float32(3.0)
-
-				// Apply velocity change towards player
-				// We add to existing velocity to create a "swooping" effect
-				acceleration := dir.Mul(pullStrength * float32(dt))
-				itemEnt.Vel = itemEnt.Vel.Add(acceleration)
-
-				// Also lift it up slightly if it's below player
-				if itemPos.Y() < targetPos.Y() {
-					itemEnt.Vel[1] += 2.0 * float32(dt)
+			// Owner check: if item has owner, only allow pickup if:
+			// - owner is empty (no owner)
+			// - age >= 5800 (200 ticks before despawn at 6000)
+			// - owner matches player name (we don't have player names, so skip this)
+			if itemEnt.Owner != "" {
+				// Age in ticks (assuming 20 ticks per second)
+				ageInTicks := itemEnt.Age * 20.0
+				if ageInTicks < 5800 {
+					// Item was recently dropped by owner, can't pick up yet
+					continue
 				}
 			}
 
-			if dist < pickupRadius {
-				// Pick up item
+			itemPos := itemEnt.Position()
+
+			// Don't pick up items that are below the player's feet
+			// Player Y position is at feet level, so if item Y is lower, skip it
+			if itemPos.Y() < playerPos.Y()+0.5 {
+				continue
+			}
+
+			// AABB collision check between player and item
+			// Player AABB: (pos.x - 0.3, pos.y, pos.z - 0.3) to (pos.x + 0.3, pos.y + 1.8, pos.z + 0.3)
+			// Item AABB: (item.x - 0.125, item.y, item.z - 0.125) to (item.x + 0.125, item.y + 0.25, item.z + 0.125)
+			// Extend player Y range upward to pick up items on blocks above
+			playerMinX := playerPos.X() - playerHalfWidth
+			playerMaxX := playerPos.X() + playerHalfWidth
+			playerMinY := playerPos.Y()                      // Don't extend downward - can't pick up items below
+			playerMaxY := playerPos.Y() + playerHeight + 1.0 // Extend upward to pick up items on blocks above
+			playerMinZ := playerPos.Z() - playerHalfWidth
+			playerMaxZ := playerPos.Z() + playerHalfWidth
+
+			itemMinX := itemPos.X() - itemHalfSize
+			itemMaxX := itemPos.X() + itemHalfSize
+			itemMinY := itemPos.Y()
+			itemMaxY := itemPos.Y() + 0.25
+			itemMinZ := itemPos.Z() - itemHalfSize
+			itemMaxZ := itemPos.Z() + itemHalfSize
+
+			// Check AABB overlap
+			if playerMaxX >= itemMinX && playerMinX <= itemMaxX &&
+				playerMaxY >= itemMinY && playerMinY <= itemMaxY &&
+				playerMaxZ >= itemMinZ && playerMinZ <= itemMaxZ {
+
+				// Try to add item to inventory
 				if p.Inventory.AddItem(&itemEnt.Stack) {
-					itemEnt.SetDead()
+					// Item was successfully added (or partially added)
+					// If stack is now empty, start pickup animation (visual only)
+					if itemEnt.Stack.Count <= 0 && !itemEnt.IsPickingUp {
+						// Target position: player's body center (eye level - 0.3)
+						targetPos := p.GetEyePosition().Sub(mgl32.Vec3{0, 0.3, 0})
+						itemEnt.StartPickupAnimation(targetPos)
+					}
+					// The animation will remove the entity when complete
+					// Note: In Minecraft, onItemPickup is called here with original count
+					// We don't have that callback, so we skip it
 				}
 			}
 		}
@@ -311,7 +347,7 @@ func (p *Player) Update(dt float64, im *input.InputManager) {
 	p.UpdateHeadBob()
 
 	// Update camera bobbing (for view bobbing)
-	p.UpdateCameraBob()
+	//p.UpdateCameraBob()
 
 	// Update equipped item animation
 	p.updateEquippedItem(float32(dt))
