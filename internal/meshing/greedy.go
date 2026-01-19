@@ -4,13 +4,98 @@ import (
 	"mini-mc/internal/profiling"
 	"mini-mc/internal/registry"
 	"mini-mc/internal/world"
+	"sync"
 )
 
 // VertexStride is number of uint32 per vertex (packed data)
 const VertexStride = 2
 
+// directionJob represents a single direction mesh job
+type directionJob struct {
+	world      *world.World
+	chunk      *world.Chunk
+	nx, ny, nz int
+	resultChan chan []uint32
+}
+
+// DirectionWorkerPool manages workers for processing face directions in parallel
+type DirectionWorkerPool struct {
+	jobQueue chan directionJob
+	workers  int
+	started  bool
+	mu       sync.Mutex
+}
+
+var (
+	// Global direction worker pool
+	globalDirectionPool *DirectionWorkerPool
+	poolOnce            sync.Once
+)
+
+// GetDirectionPool returns the global direction worker pool (singleton)
+func GetDirectionPool() *DirectionWorkerPool {
+	poolOnce.Do(func() {
+		// Create pool with 6 workers (one per face direction)
+		globalDirectionPool = NewDirectionWorkerPool(6, 32)
+		globalDirectionPool.Start()
+	})
+	return globalDirectionPool
+}
+
+// NewDirectionWorkerPool creates a new direction worker pool
+func NewDirectionWorkerPool(workers int, queueSize int) *DirectionWorkerPool {
+	return &DirectionWorkerPool{
+		jobQueue: make(chan directionJob, queueSize),
+		workers:  workers,
+		started:  false,
+	}
+}
+
+// Start starts the worker pool goroutines
+func (p *DirectionWorkerPool) Start() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.started {
+		return
+	}
+
+	for i := 0; i < p.workers; i++ {
+		go p.worker(i)
+	}
+
+	p.started = true
+}
+
+// worker is the worker goroutine that processes direction jobs
+func (p *DirectionWorkerPool) worker(id int) {
+	for job := range p.jobQueue {
+		// Process the direction
+		result := buildGreedyForDirection(job.world, job.chunk, job.nx, job.ny, job.nz)
+
+		// Send result back
+		job.resultChan <- result
+	}
+}
+
+// SubmitJob submits a direction job to the pool and returns a result channel
+func (p *DirectionWorkerPool) SubmitJob(w *world.World, c *world.Chunk, nx, ny, nz int) chan []uint32 {
+	resultChan := make(chan []uint32, 1)
+	job := directionJob{
+		world:      w,
+		chunk:      c,
+		nx:         nx,
+		ny:         ny,
+		nz:         nz,
+		resultChan: resultChan,
+	}
+	p.jobQueue <- job
+	return resultChan
+}
+
 // BuildGreedyMeshForChunk builds a greedy-meshed triangle list (packed uint32)
 // for the given chunk using world coordinates to decide face visibility across chunk borders.
+// Uses a pre-initialized worker pool to process all 6 directions in parallel.
 // Returns []uint32 where each vertex is 2 packed uint32s containing:
 // V1: X (5), Y (9), Z (5), Normal (3), Brightness (8)
 // V2: TextureID (16), Tint (1 bit - unused in pack but available)
@@ -20,23 +105,38 @@ func BuildGreedyMeshForChunk(w *world.World, c *world.Chunk) []uint32 {
 		return nil
 	}
 
-	vertices := make([]uint32, 0, 1024)
-
 	// World-space offset of this chunk is NOT baked into vertices anymore to save bits.
 	// We use chunk-local coordinates (0-15 for X/Z, 0-255 for Y).
 
-	// +X faces (east)
-	vertices = append(vertices, buildGreedyForDirection(w, c, +1, 0, 0)...)
-	// -X faces (west)
-	vertices = append(vertices, buildGreedyForDirection(w, c, -1, 0, 0)...)
-	// +Y faces (top)
-	vertices = append(vertices, buildGreedyForDirection(w, c, 0, +1, 0)...)
-	// -Y faces (bottom)
-	vertices = append(vertices, buildGreedyForDirection(w, c, 0, -1, 0)...)
-	// +Z faces (north)
-	vertices = append(vertices, buildGreedyForDirection(w, c, 0, 0, +1)...)
-	// -Z faces (south)
-	vertices = append(vertices, buildGreedyForDirection(w, c, 0, 0, -1)...)
+	pool := GetDirectionPool()
+
+	// Submit all 6 direction jobs to the worker pool
+	directions := []struct {
+		nx, ny, nz int
+		resultChan chan []uint32
+	}{
+		{nx: +1, ny: 0, nz: 0, resultChan: pool.SubmitJob(w, c, +1, 0, 0)}, // +X (east)
+		{nx: -1, ny: 0, nz: 0, resultChan: pool.SubmitJob(w, c, -1, 0, 0)}, // -X (west)
+		{nx: 0, ny: +1, nz: 0, resultChan: pool.SubmitJob(w, c, 0, +1, 0)}, // +Y (top)
+		{nx: 0, ny: -1, nz: 0, resultChan: pool.SubmitJob(w, c, 0, -1, 0)}, // -Y (bottom)
+		{nx: 0, ny: 0, nz: +1, resultChan: pool.SubmitJob(w, c, 0, 0, +1)}, // +Z (north)
+		{nx: 0, ny: 0, nz: -1, resultChan: pool.SubmitJob(w, c, 0, 0, -1)}, // -Z (south)
+	}
+
+	// Collect results from all directions
+	results := make([][]uint32, 6)
+	totalSize := 0
+	for i, dir := range directions {
+		results[i] = <-dir.resultChan
+		totalSize += len(results[i])
+		close(dir.resultChan)
+	}
+
+	// Combine all results into a single slice
+	vertices := make([]uint32, 0, totalSize)
+	for _, result := range results {
+		vertices = append(vertices, result...)
+	}
 
 	return vertices
 }
@@ -191,11 +291,11 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int) []u
 	// Cases per normal axis
 	if nx != 0 { // Faces perpendicular to X axis, plane is Y-Z
 		// Layers along X
-		for x := 0; x < sx; x++ {
+		for x := range sx {
 			// Mask size sy x sz, store TextureID + 1 (0 means hidden)
 			mask := make([]int, sy*sz)
-			for y := 0; y < sy; y++ {
-				for z := 0; z < sz; z++ {
+			for y := range sy {
+				for z := range sz {
 					bt := c.GetBlock(x, y, z)
 					if bt == world.BlockTypeAir {
 						continue
@@ -298,10 +398,10 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int) []u
 	}
 
 	if ny != 0 { // Faces perpendicular to Y axis, plane is X-Z
-		for y := 0; y < sy; y++ {
+		for y := range sy {
 			mask := make([]int, sx*sz)
-			for x := 0; x < sx; x++ {
-				for z := 0; z < sz; z++ {
+			for x := range sx {
+				for z := range sz {
 					bt := c.GetBlock(x, y, z)
 					if bt == world.BlockTypeAir {
 						continue
@@ -396,10 +496,10 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int) []u
 	}
 
 	// nz != 0 // Faces perpendicular to Z axis, plane is X-Y
-	for z := 0; z < sz; z++ {
+	for z := range sz {
 		mask := make([]int, sx*sy)
-		for x := 0; x < sx; x++ {
-			for y := 0; y < sy; y++ {
+		for x := range sx {
+			for y := range sy {
 				bt := c.GetBlock(x, y, z)
 				if bt == world.BlockTypeAir {
 					continue
@@ -430,6 +530,10 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int) []u
 			}
 		}
 		// Greedy (u=x, v=y)
+		// BCE hint: access last element to eliminate bounds checks
+		if len(mask) > 0 {
+			_ = mask[len(mask)-1]
+		}
 		i := 0
 		for i < sx*sy {
 			if mask[i] == 0 {
