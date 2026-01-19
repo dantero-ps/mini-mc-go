@@ -145,7 +145,7 @@ func ensureRegionCapacity(r *atlasRegion, requiredBytes int) bool {
 
 	// Create new buffer
 	var newVBO uint32
-	gl.GenVertexArrays(1, &newVBO)
+	gl.GenBuffers(1, &newVBO)
 	gl.BindBuffer(gl.ARRAY_BUFFER, newVBO)
 	gl.BufferData(gl.ARRAY_BUFFER, newCap, nil, gl.DYNAMIC_DRAW)
 
