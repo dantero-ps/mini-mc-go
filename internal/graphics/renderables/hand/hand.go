@@ -4,7 +4,7 @@ import (
 	"math"
 	"mini-mc/internal/graphics"
 	"mini-mc/internal/graphics/renderables/items"
-	renderer "mini-mc/internal/graphics/renderer"
+	"mini-mc/internal/graphics/renderer"
 	"mini-mc/internal/player"
 	"mini-mc/internal/profiling"
 	"path/filepath"
@@ -69,6 +69,11 @@ func (h *Hand) Dispose() {
 	if h.vbo != 0 {
 		gl.DeleteBuffers(1, &h.vbo)
 	}
+}
+
+// SetViewport updates viewport dimensions (not needed for hand)
+func (h *Hand) SetViewport(width, height int) {
+	// Hand rendering doesn't need viewport dimensions
 }
 
 // setupHandVAO creates a simple rectangular prism to represent the right arm

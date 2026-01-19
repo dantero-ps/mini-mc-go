@@ -1,6 +1,8 @@
 package world
 
 import (
+	"unsafe"
+
 	"github.com/go-gl/mathgl/mgl32"
 )
 
@@ -18,18 +20,15 @@ const (
 
 // Section represents a 16x16x16 sub-volume of a chunk
 type Section struct {
-	blocks     []BlockType
-	blockCount int
+	blocks  []BlockType
+	basePtr unsafe.Pointer // &blocks[0] tutuluyor (nil slice durumunda nil kalır)
 }
 
 // Chunk represents a 16x256x16 section of the world
 type Chunk struct {
-	// Position of the chunk in chunk coordinates (not block coordinates)
-	X, Y, Z int
-	// Sections dividing the vertical space
+	X, Y, Z  int
 	sections [NumSections]*Section
-	// Flag to track if the chunk has been modified since last render
-	dirty bool
+	dirty    bool
 }
 
 // NewChunk creates a new chunk at the specified chunk coordinates
@@ -42,9 +41,9 @@ func NewChunk(x, y, z int) *Chunk {
 	}
 }
 
-// indexInSection converts local 3D coordinates (x,y,z) relative to section
-func indexInSection(x, y, z int) int {
-	return x*SectionHeight*ChunkSizeZ + y*ChunkSizeZ + z
+// indexInSection converts local section coordinates (x, localY, z) → flat index
+func indexInSection(x, localY, z int) int {
+	return x*SectionHeight*ChunkSizeZ + localY*ChunkSizeZ + z
 }
 
 // GetBlock returns the block type at the specified local coordinates
@@ -55,12 +54,15 @@ func (c *Chunk) GetBlock(x, y, z int) BlockType {
 
 	secIdx := y / SectionHeight
 	sec := c.sections[secIdx]
-	if sec == nil || sec.blocks == nil {
+	if sec == nil || sec.basePtr == nil {
 		return BlockTypeAir
 	}
 
 	localY := y % SectionHeight
-	return sec.blocks[indexInSection(x, localY, z)]
+	idx := indexInSection(x, localY, z)
+
+	blockPtr := (*BlockType)(unsafe.Pointer(uintptr(sec.basePtr) + uintptr(idx)*unsafe.Sizeof(BlockType(0))))
+	return *blockPtr
 }
 
 // SetBlock sets the block type at the specified local coordinates
@@ -71,43 +73,45 @@ func (c *Chunk) SetBlock(x, y, z int, blockType BlockType) {
 
 	secIdx := y / SectionHeight
 	localY := y % SectionHeight
+	idx := indexInSection(x, localY, z)
 
 	sec := c.sections[secIdx]
 
 	if blockType == BlockTypeAir {
-		if sec != nil && sec.blocks != nil {
-			idx := indexInSection(x, localY, z)
-			old := sec.blocks[idx]
+		if sec != nil && sec.basePtr != nil {
+			blockPtr := (*BlockType)(unsafe.Pointer(uintptr(sec.basePtr) + uintptr(idx)*unsafe.Sizeof(BlockType(0))))
+			old := *blockPtr
+
 			if old != BlockTypeAir {
-				sec.blocks[idx] = BlockTypeAir
-				sec.blockCount--
+				*blockPtr = BlockTypeAir
 				c.dirty = true
 
-				if sec.blockCount == 0 {
+				if len(sec.blocks) <= 0 {
 					sec.blocks = nil
-					c.sections[secIdx] = nil // Free the section struct too
+					sec.basePtr = nil
+					c.sections[secIdx] = nil
 				}
 			}
 		}
 		return
 	}
 
+	// non-air blok → section yoksa oluştur
 	if sec == nil {
-		sec = &Section{
-			blocks: make([]BlockType, SectionVolume),
-		}
+		sec = &Section{}
 		c.sections[secIdx] = sec
-	} else if sec.blocks == nil {
-		sec.blocks = make([]BlockType, SectionVolume)
 	}
 
-	idx := indexInSection(x, localY, z)
-	old := sec.blocks[idx]
+	if sec.blocks == nil {
+		sec.blocks = make([]BlockType, SectionVolume)
+		sec.basePtr = unsafe.Pointer(&sec.blocks[0])
+	}
+
+	blockPtr := (*BlockType)(unsafe.Pointer(uintptr(sec.basePtr) + uintptr(idx)*unsafe.Sizeof(BlockType(0))))
+	old := *blockPtr
+
 	if old != blockType {
-		sec.blocks[idx] = blockType
-		if old == BlockTypeAir {
-			sec.blockCount++
-		}
+		*blockPtr = blockType
 		c.dirty = true
 	}
 }
@@ -127,30 +131,34 @@ func (c *Chunk) SetClean() {
 	c.dirty = false
 }
 
-// GetActiveBlocks returns a list of positions of non-air blocks in this chunk
+// GetActiveBlocks returns world-space positions of non-air blocks
 func (c *Chunk) GetActiveBlocks() []mgl32.Vec3 {
 	var positions []mgl32.Vec3
 
-	// Calculate world position offset for this chunk
-	worldOffsetX := c.X * ChunkSizeX
-	worldOffsetY := c.Y * ChunkSizeY
-	worldOffsetZ := c.Z * ChunkSizeZ
+	worldOffsetX := float32(c.X * ChunkSizeX)
+	worldOffsetY := float32(c.Y * ChunkSizeY)
+	worldOffsetZ := float32(c.Z * ChunkSizeZ)
 
-	for secIdx, sec := range c.sections {
-		if sec == nil || sec.blocks == nil {
+	for secIdx := range NumSections {
+		sec := c.sections[secIdx]
+		if sec == nil || sec.basePtr == nil {
 			continue
 		}
 
-		offsetY := secIdx * SectionHeight
+		sectionBaseY := secIdx * SectionHeight
+		sizeof := unsafe.Sizeof(BlockType(0))
 
-		for x := 0; x < ChunkSizeX; x++ {
-			for y := 0; y < SectionHeight; y++ {
-				for z := 0; z < ChunkSizeZ; z++ {
-					if sec.blocks[indexInSection(x, y, z)] != BlockTypeAir {
-						worldX := float32(worldOffsetX + x)
-						worldY := float32(worldOffsetY + offsetY + y)
-						worldZ := float32(worldOffsetZ + z)
-						positions = append(positions, mgl32.Vec3{worldX, worldY, worldZ})
+		for lx := range ChunkSizeX {
+			for ly := range SectionHeight {
+				for lz := range ChunkSizeZ {
+					idx := indexInSection(lx, ly, lz)
+					blockPtr := (*BlockType)(unsafe.Pointer(uintptr(sec.basePtr) + uintptr(idx)*sizeof))
+
+					if *blockPtr != BlockTypeAir {
+						wx := worldOffsetX + float32(lx)
+						wy := worldOffsetY + float32(sectionBaseY+ly)
+						wz := worldOffsetZ + float32(lz)
+						positions = append(positions, mgl32.Vec3{wx, wy, wz})
 					}
 				}
 			}

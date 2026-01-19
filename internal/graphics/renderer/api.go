@@ -23,4 +23,5 @@ type Renderable interface {
 	Init() error
 	Render(ctx RenderContext)
 	Dispose()
+	SetViewport(width, height int)
 }

@@ -1,5 +1,12 @@
 #version 330 core
+in vec2 TexCoord;
+
+uniform sampler2D crosshairTexture;
+
 out vec4 FragColor;
+
 void main() {
-	FragColor = vec4(1.0, 1.0, 1.0, 0.8);
+    // Sample the texture directly
+    // Minecraft uses the full texture color with special blend mode
+    FragColor = texture(crosshairTexture, TexCoord);
 }

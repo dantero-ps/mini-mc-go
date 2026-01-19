@@ -1,12 +1,13 @@
 package main
 
 import (
-	"github.com/go-gl/gl/v4.1-core/gl"
-	"github.com/go-gl/glfw/v3.3/glfw"
 	"mini-mc/internal/graphics/renderables/hud"
 	"mini-mc/internal/graphics/renderer"
 	"mini-mc/internal/input"
 	"mini-mc/internal/player"
+
+	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/glfw/v3.3/glfw"
 )
 
 func setupInputHandlers(window *glfw.Window, gameLoop *GameLoop, r *renderer.Renderer, hudRenderer *hud.HUD, p *player.Player, paused *bool, im *input.InputManager) {
@@ -50,13 +51,11 @@ func setupInputHandlers(window *glfw.Window, gameLoop *GameLoop, r *renderer.Ren
 		gl.Viewport(0, 0, int32(fbWidth), int32(fbHeight))
 		winW, winH := w.GetSize()
 		r.UpdateViewport(winW, winH)
-		hudRenderer.SetViewport(winW, winH)
 	})
 
 	// Window size callback
 	window.SetSizeCallback(func(w *glfw.Window, width, height int) {
 		r.UpdateViewport(width, height)
-		hudRenderer.SetViewport(width, height)
 	})
 
 	// Refresh callback (called during window resize to prevent visual glitches)

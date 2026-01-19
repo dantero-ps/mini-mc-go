@@ -115,6 +115,11 @@ func (b *Blocks) Dispose() {
 	}
 }
 
+// SetViewport updates viewport dimensions (not needed for blocks)
+func (b *Blocks) SetViewport(width, height int) {
+	// Blocks don't need viewport dimensions
+}
+
 func (b *Blocks) renderBlocksInternal(ctx renderer.RenderContext) {
 	func() {
 		defer profiling.Track("renderer.renderBlocks.shaderSetup")()

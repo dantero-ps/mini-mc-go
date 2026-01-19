@@ -43,7 +43,7 @@ func (inv *Inventory) AddItem(stack *item.ItemStack) bool {
 	// 1. Try to merge with existing stacks
 	// Loop through main inventory to find matching items
 	if stack.IsStackable() {
-		for i := 0; i < len(inv.MainInventory); i++ {
+		for i := range len(inv.MainInventory) {
 			existing := inv.MainInventory[i]
 			if existing != nil && existing.IsItemEqual(*stack) {
 				j := existing.Count
@@ -52,10 +52,7 @@ func (inv *Inventory) AddItem(stack *item.ItemStack) bool {
 				maxStack := existing.GetMaxStackSize()
 				if j < maxStack {
 					space := maxStack - j
-					toAdd := stack.Count
-					if toAdd > space {
-						toAdd = space
-					}
+					toAdd := min(stack.Count, space)
 
 					existing.Count += toAdd
 					stack.Count -= toAdd
@@ -75,10 +72,7 @@ func (inv *Inventory) AddItem(stack *item.ItemStack) bool {
 		if emptySlot >= 0 {
 			// Fill empty slot
 			maxStack := stack.GetMaxStackSize()
-			toAdd := stack.Count
-			if toAdd > maxStack {
-				toAdd = maxStack
-			}
+			toAdd := min(stack.Count, maxStack)
 
 			// Create new stack in slot
 			newItem := item.NewItemStack(stack.Type, toAdd)
@@ -96,7 +90,7 @@ func (inv *Inventory) AddItem(stack *item.ItemStack) bool {
 
 // GetFirstEmptyStack returns the index of the first empty slot in main inventory
 func (inv *Inventory) GetFirstEmptyStack() int {
-	for i := 0; i < len(inv.MainInventory); i++ {
+	for i := range len(inv.MainInventory) {
 		if inv.MainInventory[i] == nil {
 			return i
 		}

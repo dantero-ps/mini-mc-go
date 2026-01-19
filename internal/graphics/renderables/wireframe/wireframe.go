@@ -2,7 +2,7 @@ package wireframe
 
 import (
 	"mini-mc/internal/graphics"
-	renderer "mini-mc/internal/graphics/renderer"
+	"mini-mc/internal/graphics/renderer"
 	"mini-mc/internal/profiling"
 	"path/filepath"
 
@@ -64,6 +64,11 @@ func (w *Wireframe) Dispose() {
 	if w.vbo != 0 {
 		gl.DeleteBuffers(1, &w.vbo)
 	}
+}
+
+// SetViewport updates viewport dimensions (not needed for wireframe)
+func (w *Wireframe) SetViewport(width, height int) {
+	// Wireframe doesn't need viewport dimensions
 }
 
 func (w *Wireframe) setupWireframeVAO() {

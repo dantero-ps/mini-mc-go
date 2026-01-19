@@ -8,7 +8,7 @@ import (
 	"mini-mc/internal/graphics/renderables/blocks"
 	"mini-mc/internal/graphics/renderables/hud"
 	"mini-mc/internal/graphics/renderables/ui"
-	renderer "mini-mc/internal/graphics/renderer"
+	"mini-mc/internal/graphics/renderer"
 	"mini-mc/internal/input"
 	"mini-mc/internal/player"
 	"mini-mc/internal/profiling"
@@ -342,10 +342,7 @@ func (gl *GameLoop) updateProfiling(frameStart time.Time, updateDur, renderDur t
 		}
 	}
 
-	preRenderDur := totalFrameDur - swapEventsDur - renderDur
-	if preRenderDur < 0 {
-		preRenderDur = 0
-	}
+	preRenderDur := max(totalFrameDur-swapEventsDur-renderDur, 0)
 
 	gl.hudRenderer.ProfilingSetLastTotalFrameDuration(totalFrameDur)
 	gl.hudRenderer.ProfilingSetLastUpdateDuration(updateDur)

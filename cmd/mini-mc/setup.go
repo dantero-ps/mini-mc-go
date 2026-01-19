@@ -4,13 +4,12 @@ import (
 	"mini-mc/internal/graphics/renderables/blocks"
 	"mini-mc/internal/graphics/renderables/breaking"
 	"mini-mc/internal/graphics/renderables/crosshair"
-	"mini-mc/internal/graphics/renderables/direction"
 	"mini-mc/internal/graphics/renderables/hand"
 	"mini-mc/internal/graphics/renderables/hud"
 	"mini-mc/internal/graphics/renderables/items"
 	"mini-mc/internal/graphics/renderables/ui"
 	"mini-mc/internal/graphics/renderables/wireframe"
-	renderer "mini-mc/internal/graphics/renderer"
+	"mini-mc/internal/graphics/renderer"
 	"mini-mc/internal/physics"
 	"mini-mc/internal/player"
 	"mini-mc/internal/world"
@@ -61,7 +60,6 @@ func setupGame(mode player.GameMode) (*GameComponents, error) {
 	breakingRenderer := breaking.NewBreaking()
 	wireframeRenderer := wireframe.NewWireframe()
 	crosshairRenderer := crosshair.NewCrosshair()
-	directionRenderer := direction.NewDirection()
 	handRenderer := hand.NewHand(itemsRenderer)
 	uiRenderer := ui.NewUI()
 	hudRenderer := hud.NewHUD()
@@ -73,7 +71,6 @@ func setupGame(mode player.GameMode) (*GameComponents, error) {
 		breakingRenderer,
 		wireframeRenderer,
 		crosshairRenderer,
-		directionRenderer,
 		handRenderer,
 		uiRenderer,
 		hudRenderer,
@@ -90,7 +87,7 @@ func setupGame(mode player.GameMode) (*GameComponents, error) {
 	gameWorld := world.New()
 
 	// Initialize mesh worker pool system (4 workers for mesh generation)
-	blocks.InitMeshSystem(runtime.NumCPU() / 2)
+	blocks.InitMeshSystem(runtime.NumCPU() - 1)
 
 	// Generate a smaller initial spawn area synchronously to keep startup smooth
 	spawnX, spawnZ := float32(0), float32(0)

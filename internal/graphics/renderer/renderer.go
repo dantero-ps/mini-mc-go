@@ -116,7 +116,12 @@ func (r *Renderer) GetCamera() *graphics.Camera {
 	return r.camera
 }
 
-// UpdateViewport updates the camera's viewport dimensions
+// UpdateViewport updates the camera's viewport dimensions and notifies renderables
 func (r *Renderer) UpdateViewport(width, height int) {
 	r.camera.SetViewport(width, height)
+
+	// Notify all renderables
+	for _, renderable := range r.renderables {
+		renderable.SetViewport(width, height)
+	}
 }

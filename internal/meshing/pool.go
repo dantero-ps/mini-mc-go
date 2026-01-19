@@ -43,7 +43,7 @@ func NewWorkerPool(workers int, queueSize int) *WorkerPool {
 	}
 
 	// Start worker goroutines
-	for i := 0; i < workers; i++ {
+	for i := range workers {
 		pool.wg.Add(1)
 		go pool.worker(i)
 	}

@@ -6,7 +6,7 @@ import (
 	"image/draw"
 	_ "image/png"
 	"mini-mc/internal/graphics"
-	renderer "mini-mc/internal/graphics/renderer"
+	"mini-mc/internal/graphics/renderer"
 	"mini-mc/internal/profiling"
 	"os"
 	"path/filepath"
@@ -113,7 +113,7 @@ func (b *Breaking) loadBreakingTextures() error {
 	var images []*image.RGBA
 	width, height := 0, 0
 
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		path := fmt.Sprintf("assets/textures/blocks/destroy_stage_%d.png", i)
 		f, err := os.Open(path)
 		if err != nil {
@@ -200,6 +200,11 @@ func (b *Breaking) Dispose() {
 	}
 }
 
+// SetViewport updates viewport dimensions (not needed for breaking)
+func (b *Breaking) SetViewport(width, height int) {
+	// Breaking animation doesn't need viewport dimensions
+}
+
 func (b *Breaking) setupBreakingVAO() {
 	gl.GenVertexArrays(1, &b.vao)
 	gl.BindVertexArray(b.vao)
@@ -232,10 +237,7 @@ func (b *Breaking) renderBreakingBlock(blockPos [3]int, progress float32, view, 
 	b.shader.SetInt("breakingTexture", 0)
 
 	// Calculate stage (0-9)
-	stage := int(progress * 10)
-	if stage > 9 {
-		stage = 9
-	}
+	stage := min(int(progress*10), 9)
 	if stage < 0 {
 		stage = 0
 	}

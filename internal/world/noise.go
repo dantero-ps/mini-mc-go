@@ -58,7 +58,7 @@ func octaveNoise2D(x float64, z float64, seed int64, octaves int, persistence, l
 	frequency := 1.0
 	sum := 0.0
 	norm := 0.0
-	for i := 0; i < octaves; i++ {
+	for i := range octaves {
 		v := valueNoise2D(x*frequency, z*frequency, seed+int64(i*131))
 		sum += v * amplitude
 		norm += amplitude

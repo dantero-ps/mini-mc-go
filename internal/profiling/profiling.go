@@ -1,6 +1,7 @@
 package profiling
 
 import (
+	"maps"
 	"sort"
 	"strings"
 	"sync"
@@ -46,9 +47,7 @@ func ResetFrame() {
 	// carry the just-finished frame totals into rolling window
 	if len(frameTotals) > 0 {
 		snapshot := make(map[string]time.Duration, len(frameTotals))
-		for k, v := range frameTotals {
-			snapshot[k] = v
-		}
+		maps.Copy(snapshot, frameTotals)
 		rollingSamples = append(rollingSamples, sample{t: now, totals: snapshot})
 	}
 	// prune entries older than 1 second
@@ -73,9 +72,7 @@ func Snapshot() map[string]time.Duration {
 	mu.Lock()
 	defer mu.Unlock()
 	out := make(map[string]time.Duration, len(frameTotals))
-	for k, v := range frameTotals {
-		out[k] = v
-	}
+	maps.Copy(out, frameTotals)
 	return out
 }
 

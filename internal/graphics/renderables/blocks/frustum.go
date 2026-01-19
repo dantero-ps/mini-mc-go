@@ -44,7 +44,7 @@ func normalizePlane(p plane) plane {
 
 // aabbIntersectsFrustumPlanes tests AABB against precomputed planes.
 func aabbIntersectsFrustumPlanes(min, max mgl32.Vec3, planes [6]plane) bool {
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		p := planes[i]
 		// Select the positive vertex for this plane normal
 		px := max.X()
@@ -177,7 +177,7 @@ func aabbIntersectsFrustumPlanesF(minx, miny, minz, maxx, maxy, maxz float32, pl
 
 // matrixNearEqual compares two matrices for approximate equality within epsilon
 func matrixNearEqual(a, b mgl32.Mat4, epsilon float32) bool {
-	for i := 0; i < 16; i++ {
+	for i := range 16 {
 		if float32(math.Abs(float64(a[i]-b[i]))) > epsilon {
 			return false
 		}

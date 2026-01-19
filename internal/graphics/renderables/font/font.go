@@ -1,10 +1,11 @@
-package graphics
+package font
 
 import (
 	"fmt"
 	"image"
 	"image/draw"
 	"math"
+	"mini-mc/internal/graphics"
 	"os"
 	"path/filepath"
 
@@ -185,7 +186,7 @@ func BuildFontAtlas(fontPath string, fontPixels int) (*FontAtlasInfo, error) {
 // FontRenderer renders ASCII text strings using a prebuilt atlas
 type FontRenderer struct {
 	atlas       *FontAtlasInfo
-	shader      *Shader
+	shader      *graphics.Shader
 	projection  mgl32.Mat4
 	vao         uint32
 	vbo         uint32
@@ -197,7 +198,7 @@ func NewFontRenderer(atlas *FontAtlasInfo) (*FontRenderer, error) {
 	if atlas == nil || len(atlas.Characters) == 0 {
 		return nil, fmt.Errorf("invalid font atlas")
 	}
-	shader, err := NewShader(FontVertShader, FontFragShader)
+	shader, err := graphics.NewShader(FontVertShader, FontFragShader)
 	if err != nil {
 		return nil, err
 	}
@@ -282,7 +283,7 @@ func (fr *FontRenderer) RenderLines(lines []string, x, yStart, lineStep, scale f
 
 	// Build vertex data for all lines
 	totalChars := 0
-	for i := 0; i < len(lines); i++ {
+	for i := range lines {
 		totalChars += len([]rune(lines[i]))
 	}
 	// Preallocate reasonably: 6 verts per char, 4 floats per vert

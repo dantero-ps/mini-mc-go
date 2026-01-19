@@ -1,16 +1,17 @@
 package items
 
 import (
-	"github.com/go-gl/gl/v4.1-core/gl"
-	"github.com/go-gl/mathgl/mgl32"
 	"math"
 	"mini-mc/internal/entity"
 	"mini-mc/internal/graphics"
 	"mini-mc/internal/graphics/renderables/blocks"
-	renderer "mini-mc/internal/graphics/renderer"
+	"mini-mc/internal/graphics/renderer"
 	"mini-mc/internal/item"
 	"mini-mc/internal/registry"
 	"mini-mc/internal/world"
+
+	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/mathgl/mgl32"
 )
 
 type Items struct {

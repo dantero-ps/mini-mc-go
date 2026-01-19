@@ -2,7 +2,8 @@ package ui
 
 import (
 	"mini-mc/internal/graphics"
-	renderer "mini-mc/internal/graphics/renderer"
+	"mini-mc/internal/graphics/renderables/font"
+	"mini-mc/internal/graphics/renderer"
 	"path/filepath"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
@@ -60,7 +61,7 @@ type drawCmd struct {
 type UI struct {
 	shader           *graphics.Shader
 	texShader        *graphics.Shader
-	fontRenderer     *graphics.FontRenderer
+	fontRenderer     *font.FontRenderer
 	vao              uint32
 	vbo              uint32
 	texVao           uint32
@@ -155,7 +156,7 @@ func (u *UI) BeginFrame() {
 	u.frameActive = true
 }
 
-func (u *UI) SetFontRenderer(fr *graphics.FontRenderer) {
+func (u *UI) SetFontRenderer(fr *font.FontRenderer) {
 	u.fontRenderer = fr
 }
 
@@ -232,7 +233,7 @@ func (u *UI) DrawFilledRect(x, y, w, h float32, color mgl32.Vec3, alpha float32)
 
 // DrawSlider draws a horizontal slider with the given value (0.0-1.0) and returns the new value. Supports drag capture and optional step snapping with tick marks.
 // sliderID must uniquely identify this slider so that only one slider is active during a drag.
-func (u *UI) DrawSlider(x, y, w, h float32, value float32, window interface{}, steps int, sliderID string) float32 {
+func (u *UI) DrawSlider(x, y, w, h float32, value float32, window any, steps int, sliderID string) float32 {
 	// Draw slider track
 	trackColor := mgl32.Vec3{0.3, 0.3, 0.3}
 	u.DrawFilledRect(x, y, w, h, trackColor, 0.8)
@@ -243,15 +244,9 @@ func (u *UI) DrawSlider(x, y, w, h float32, value float32, window interface{}, s
 		tickY := y + (h-tickHeight)*0.5
 		tickWidth := float32(2)
 		tickColor := mgl32.Vec3{0.9, 0.9, 0.9}
-		visibleTicks := 10
-		if visibleTicks < 2 {
-			visibleTicks = 2
-		}
-		stepSpacing := steps / visibleTicks
-		if stepSpacing < 1 {
-			stepSpacing = 1
-		}
-		for i := 0; i < steps; i++ {
+		visibleTicks := max(10, 2)
+		stepSpacing := max(steps/visibleTicks, 1)
+		for i := range steps {
 			if i != 0 && i != steps-1 && (i%stepSpacing) != 0 {
 				continue
 			}
@@ -289,10 +284,7 @@ func (u *UI) DrawSlider(x, y, w, h float32, value float32, window interface{}, s
 				}
 				if steps > 1 {
 					denom := float32(steps - 1)
-					stepIndex := int(v*denom + 0.5)
-					if stepIndex < 0 {
-						stepIndex = 0
-					}
+					stepIndex := max(int(v*denom+0.5), 0)
 					if stepIndex > steps-1 {
 						stepIndex = steps - 1
 					}
@@ -316,10 +308,7 @@ func (u *UI) DrawSlider(x, y, w, h float32, value float32, window interface{}, s
 			}
 			if steps > 1 {
 				denom := float32(steps - 1)
-				stepIndex := int(v*denom + 0.5)
-				if stepIndex < 0 {
-					stepIndex = 0
-				}
+				stepIndex := max(int(v*denom+0.5), 0)
 				if stepIndex > steps-1 {
 					stepIndex = steps - 1
 				}

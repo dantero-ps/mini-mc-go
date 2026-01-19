@@ -130,10 +130,7 @@ func FindCeilingLevel(x, z float32, playerPos mgl32.Vec3, playerHeight float32, 
 	playerMaxZ := z + 0.3
 
 	minCeilingY := float32(256)
-	startY := int(math.Ceil(float64(playerPos.Y() + playerHeight)))
-	if startY < 0 {
-		startY = 0
-	}
+	startY := max(int(math.Ceil(float64(playerPos.Y()+playerHeight))), 0)
 	if startY > 255 {
 		startY = 255
 	}

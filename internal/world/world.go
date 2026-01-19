@@ -78,10 +78,7 @@ func New() *World {
 		heightCache:    make(map[[2]int]int),
 	}
 
-	workers := runtime.NumCPU()
-	if workers < 1 {
-		workers = 1
-	}
+	workers := max(runtime.NumCPU(), 1)
 	for i := 0; i < workers; i++ {
 		go w.worker()
 	}
@@ -265,10 +262,7 @@ func (w *World) StreamChunksAroundSync(x, z float32, radius int) {
 			worldX := chunkX*ChunkSizeX + ChunkSizeX/2
 			worldZ := chunkZ*ChunkSizeZ + ChunkSizeZ/2
 			h := w.heightAt(worldX, worldZ)
-			maxChunkY := floorDiv(h, ChunkSizeY)
-			if maxChunkY < 0 {
-				maxChunkY = 0
-			}
+			maxChunkY := max(floorDiv(h, ChunkSizeY), 0)
 			for cy := 0; cy <= maxChunkY; cy++ {
 				w.generateChunkSync(ChunkCoord{X: chunkX, Y: cy, Z: chunkZ})
 			}
@@ -497,8 +491,8 @@ func (w *World) generateChunkSync(coord ChunkCoord) {
 func (w *World) populateChunk(c *Chunk) {
 	defer profiling.Track("world.populateChunk")()
 	chunkBaseY := c.Y * ChunkSizeY
-	for lx := 0; lx < ChunkSizeX; lx++ {
-		for lz := 0; lz < ChunkSizeZ; lz++ {
+	for lx := range ChunkSizeX {
+		for lz := range ChunkSizeZ {
 			worldX := c.X*ChunkSizeX + lx
 			worldZ := c.Z*ChunkSizeZ + lz
 			height := w.heightAt(worldX, worldZ)
@@ -562,7 +556,7 @@ func (w *World) AppendChunksInRadiusXZ(cx, cz, radius int, dst []ChunkWithCoord)
 			xk := cx + dx
 			zk := cz + dz
 			if col, ok := w.colIndex[[2]int{xk, zk}]; ok {
-				for y := 0; y < len(col); y++ {
+				for y := range col {
 					ch := col[y]
 					if ch == nil {
 						continue

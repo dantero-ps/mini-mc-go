@@ -3,9 +3,10 @@ package hud
 import (
 	"fmt"
 	"mini-mc/internal/graphics"
+	"mini-mc/internal/graphics/renderables/font"
 	"mini-mc/internal/graphics/renderables/items"
 	"mini-mc/internal/graphics/renderables/ui"
-	renderer "mini-mc/internal/graphics/renderer"
+	"mini-mc/internal/graphics/renderer"
 	"mini-mc/internal/inventory"
 	"mini-mc/internal/item"
 	"mini-mc/internal/player"
@@ -21,8 +22,8 @@ import (
 
 // HUD implements HUD rendering including text and profiling
 type HUD struct {
-	fontAtlas     *graphics.FontAtlasInfo
-	fontRenderer  *graphics.FontRenderer
+	fontAtlas     *font.FontAtlasInfo
+	fontRenderer  *font.FontRenderer
 	uiRenderer    *ui.UI
 	itemRenderer  *items.Items
 	showProfiling bool
@@ -103,12 +104,12 @@ func NewHUD() *HUD {
 func (h *HUD) Init() error {
 	// Load font atlas and renderer
 	fontPath := filepath.Join("assets", "fonts", "OpenSans-Regular.ttf")
-	atlas, err := graphics.BuildFontAtlas(fontPath, 48)
+	atlas, err := font.BuildFontAtlas(fontPath, 48)
 	if err != nil {
 		return err
 	}
 
-	fontRenderer, err := graphics.NewFontRenderer(atlas)
+	fontRenderer, err := font.NewFontRenderer(atlas)
 	if err != nil {
 		return err
 	}
@@ -257,7 +258,7 @@ func (h *HUD) renderHotbar(p *player.Player) {
 	h.uiRenderer.Flush()
 
 	// Draw Items
-	for i := 0; i < 9; i++ {
+	for i := range 9 {
 		stack := p.Inventory.MainInventory[i]
 		if stack != nil {
 			// Calculate slot position
@@ -377,7 +378,7 @@ func (h *HUD) renderInventory(p *player.Player) {
 
 	// 2. Hotbar (Indices 0-8)
 	// Java: x=8, y=142
-	for i := 0; i < 9; i++ {
+	for i := range 9 {
 		stack := p.Inventory.MainInventory[i]
 		slotX := x + float32(8+i*18)*scale
 		slotY := y + float32(142)*scale
@@ -397,7 +398,7 @@ func (h *HUD) renderInventory(p *player.Player) {
 
 	// 3. Armor (Indices 0-3 in ArmorInventory)
 	// Java: x=8, y=8 start, vertical step 18
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		stack := p.Inventory.ArmorInventory[i]
 		if stack != nil {
 			slotX := x + float32(8)*scale
@@ -468,7 +469,7 @@ func (h *HUD) HandleInventoryClick(p *player.Player, x, y float64, button glfw.M
 	}
 
 	// Hotbar (0-8)
-	for i := 0; i < 9; i++ {
+	for i := range 9 {
 		// Java coords: x=8 + i*18, y=142
 		checkSlot(i, float32(8+i*18)*scale, float32(142)*scale)
 	}
@@ -501,7 +502,7 @@ func (h *HUD) handleSlotClick(p *player.Player, slotIdx int, button glfw.MouseBu
 			}
 
 			// Loop through all slots and collect matching items
-			for i := 0; i < len(p.Inventory.MainInventory); i++ {
+			for i := range len(p.Inventory.MainInventory) {
 				if i == slotIdx {
 					continue // Already handled above
 				}
@@ -521,7 +522,7 @@ func (h *HUD) handleSlotClick(p *player.Player, slotIdx int, button glfw.MouseBu
 			totalCount := slot.Count
 
 			// Loop through all slots and collect matching items
-			for i := 0; i < len(p.Inventory.MainInventory); i++ {
+			for i := range len(p.Inventory.MainInventory) {
 				if i == slotIdx {
 					continue // Skip the slot we're clicking
 				}
@@ -582,10 +583,7 @@ func (h *HUD) handleSlotClick(p *player.Player, slotIdx int, button glfw.MouseBu
 			// Same item type: merge stacks
 			space := slot.GetMaxStackSize() - slot.Count
 			if space > 0 {
-				toAdd := cursor.Count
-				if toAdd > space {
-					toAdd = space
-				}
+				toAdd := min(cursor.Count, space)
 				slot.Count += toAdd
 				cursor.Count -= toAdd
 				if cursor.Count <= 0 {
@@ -776,7 +774,7 @@ func (h *HUD) RenderProfilingInfo() {
 
 	// Top N tracked lines
 	if top := profiling.TopN(10); top != "" {
-		for _, line := range strings.Split(top, ", ") {
+		for line := range strings.SplitSeq(top, ", ") {
 			if line != "" && !strings.Contains(line, ":0ms") {
 				lines = append(lines, line)
 			}
@@ -876,7 +874,7 @@ func (h *HUD) MeasureText(text string, scale float32) (float32, float32) {
 }
 
 // FontRenderer exposes the HUD's font renderer for UI systems that want to enqueue text.
-func (h *HUD) FontRenderer() *graphics.FontRenderer {
+func (h *HUD) FontRenderer() *font.FontRenderer {
 	return h.fontRenderer
 }
 

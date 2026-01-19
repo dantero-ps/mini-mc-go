@@ -86,7 +86,6 @@ func (pm *PauseMenu) Render(window *glfw.Window, uiRenderer *ui.UI, hudRenderer 
 
 	// Get window size for dynamic positioning
 	winWidth, winHeight := window.GetSize()
-	uiRenderer.SetViewport(winWidth, winHeight)
 	hudRenderer.SetViewport(winWidth, winHeight)
 
 	// Dim background

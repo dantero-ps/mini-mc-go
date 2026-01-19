@@ -225,7 +225,7 @@ func (im *InputManager) PostUpdate() {
 	defer im.mu.Unlock()
 
 	// Reset edge flags and update prev state
-	for i := Action(0); i < ActionCount; i++ {
+	for i := range ActionCount {
 		im.justPressed[i] = false
 		im.justReleased[i] = false
 		im.prevState[i] = im.currentState[i]

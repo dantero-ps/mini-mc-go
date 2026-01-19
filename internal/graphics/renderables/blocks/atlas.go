@@ -135,10 +135,7 @@ func ensureRegionCapacity(r *atlasRegion, requiredBytes int) bool {
 	}
 
 	// Grow strategy: double until max
-	newCap := r.capacityBytes * 2
-	if newCap < requiredBytes {
-		newCap = requiredBytes
-	}
+	newCap := max(r.capacityBytes*2, requiredBytes)
 	if newCap > maxAtlasBytes {
 		newCap = maxAtlasBytes
 	}
@@ -221,7 +218,7 @@ func collectColumnVerts(x, z int) []int16 {
 	// world.ChunkSizeY is 256, so usually only Y=0 exists.
 	// But let's check a few slots just in case.
 	// We check Y from 0 to 15 (covering 4096 blocks height which is enough).
-	for y := 0; y < 16; y++ {
+	for y := range 16 {
 		coord := world.ChunkCoord{X: x, Y: y, Z: z}
 		if cm := chunkMeshes[coord]; cm != nil && cm.vertexCount > 0 && len(cm.cpuVerts) > 0 {
 			// Unpack vertices
@@ -233,7 +230,7 @@ func collectColumnVerts(x, z int) []int16 {
 			// Output vertex size is 6 int16s
 			count := len(cm.cpuVerts) / 2
 
-			for i := 0; i < count; i++ {
+			for i := range count {
 				v1 := cm.cpuVerts[i*2]
 				v2 := cm.cpuVerts[i*2+1]
 
@@ -281,7 +278,7 @@ func collectColumnVerts(x, z int) []int16 {
 // Helper to calculate total floats for a column without allocating
 func calculateColumnFloats(x, z int) int {
 	total := 0
-	for y := 0; y < 16; y++ {
+	for y := range 16 {
 		coord := world.ChunkCoord{X: x, Y: y, Z: z}
 		if cm := chunkMeshes[coord]; cm != nil && cm.vertexCount > 0 && len(cm.cpuVerts) > 0 {
 			// cpuVerts has 2 ints per vertex.
