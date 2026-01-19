@@ -1,6 +1,6 @@
 package world
 
-type BlockType uint16
+type BlockType uint8
 
 const (
 	BlockTypeAir BlockType = iota
