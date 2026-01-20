@@ -21,7 +21,7 @@ import (
 const (
 	PlayerEyeHeight  = 1.62
 	PlayerHeight     = 1.8 // Player collision height
-	BaseMoveSpeed    = 4.317
+	BaseMoveSpeed    = 3.637
 	SprintMultiplier = 1.5
 	SneakMultiplier  = 0.3
 	Gravity          = 32.0
@@ -95,35 +95,39 @@ type Player struct {
 	// Flight mode double-tap detection
 	lastSpacePressTime float64
 	lastSpaceState     bool
+
+	// Forward double-tap detection for sprint
+	lastForwardPressTime float64
 }
 
 func New(world *world.World, mode GameMode) *Player {
 	return &Player{
-		GameMode:           mode,
-		Position:           mgl32.Vec3{0, 2.8, 0},
-		Velocity:           mgl32.Vec3{0, 0, 0},
-		OnGround:           false,
-		IsSprinting:        false,
-		IsSneaking:         false,
-		IsFlying:           false,
-		CamYaw:             0.0,
-		CamPitch:           0.0,
-		LastMouseX:         0,
-		LastMouseY:         0,
-		FirstMouse:         true,
-		World:              world,
-		Inventory:          inventory.New(),
-		handSwingTimer:     0,
-		handSwingDuration:  0.25,
-		HandSwingProgress:  0,
-		EquipProgress:      0,
-		EquippedItem:       nil,
-		lastSpacePressTime: -1,
-		lastSpaceState:     false,
-		PrevCameraYaw:      0,
-		CameraYaw:          0,
-		PrevCameraPitch:    0,
-		CameraPitch:        0,
+		GameMode:             mode,
+		Position:             mgl32.Vec3{0, 2.8, 0},
+		Velocity:             mgl32.Vec3{0, 0, 0},
+		OnGround:             false,
+		IsSprinting:          false,
+		IsSneaking:           false,
+		IsFlying:             false,
+		CamYaw:               0.0,
+		CamPitch:             0.0,
+		LastMouseX:           0,
+		LastMouseY:           0,
+		FirstMouse:           true,
+		World:                world,
+		Inventory:            inventory.New(),
+		handSwingTimer:       0,
+		handSwingDuration:    0.25,
+		HandSwingProgress:    0,
+		EquipProgress:        0,
+		EquippedItem:         nil,
+		lastSpacePressTime:   -1,
+		lastSpaceState:       false,
+		lastForwardPressTime: -1,
+		PrevCameraYaw:        0,
+		CameraYaw:            0,
+		PrevCameraPitch:      0,
+		CameraPitch:          0,
 	}
 }
 
@@ -347,7 +351,7 @@ func (p *Player) Update(dt float64, im *input.InputManager) {
 	p.UpdateHeadBob()
 
 	// Update camera bobbing (for view bobbing)
-	//p.UpdateCameraBob()
+	p.UpdateCameraBob()
 
 	// Update equipped item animation
 	p.updateEquippedItem(float32(dt))
@@ -556,16 +560,39 @@ func (p *Player) UpdatePosition(dt float64, im *input.InputManager) {
 		p.IsFlying = false
 	}
 
+	// Handle forward double-tap detection for sprint
+	if p.lastForwardPressTime >= 0 {
+		p.lastForwardPressTime += dt
+		// Reset after 0.5 seconds
+		if p.lastForwardPressTime > 0.5 {
+			p.lastForwardPressTime = -1
+		}
+	}
+
 	// Handle sprint and sneak
 	if !p.IsInventoryOpen {
-		if im.IsActive(input.ActionSprint) {
+		forwardJustPressed := im.JustPressed(input.ActionMoveForward)
+
+		// Sprint toggle: either press sprint key or double-tap forward
+		if im.JustPressed(input.ActionSprint) {
 			p.IsSprinting = true
-			p.IsSneaking = false
-		} else if im.IsActive(input.ActionSneak) {
+		}
+
+		// Double-tap forward to sprint
+		if forwardJustPressed {
+			if p.lastForwardPressTime >= 0 && p.lastForwardPressTime < 0.3 {
+				// Double tap detected
+				p.IsSprinting = true
+				p.lastForwardPressTime = -1
+			} else {
+				p.lastForwardPressTime = 0
+			}
+		}
+
+		if im.IsActive(input.ActionSneak) {
 			p.IsSneaking = true
 			p.IsSprinting = false
 		} else {
-			p.IsSprinting = false
 			p.IsSneaking = false
 		}
 	} else {
@@ -947,7 +974,7 @@ func (p *Player) GetViewMatrixWithPartialTicks(partialTicks float32) mgl32.Mat4 
 
 	// Calculate bobbing values
 	f := float32(p.DistanceWalkedModified - p.PrevDistanceWalkedModified)
-	f1 := float32(-(p.DistanceWalkedModified + float64(f)*float64(partialTicks)))
+	f1 := float32(p.DistanceWalkedModified + float64(f)*float64(partialTicks))
 
 	// Interpolate camera yaw and pitch
 	f2 := p.PrevCameraYaw + (p.CameraYaw-p.PrevCameraYaw)*partialTicks
