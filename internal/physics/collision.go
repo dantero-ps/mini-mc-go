@@ -130,10 +130,7 @@ func FindCeilingLevel(x, z float32, playerPos mgl32.Vec3, playerHeight float32, 
 	playerMaxZ := z + 0.3
 
 	minCeilingY := float32(256)
-	startY := max(int(math.Ceil(float64(playerPos.Y()+playerHeight))), 0)
-	if startY > 255 {
-		startY = 255
-	}
+	startY := min(max(int(math.Ceil(float64(playerPos.Y()+playerHeight))), 0), 255)
 	for bx := minX; bx <= maxX; bx++ {
 		for bz := minZ; bz <= maxZ; bz++ {
 			// Only consider blocks that overlap horizontally with player footprint

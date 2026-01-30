@@ -135,10 +135,7 @@ func ensureRegionCapacity(r *atlasRegion, requiredBytes int) bool {
 	}
 
 	// Grow strategy: double until max
-	newCap := max(r.capacityBytes*2, requiredBytes)
-	if newCap > maxAtlasBytes {
-		newCap = maxAtlasBytes
-	}
+	newCap := min(max(r.capacityBytes*2, requiredBytes), maxAtlasBytes)
 
 	// Create new buffer
 	var newVBO uint32

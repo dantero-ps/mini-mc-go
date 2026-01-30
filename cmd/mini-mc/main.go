@@ -3,7 +3,7 @@ package main
 import (
 	"runtime"
 
-	"mini-mc/internal/graphics/renderables/blocks"
+	"mini-mc/internal/game"
 	"mini-mc/internal/input"
 
 	"github.com/go-gl/glfw/v3.3/glfw"
@@ -20,48 +20,24 @@ func main() {
 	defer glfw.Terminate()
 
 	// Window setup
-	window, err := setupWindow()
+	window, err := game.SetupWindow()
 	if err != nil {
 		panic(err)
 	}
 
-	for {
-		// Show Game Mode Selection Menu
-		gameMode := showMenu(window)
+	// Create input manager
+	inputManager := input.NewInputManager()
+	inputManager.SetKeyCallback(window)
 
-		// Initialize game components
-		game, err := setupGame(gameMode)
-		if err != nil {
-			panic(err)
-		}
+	// Create App (Manages Lifecycle)
+	app := game.NewApp(window, inputManager)
 
-		// Create input manager
-		inputManager := input.NewInputManager()
+	// Setup input handlers (routes low level callbacks to App/Session)
+	game.SetupInputHandlers(app)
 
-		// Create game loop
-		gameLoop := NewGameLoop(
-			window,
-			game.Renderer,
-			game.UIRenderer,
-			game.HUDRenderer,
-			game.Player,
-			game.World,
-			inputManager,
-		)
+	// Run the app loop
+	app.Run()
 
-		// Setup input handlers
-		setupInputHandlers(window, gameLoop, game.Renderer, game.HUDRenderer, game.Player, gameLoop.Paused(), inputManager)
-
-		// Run the game
-		shouldRestart := gameLoop.Run()
-
-		// Cleanup
-		game.World.Close()
-		blocks.ShutdownMeshSystem()
-		game.Renderer.Dispose()
-
-		if !shouldRestart {
-			break
-		}
-	}
+	// App.Run() only returns when Main Loop exits (window closed)
+	// Cleanup is handled within App/Session
 }

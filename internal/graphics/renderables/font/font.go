@@ -206,7 +206,6 @@ func NewFontRenderer(atlas *FontAtlasInfo) (*FontRenderer, error) {
 		atlas:       atlas,
 		shader:      shader,
 		maxCharsCap: 256,
-		projection:  mgl32.Ortho(0, 900, 600, 0, 0, 1),
 	}
 	fr.initGL()
 	return fr, nil

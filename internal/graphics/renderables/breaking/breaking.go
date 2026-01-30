@@ -237,10 +237,7 @@ func (b *Breaking) renderBreakingBlock(blockPos [3]int, progress float32, view, 
 	b.shader.SetInt("breakingTexture", 0)
 
 	// Calculate stage (0-9)
-	stage := min(int(progress*10), 9)
-	if stage < 0 {
-		stage = 0
-	}
+	stage := max(min(int(progress*10), 9), 0)
 	b.shader.SetInt("layer", int32(stage))
 
 	// Create model matrix for the breaking overlay

@@ -13,8 +13,6 @@ import (
 
 const (
 	ShadersDir = "assets/shaders/ui"
-	WinWidth   = 900
-	WinHeight  = 600
 )
 
 var (
@@ -90,8 +88,6 @@ func NewUI() *UI {
 		cmds:            make([]drawCmd, 0, 2048),
 		filledVerts:     make([]float32, 0, 2048),
 		unifiedTexVerts: make([]float32, 0, 8192),
-		width:           WinWidth,
-		height:          WinHeight,
 	}
 }
 
@@ -173,6 +169,13 @@ func (u *UI) DrawText(text string, x, y float32, scale float32, color mgl32.Vec3
 		text:      text,
 		textScale: scale,
 	})
+}
+
+func (u *UI) MeasureText(text string, scale float32) (float32, float32) {
+	if u.fontRenderer == nil {
+		return 0, 0
+	}
+	return u.fontRenderer.Measure(text, scale)
 }
 
 // Dispose cleans up OpenGL resources
@@ -284,10 +287,7 @@ func (u *UI) DrawSlider(x, y, w, h float32, value float32, window any, steps int
 				}
 				if steps > 1 {
 					denom := float32(steps - 1)
-					stepIndex := max(int(v*denom+0.5), 0)
-					if stepIndex > steps-1 {
-						stepIndex = steps - 1
-					}
+					stepIndex := min(max(int(v*denom+0.5), 0), steps-1)
 					v = float32(stepIndex) / denom
 				}
 				value = v
@@ -308,10 +308,7 @@ func (u *UI) DrawSlider(x, y, w, h float32, value float32, window any, steps int
 			}
 			if steps > 1 {
 				denom := float32(steps - 1)
-				stepIndex := max(int(v*denom+0.5), 0)
-				if stepIndex > steps-1 {
-					stepIndex = steps - 1
-				}
+				stepIndex := min(max(int(v*denom+0.5), 0), steps-1)
 				v = float32(stepIndex) / denom
 			}
 			value = v

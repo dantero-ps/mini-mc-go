@@ -184,7 +184,7 @@ func (p *Player) HandleMouseButton(button glfw.MouseButton, action glfw.Action, 
 						if p.World.IsAir(ax, ay, az) && (placingUnderFeet || !physics.IntersectsBlock(p.Position, PlayerHeight, ax, ay, az)) {
 							// Place the selected block type
 							p.World.Set(ax, ay, az, selectedStack.Type)
-
+							p.TriggerHandSwing()
 							// Consume item if not in creative mode
 							if p.GameMode != GameModeCreative {
 								selectedStack.Count--
@@ -620,6 +620,11 @@ func (p *Player) UpdatePosition(dt float64, im *input.InputManager) {
 		if im.IsActive(input.ActionMoveRight) {
 			strafe += 1
 		}
+
+		// Stop sprinting if not moving forward
+		if forward <= 0 {
+			p.IsSprinting = false
+		}
 	}
 
 	// Normalize diagonal movement
@@ -815,6 +820,7 @@ func (p *Player) UpdatePosition(dt float64, im *input.InputManager) {
 		}
 	} else {
 		p.Velocity[0] = 0
+		p.IsSprinting = false
 	}
 
 	// Finally resolve Z at updated Y
@@ -827,6 +833,7 @@ func (p *Player) UpdatePosition(dt float64, im *input.InputManager) {
 		}
 	} else {
 		p.Velocity[2] = 0
+		p.IsSprinting = false
 	}
 
 	// Final ground settle to avoid micro fall/jitter when hugging walls (only when not flying)
