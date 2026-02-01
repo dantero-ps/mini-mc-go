@@ -19,15 +19,21 @@ import (
 )
 
 const (
-	PlayerEyeHeight  = 1.62
-	PlayerHeight     = 1.8 // Player collision height
-	BaseMoveSpeed    = 3.637
-	SprintMultiplier = 1.5
-	SneakMultiplier  = 0.3
+	PlayerEyeHeight = 1.62
+	PlayerHeight    = 1.8
+
 	Gravity          = 32.0
-	JumpVelocity     = 9.4
-	TerminalVelocity = -78.4 // Maximum fall speed
-	FlySpeed         = 10.0  // Flight mode movement speed
+	TerminalVelocity = -78.4
+
+	WalkSpeed        = 0.1
+	SprintMultiplier = 1.3
+	SneakMultiplier  = 0.3
+
+	JumpVelocity    = 9.5
+	AirAcceleration = 0.02 // jumpMovementFactor
+	AirDrag         = 0.98 // Default air drag per tick
+	GroundDrag      = 0.91 // Default ground drag (before friction)
+	BlockFriction   = 0.6  // Default block friction
 )
 
 type GameMode int
@@ -38,14 +44,22 @@ const (
 )
 
 type Player struct {
-	GameMode         GameMode
-	PrevPosition     mgl32.Vec3
-	Position         mgl32.Vec3
-	Velocity         mgl32.Vec3
-	OnGround         bool
-	IsSprinting      bool
-	IsSneaking       bool
-	IsFlying         bool
+	GameMode     GameMode
+	PrevPosition mgl32.Vec3
+	Position     mgl32.Vec3
+	Velocity     mgl32.Vec3
+	OnGround     bool
+	IsSprinting  bool
+	IsSneaking   bool
+	IsFlying     bool
+	// ... keeping this structure, just editing the constants above and the logic below ...
+	// Wait, replace_file_content replaces a chunk. I need two chunks or one big one.
+	// Let's rely on line numbers from previous view.
+	// Constants are at lines 28-39 (approx). Logic is around 758.
+	// I will split this into 2 chunks using multi_replace_file_content if I could,
+	// but I am restricted to replace_file_content for single contiguous block?
+	// No, I can use multi_replace.
+
 	PrevHeadBobYaw   float64
 	HeadBobYaw       float64
 	PrevHeadBobPitch float64
@@ -574,7 +588,7 @@ func (p *Player) UpdatePosition(dt float64, im *input.InputManager) {
 		forwardJustPressed := im.JustPressed(input.ActionMoveForward)
 
 		// Sprint toggle: either press sprint key or double-tap forward
-		if im.JustPressed(input.ActionSprint) {
+		if im.IsActive(input.ActionSprint) {
 			p.IsSprinting = true
 		}
 
@@ -627,147 +641,179 @@ func (p *Player) UpdatePosition(dt float64, im *input.InputManager) {
 		}
 	}
 
-	// Normalize diagonal movement
-	if forward != 0 && strafe != 0 {
-		forward *= 0.98
-		strafe *= 0.98
-	}
+	// DEBUG: Trace inputs
+	// fmt.Printf("Input: Fwd: %f, Strafe: %f, OnGround: %v\n", forward, strafe, p.OnGround)
 
 	// Calculate movement based on camera direction
-	yaw := mgl32.DegToRad(float32(p.CamYaw))
+	yaw := float32(p.CamYaw)
+	yawRad := float64(mgl32.DegToRad(yaw))
 
 	// Calculate forward/backward movement vector
-	frontX := float32(math.Cos(float64(yaw)))
-	frontZ := float32(math.Sin(float64(yaw)))
+	frontX := float32(math.Cos(yawRad))
+	frontZ := float32(math.Sin(yawRad))
 
-	// Calculate strafe movement vector (perpendicular to front)
-	strafeX := float32(math.Cos(float64(yaw + math.Pi/2)))
-	strafeZ := float32(math.Sin(float64(yaw + math.Pi/2)))
+	// Calculate strafe movement vector (Right vector)
+	strafeX := float32(math.Cos(yawRad + math.Pi/2))
+	strafeZ := float32(math.Sin(yawRad + math.Pi/2))
 
-	moveSpeed := float32(BaseMoveSpeed)
+	// Apply input to acceleration
+	// Using Minecraft's friction/acceleration logic but applied to our vectors
 
-	if p.OnGround {
-		if p.IsSprinting {
-			moveSpeed *= SprintMultiplier
-		} else if p.IsSneaking {
-			moveSpeed *= SneakMultiplier
-		}
+	// Scale factor for acceleration:
+	// MC Accel is "velocity added per tick" in "blocks/tick" units.
+	// To convert to "blocks/sec" added per second (m/s^2):
+	// 1. Accel (m/tick) -> Accel * 20 (m/s impact per tick)
+	// 2. Per tick (0.05s) -> (Accel * 20) / 0.05 = Accel * 400.
+	//
+	// Currently we multiply by modeDistance = dt * 20.
+	// Velocity += Accel * dt * 20. (This results in Accel * 20 m/s^2)
+	// We need 400. So we need another x20 factor for acceleration only.
 
-		// Calculate target velocity
-		targetVelX := (frontX*forward + strafeX*strafe) * moveSpeed
-		targetVelZ := (frontZ*forward + strafeZ*strafe) * moveSpeed
+	modeDistance := float32(dt * 20.0) // For Drag scaling (time dilation)
+	accelScale := modeDistance * 20.0  // For Acceleration scaling (force)
 
-		// Smooth acceleration
-		blendFactor := float32(0.2)
-
-		p.Velocity[0] = p.Velocity[0]*(1-blendFactor) + targetVelX*blendFactor
-		p.Velocity[2] = p.Velocity[2]*(1-blendFactor) + targetVelZ*blendFactor
-
-		// Apply friction when no input
-		if forward == 0 && strafe == 0 {
-			frictionFactor := float32(math.Pow(0.6, dt*20))
-			p.Velocity[0] *= frictionFactor
-			p.Velocity[2] *= frictionFactor
-
-			// Stop completely if very slow
-			if math.Abs(float64(p.Velocity[0])) < 0.005 {
-				p.Velocity[0] = 0
+	// Helper to apply movement
+	applyMovement := func(s, f, friction float32) {
+		dist := s*s + f*f
+		if dist >= 0.0001 {
+			dist = float32(math.Sqrt(float64(dist)))
+			if dist < 1 {
+				dist = 1
 			}
-			if math.Abs(float64(p.Velocity[2])) < 0.005 {
-				p.Velocity[2] = 0
-			}
-		}
-	} else {
-		// In air - only apply small air control, don't change existing velocity much
-		if forward != 0 || strafe != 0 {
-			// Air control acceleration (much smaller than ground)
-			airControl := float32(0.8)
-			airAccelX := (frontX*forward + strafeX*strafe) * airControl
-			airAccelZ := (frontZ*forward + strafeZ*strafe) * airControl
+			dist = friction / dist
+			s *= dist
+			f *= dist
 
-			p.Velocity[0] += airAccelX * float32(dt)
-			p.Velocity[2] += airAccelZ * float32(dt)
-		}
+			// Apply to velocity using our calculated vectors
+			// strafe (s) acts along strafe vector
+			// forward (f) acts along front vector
 
-		// Very light air drag
-		airDragFactor := float32(math.Pow(0.98, dt*20))
-		p.Velocity[0] *= airDragFactor
-		p.Velocity[2] *= airDragFactor
+			speedX := (s*strafeX + f*frontX) * accelScale
+			speedZ := (s*strafeZ + f*frontZ) * accelScale
+
+			p.Velocity[0] += speedX
+			p.Velocity[2] += speedZ
+		}
 	}
 
-	// Flight mode movement
 	if p.IsFlying {
-		// Vertical movement in flight mode
-		verticalSpeed := float32(FlySpeed)
+		// Flight mode physics
+
+		// Vertical input
 		if !p.IsInventoryOpen {
 			if im.IsActive(input.ActionJump) {
-				p.Velocity[1] = verticalSpeed
+				p.Velocity[1] += 3.0 * modeDistance // Flight accel (matches MC 0.15 blocks/tick)
 			} else if im.IsActive(input.ActionSneak) {
-				p.Velocity[1] = -verticalSpeed
-			} else {
-				// No vertical input - stop vertical movement
-				p.Velocity[1] = 0
-			}
-		} else {
-			p.Velocity[1] = 0
-		}
-
-		// Horizontal movement in flight mode (similar to ground movement)
-		if forward != 0 || strafe != 0 {
-			flightSpeed := float32(FlySpeed)
-			if p.IsSprinting {
-				flightSpeed *= SprintMultiplier
-			}
-			targetVelX := (frontX*forward + strafeX*strafe) * flightSpeed
-			targetVelZ := (frontZ*forward + strafeZ*strafe) * flightSpeed
-
-			blendFactor := float32(0.3)
-			p.Velocity[0] = p.Velocity[0]*(1-blendFactor) + targetVelX*blendFactor
-			p.Velocity[2] = p.Velocity[2]*(1-blendFactor) + targetVelZ*blendFactor
-		} else {
-			// Apply friction when no input
-			frictionFactor := float32(math.Pow(0.7, dt*20))
-			p.Velocity[0] *= frictionFactor
-			p.Velocity[2] *= frictionFactor
-
-			if math.Abs(float64(p.Velocity[0])) < 0.005 {
-				p.Velocity[0] = 0
-			}
-			if math.Abs(float64(p.Velocity[2])) < 0.005 {
-				p.Velocity[2] = 0
+				p.Velocity[1] -= 3.0 * modeDistance
 			}
 		}
+
+		// Horizontal friction in air is different
+		friction := float32(0.05) // Flying speed
+		if p.IsSprinting {
+			friction *= 2.0
+		}
+
+		applyMovement(strafe, forward, friction)
+
+		// Drag is applied after position update to match MC behavior
 	} else {
-		// Normal ground/air movement
+		// Normal walking/jumping physics
+
+		// Calculate ground friction factor
+		// In MC: f4 = 0.91; if onGround: f4 = blockFriction * 0.91
+		currentFriction := float32(GroundDrag)
+		if p.OnGround {
+			currentFriction = BlockFriction * GroundDrag
+		}
+
+		// Calculate acceleration (f5 in MC)
+		accel := float32(0.0)
+		if p.OnGround {
+			// f = 0.16277136 / (currentFriction^3)
+			f := 0.16277136 / (currentFriction * currentFriction * currentFriction)
+
+			// Speed attribute
+			speed := float32(WalkSpeed)
+			if p.IsSprinting {
+				speed *= SprintMultiplier
+			} else if p.IsSneaking {
+				speed *= SneakMultiplier
+			}
+
+			accel = speed * f
+		} else {
+			// Air acceleration
+			accel = AirAcceleration
+			if p.IsSprinting {
+				accel = AirAcceleration + 0.006 // Slight air sprint boost (MC 1.9+ feature but feels good)
+			}
+		}
+
+		// Apply input acceleration
+		// CORRECTION: Minecraft applies drag once per tick (discrete). We apply it continuously.
+		// Detailed math shows that discrete decay (V *= D) loses more momentum than continuous decay (V' = -k V)
+		// specifically for the "freshly added" acceleration in that tick.
+		// To match terminal velocity exactly: V_mc = A*D/(1-D) ? NO.
+		// Detailed analysis shows MC movement speed is the PEAK velocity (V_move = V_base + A).
+		// Discrete Equilibrium: V_base = (V_base + A) * D  => V_base = A*D/(1-D).
+		// PEAK Velocity (Movement Speed) = V_base + A = A*D/(1-D) + A = A / (1-D).
+		// Continuous Equilibrium: V_cont = A_cont / -ln(D).
+		// We want V_cont = PEAK Velocity.
+		// A_cont / -ln(D) = A / (1-D).
+		// A_cont = A * (-ln(D)) / (1-D).
+
+		correction := float32(1.0)
+		if currentFriction < 0.999 { // Avoid divide by zero
+			lnD := math.Log(float64(currentFriction))
+			correction = float32(-lnD / (1.0 - float64(currentFriction)))
+		}
+
+		applyMovement(strafe, forward, accel*correction)
+
 		// Jump
 		if !p.IsInventoryOpen && im.IsActive(input.ActionJump) && p.OnGround {
 			p.Velocity[1] = JumpVelocity
 			p.OnGround = false
 
 			// Sprint jump boost
-			if p.IsSprinting && (forward != 0 || strafe != 0) {
-				jumpBoostX := (frontX*forward + strafeX*strafe) * 2.0
-				jumpBoostZ := (frontZ*forward + strafeZ*strafe) * 2.0
-				p.Velocity[0] += jumpBoostX
-				p.Velocity[2] += jumpBoostZ
+			if p.IsSprinting {
+				jumpBoost := float32(0.125 * 20.0) // Reduced to 2.5 m/s to match feel (Logic: 4.0 was too strong vs 0.91 air drag timing)
+
+				// Use the calculated front vector to ensure boost matches look direction
+				p.Velocity[0] += frontX * jumpBoost
+				p.Velocity[2] += frontZ * jumpBoost
 			}
 		}
 
 		// Apply gravity
-		if !p.OnGround {
-			p.Velocity[1] -= Gravity * float32(dt)
-			if p.Velocity[1] < TerminalVelocity {
-				p.Velocity[1] = TerminalVelocity
-			}
+		p.Velocity[1] -= Gravity * float32(dt)
+		if p.Velocity[1] < TerminalVelocity {
+			p.Velocity[1] = TerminalVelocity
 		}
+
+		// Apply Drag
+		dragFactor := float32(math.Pow(float64(currentFriction), float64(modeDistance)))
+		p.Velocity[0] *= dragFactor
+		p.Velocity[2] *= dragFactor
+
+		// Vertical drag (air resistance)
+		p.Velocity[1] *= float32(math.Pow(float64(AirDrag), float64(modeDistance)))
 	}
 
-	// Calculate new position
+	// Stop completely if very slow (epsilon check)
+	if math.Abs(float64(p.Velocity[0])) < 0.005 {
+		p.Velocity[0] = 0
+	}
+	if math.Abs(float64(p.Velocity[2])) < 0.005 {
+		p.Velocity[2] = 0
+	}
+
+	// Calculate new position using CURRENT velocity
+	// This was previously inside the else block but needs to be available for collision logic
 	newPos := p.Position.Add(p.Velocity.Mul(float32(dt)))
 
 	if p.IsFlying {
-		// In flight mode, check collisions but allow movement through blocks
-		// Only prevent movement if we would collide
 		testPosY := mgl32.Vec3{p.Position[0], newPos[1], p.Position[2]}
 		if !physics.Collides(testPosY, PlayerHeight, p.World) {
 			p.Position[1] = newPos[1]
@@ -796,6 +842,7 @@ func (p *Player) UpdatePosition(dt float64, im *input.InputManager) {
 				groundLevel := physics.FindGroundLevel(p.Position[0], p.Position[2], p.Position, p.World)
 				if !float32IsInfNeg(groundLevel) {
 					p.OnGround = true
+					p.Velocity[1] = 0 // Reset vertical velocity on landing
 					p.Position[1] = groundLevel
 				} else {
 					p.OnGround = false
@@ -805,8 +852,8 @@ func (p *Player) UpdatePosition(dt float64, im *input.InputManager) {
 				ceiling := physics.FindCeilingLevel(p.Position[0], p.Position[2], p.Position, PlayerHeight, p.World)
 				p.Position[1] = ceiling - PlayerHeight
 				p.OnGround = false
+				p.Velocity[1] = 0
 			}
-			p.Velocity[1] = 0
 		}
 	}
 
@@ -868,6 +915,20 @@ func (p *Player) UpdatePosition(dt float64, im *input.InputManager) {
 	} else {
 		// In flight mode, we're never on ground
 		p.OnGround = false
+	}
+
+	// Apply flight drag at the end of the tick (matches MC behavior: Input -> Move -> Drag)
+	if p.IsFlying {
+		// Horizontal drag is 0.91 in flight mode (same as air drag)
+		groundDrag := float32(0.91)
+		groundDragFactor := float32(math.Pow(float64(groundDrag), float64(modeDistance)))
+		p.Velocity[0] *= groundDragFactor
+		p.Velocity[2] *= groundDragFactor
+
+		// Vertical drag is 0.6 in flight mode
+		verticalDrag := float32(0.6)
+		verticalDragFactor := float32(math.Pow(float64(verticalDrag), float64(modeDistance)))
+		p.Velocity[1] *= verticalDragFactor
 	}
 
 	positionChange := p.Position.Sub(p.PrevPosition)

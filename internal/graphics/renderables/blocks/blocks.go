@@ -24,10 +24,11 @@ type Blocks struct {
 	lastChunkX  int
 	lastChunkZ  int
 	// cache of nearby chunks to avoid per-frame radius scans
-	cachedPCX    int
-	cachedPCZ    int
-	cachedRadius int
-	cachedNearby []world.ChunkWithCoord
+	cachedPCX      int
+	cachedPCZ      int
+	cachedRadius   int
+	cachedModCount uint64
+	cachedNearby   []world.ChunkWithCoord
 }
 
 // NewBlocks creates a new blocks renderable
@@ -164,9 +165,10 @@ func (b *Blocks) renderBlocksInternal(ctx renderer.RenderContext) {
 	pcx := px / world.ChunkSizeX
 	pcz := pz / world.ChunkSizeZ
 
-	// Phase 1: collect nearby chunks only when player enters a new chunk or radius changes
+	// Phase 1: collect nearby chunks when player enters a new chunk, radius changes, OR world topology changes
 	var nearbyChunks []world.ChunkWithCoord
-	sameCell := pcx == b.cachedPCX && pcz == b.cachedPCZ && maxRenderRadiusChunks == b.cachedRadius
+	currentModCount := ctx.World.GetModCount()
+	sameCell := pcx == b.cachedPCX && pcz == b.cachedPCZ && maxRenderRadiusChunks == b.cachedRadius && currentModCount == b.cachedModCount
 	if !sameCell {
 		// Query only chunks in radius using world's column index and cache the result
 		b.visibleScratch = b.visibleScratch[:0]
@@ -174,6 +176,7 @@ func (b *Blocks) renderBlocksInternal(ctx renderer.RenderContext) {
 		b.cachedNearby = append(b.cachedNearby[:0], tmp...)
 		b.cachedPCX, b.cachedPCZ = pcx, pcz
 		b.cachedRadius = maxRenderRadiusChunks
+		b.cachedModCount = currentModCount
 	}
 	nearbyChunks = b.cachedNearby
 

@@ -2,6 +2,7 @@ package hud
 
 import (
 	"fmt"
+	"math"
 	"mini-mc/internal/graphics"
 	"mini-mc/internal/graphics/renderables/font"
 	"mini-mc/internal/graphics/renderables/items"
@@ -697,7 +698,9 @@ func (h *HUD) ProfilingSetRenderDuration(d time.Duration) {
 
 func (h *HUD) renderPlayerPosition(p *player.Player) {
 	// Build text and draw at top-left
-	text := fmt.Sprintf("Pos: %.2f, %.2f, %.2f", p.Position[0], p.Position[1], p.Position[2])
+	// Calculate horiz speed (m/s)
+	speed := math.Sqrt(float64(p.Velocity[0]*p.Velocity[0] + p.Velocity[2]*p.Velocity[2]))
+	text := fmt.Sprintf("Pos: %.2f, %.2f, %.2f | Speed: %.2f m/s", p.Position[0], p.Position[1], p.Position[2], speed)
 	x := float32(10)
 	y := float32(30)
 	color := mgl32.Vec3{1.0, 1.0, 1.0}

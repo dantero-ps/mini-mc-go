@@ -20,8 +20,9 @@ type Ticker interface {
 // World represents the game world, composed of chunks
 type World struct {
 	// Map of chunks indexed by their coordinates
-	chunks map[ChunkCoord]*Chunk
-	mu     sync.RWMutex
+	chunks   map[ChunkCoord]*Chunk
+	mu       sync.RWMutex
+	modCount uint64 // Increases on any chunk add/remove
 
 	// Entities in the world
 	Entities   []Ticker
@@ -134,6 +135,7 @@ func (w *World) GetChunk(chunkX, chunkY, chunkZ int, create bool) *Chunk {
 		chunk = NewChunk(chunkX, chunkY, chunkZ)
 		w.mu.Lock()
 		w.chunks[coord] = chunk
+		w.modCount++
 		// maintain column index
 		key := [2]int{chunkX, chunkZ}
 		col := w.colIndex[key]
@@ -374,6 +376,7 @@ func (w *World) EvictFarChunks(x, z float32, radius int) int {
 		dz := coord.Z - cz
 		if dx*dx+dz*dz > radius*radius {
 			delete(w.chunks, coord)
+			w.modCount++
 			// maintain column index
 			key := [2]int{coord.X, coord.Z}
 			if col, ok := w.colIndex[key]; ok {
@@ -471,6 +474,7 @@ func (w *World) generateChunkSync(coord ChunkCoord) {
 	w.mu.Lock()
 	if _, ok := w.chunks[coord]; !ok {
 		w.chunks[coord] = chunk
+		w.modCount++
 		// maintain column index
 		key := [2]int{coord.X, coord.Z}
 		col := w.colIndex[key]
@@ -567,6 +571,13 @@ func (w *World) AppendChunksInRadiusXZ(cx, cz, radius int, dst []ChunkWithCoord)
 		}
 	}
 	return dst
+}
+
+// GetModCount returns the current modification count of the chunk map
+func (w *World) GetModCount() uint64 {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.modCount
 }
 
 // Helper functions for coordinate conversion
