@@ -29,7 +29,7 @@ const (
 	SprintMultiplier = 1.3
 	SneakMultiplier  = 0.3
 
-	JumpVelocity    = 9.5
+	JumpVelocity    = 9.4
 	AirAcceleration = 0.02 // jumpMovementFactor
 	AirDrag         = 0.98 // Default air drag per tick
 	GroundDrag      = 0.91 // Default ground drag (before friction)
@@ -112,6 +112,16 @@ type Player struct {
 
 	// Forward double-tap detection for sprint
 	lastForwardPressTime float64
+
+	Health       float32
+	MaxHealth    float32
+	FoodLevel    float32
+	MaxFoodLevel float32
+	FallDistance float32
+
+	// Jump diagnostics
+	JumpStartY    float32
+	MaxJumpHeight float32
 }
 
 func New(world *world.World, mode GameMode) *Player {
@@ -142,6 +152,13 @@ func New(world *world.World, mode GameMode) *Player {
 		CameraYaw:            0,
 		PrevCameraPitch:      0,
 		CameraPitch:          0,
+		Health:               20.0,
+		MaxHealth:            20.0,
+		FoodLevel:            20.0,
+		MaxFoodLevel:         20.0,
+		FallDistance:         0,
+		JumpStartY:           0,
+		MaxJumpHeight:        0,
 	}
 }
 
@@ -775,6 +792,8 @@ func (p *Player) UpdatePosition(dt float64, im *input.InputManager) {
 		if !p.IsInventoryOpen && im.IsActive(input.ActionJump) && p.OnGround {
 			p.Velocity[1] = JumpVelocity
 			p.OnGround = false
+			p.JumpStartY = p.Position[1]
+			p.MaxJumpHeight = 0
 
 			// Sprint jump boost
 			if p.IsSprinting {
@@ -786,19 +805,7 @@ func (p *Player) UpdatePosition(dt float64, im *input.InputManager) {
 			}
 		}
 
-		// Apply gravity
-		p.Velocity[1] -= Gravity * float32(dt)
-		if p.Velocity[1] < TerminalVelocity {
-			p.Velocity[1] = TerminalVelocity
-		}
-
-		// Apply Drag
-		dragFactor := float32(math.Pow(float64(currentFriction), float64(modeDistance)))
-		p.Velocity[0] *= dragFactor
-		p.Velocity[2] *= dragFactor
-
-		// Vertical drag (air resistance)
-		p.Velocity[1] *= float32(math.Pow(float64(AirDrag), float64(modeDistance)))
+		// Gravity and Drag moved to end of tick to match MC behavior
 	}
 
 	// Stop completely if very slow (epsilon check)
@@ -929,11 +936,89 @@ func (p *Player) UpdatePosition(dt float64, im *input.InputManager) {
 		verticalDrag := float32(0.6)
 		verticalDragFactor := float32(math.Pow(float64(verticalDrag), float64(modeDistance)))
 		p.Velocity[1] *= verticalDragFactor
+	} else {
+		// Apply gravity (matches MC: after movement)
+		p.Velocity[1] -= Gravity * float32(dt)
+		if p.Velocity[1] < TerminalVelocity {
+			p.Velocity[1] = TerminalVelocity
+		}
+
+		// Recalculate friction for drag
+		currentFriction := float32(GroundDrag)
+		if p.OnGround { // OnGround updated by physics
+			currentFriction = BlockFriction * GroundDrag
+		}
+
+		// Apply Drag (matches MC: after movement)
+		dragFactor := float32(math.Pow(float64(currentFriction), float64(modeDistance)))
+		p.Velocity[0] *= dragFactor
+		p.Velocity[2] *= dragFactor
+
+		// Vertical drag (air resistance)
+		p.Velocity[1] *= float32(math.Pow(float64(AirDrag), float64(modeDistance)))
 	}
 
 	positionChange := p.Position.Sub(p.PrevPosition)
 	distanceMoved := math.Sqrt(float64(positionChange.X()*positionChange.X() + positionChange.Z()*positionChange.Z()))
 	p.DistanceWalkedModified = p.DistanceWalkedModified + distanceMoved*0.6
+
+	// Update fall state
+	dy := p.Position.Y() - p.PrevPosition[1]
+	p.UpdateFallState(float64(dy), p.OnGround)
+
+	// Update MaxJumpHeight if in air
+	if !p.OnGround {
+		currentHeight := p.Position[1] - p.JumpStartY
+		if currentHeight > p.MaxJumpHeight {
+			p.MaxJumpHeight = currentHeight
+		}
+	}
+}
+
+func (p *Player) UpdateFallState(dy float64, onGround bool) {
+	if p.IsFlying {
+		p.FallDistance = 0
+		return
+	}
+
+	if onGround {
+		if p.FallDistance > 0 {
+			// Apply fall damage
+			p.Fall(p.FallDistance, 1.0)
+			p.FallDistance = 0
+		}
+	} else if dy < 0 {
+		// Falling down
+		p.FallDistance -= float32(dy)
+	}
+}
+
+func (p *Player) Fall(distance float32, damageMultiplier float32) {
+	// Jump boost reduction (placeholder logic for now)
+	jumpBoostReduction := float32(0.0)
+	// TODO: Get jump boost effect amplifier if implemented
+	// if potionEffect != nil { jumpBoostReduction = float32(amplifier + 1) }
+
+	mcDistance := float64(distance)*0.82 + 0.6
+	damage := int(math.Ceil((mcDistance - 3.0 - float64(jumpBoostReduction)) * float64(damageMultiplier)))
+
+	if damage > 0 {
+		p.ApplyDamage(float32(damage))
+		// TODO: Play fall sound
+		// "game.neutral.hurt.fall.big" if damage > 4 else "game.neutral.hurt.fall.small"
+	}
+}
+
+func (p *Player) ApplyDamage(amount float32) {
+	if p.GameMode == GameModeCreative {
+		return
+	}
+
+	p.Health -= amount
+	if p.Health < 0 {
+		p.Health = 0
+		// TODO: Handle death (respawn, etc)
+	}
 }
 
 func (p *Player) UpdateHeadBob() {
