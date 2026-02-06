@@ -138,6 +138,35 @@ func BuildGreedyMeshForChunk(w *world.World, c *world.Chunk) []uint32 {
 		vertices = append(vertices, result...)
 	}
 
+	// ---------------------------------------------------------
+	// Custom/Complex Block Pass
+	// Iterate chunk to find blocks that were skipped by greedy mesher
+	// ---------------------------------------------------------
+	for x := 0; x < world.ChunkSizeX; x++ {
+		for z := 0; z < world.ChunkSizeZ; z++ {
+			for y := 0; y < world.ChunkSizeY; y++ {
+				// Optimization: check section first?
+				// For now simple loop.
+				bt := c.GetBlock(x, y, z)
+				if bt == world.BlockTypeAir {
+					continue
+				}
+
+				def, ok := registry.Blocks[bt]
+				if !ok {
+					continue
+				}
+
+				// If it wasn't solid OR it was complex, we skipped it in greedy pass. Render it now.
+				if !def.IsSolid || len(def.Elements) > 1 {
+					// This function emits raw quads for each element face defined in JSON
+					customVerts := meshCustomBlock(w, c, x, y, z, def)
+					vertices = append(vertices, customVerts...)
+				}
+			}
+		}
+	}
+
 	return vertices
 }
 
@@ -300,6 +329,11 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int) []u
 					if bt == world.BlockTypeAir {
 						continue
 					}
+					// Skip custom/complex/transparent blocks for greedy meshing
+					// X-Axis (Sides): Skip multi-element blocks (Grass) so Custom Mesher handles the detailed sides
+					if def, ok := registry.Blocks[bt]; ok && (!def.IsSolid || len(def.Elements) > 1) {
+						continue
+					}
 					// Check visibility
 					visible := false
 					localNX := x + nx
@@ -406,6 +440,11 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int) []u
 					if bt == world.BlockTypeAir {
 						continue
 					}
+					// Skip custom/complex/transparent blocks for greedy meshing
+					// Also skip multi-element blocks (like Grass with overlay) even if solid
+					if def, ok := registry.Blocks[bt]; ok && !def.IsSolid {
+						continue
+					}
 					visible := false
 					localNY := y + ny
 					if localNY >= 0 && localNY < sy {
@@ -502,6 +541,11 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int) []u
 			for y := range sy {
 				bt := c.GetBlock(x, y, z)
 				if bt == world.BlockTypeAir {
+					continue
+				}
+				// Skip custom/complex/transparent blocks for greedy meshing
+				// Z-Axis (Sides): Skip multi-element blocks (Grass) so Custom Mesher handles the detailed sides
+				if def, ok := registry.Blocks[bt]; ok && (!def.IsSolid || len(def.Elements) > 1) {
 					continue
 				}
 				visible := false

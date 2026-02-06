@@ -1,6 +1,13 @@
 package registry
 
-import "mini-mc/internal/world"
+import (
+	"fmt"
+	"mini-mc/internal/world"
+	"mini-mc/pkg/blockmodel"
+	"os"
+	"path/filepath"
+	"sort"
+)
 
 // BlockDefinition defines the properties of a block type
 type BlockDefinition struct {
@@ -11,27 +18,139 @@ type BlockDefinition struct {
 	TextureBot    string
 	IsSolid       bool
 	IsTransparent bool
-	TintColor     uint32                   // 0xRRGGBB (0 = No Tint)
-	TintFaces     map[world.BlockFace]bool // Set of faces to apply tint
-	Hardness      float32                  // Seconds to break (approximate)
+	TintColor     uint32
+	TintFaces     map[world.BlockFace]bool
+	Hardness      float32
+	Elements      []blockmodel.Element
 }
 
-// Global registry
 var (
 	Blocks       = make(map[world.BlockType]*BlockDefinition)
 	BlockNames   = make(map[string]world.BlockType)
 	TextureNames []string
-	TextureMap   = make(map[string]int) // Texture Name -> Layer Index
+	TextureMap   = make(map[string]int)
+	ModelLoader  *blockmodel.Loader
 )
 
 func RegisterBlock(def *BlockDefinition) {
+	if ModelLoader != nil && def.Name != "air" {
+		loadTexturesFromModel(def)
+	}
+
 	Blocks[def.ID] = def
 	BlockNames[def.Name] = def.ID
 
-	// Collect unique textures
 	registerTexture(def.TextureTop)
 	registerTexture(def.TextureSide)
 	registerTexture(def.TextureBot)
+}
+
+func loadTexturesFromModel(def *BlockDefinition) {
+	bs, err := ModelLoader.LoadBlockState(def.Name)
+	if err != nil {
+		fmt.Printf("Warning: Failed to load blockstate for %s: %v\n", def.Name, err)
+		return
+	}
+
+	var modelName string
+	if v, ok := bs.Variants["normal"]; ok && len(v) > 0 {
+		modelName = v[0].Model
+	} else if v, ok := bs.Variants[""]; ok && len(v) > 0 {
+		modelName = v[0].Model
+	} else {
+		// Pick first alphabetically to ensure deterministic behavior (fix race condition)
+		var keys []string
+		for k := range bs.Variants {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+
+		if len(keys) > 0 {
+			if v, ok := bs.Variants[keys[0]]; ok && len(v) > 0 {
+				modelName = v[0].Model
+			}
+		}
+	}
+
+	if modelName == "" {
+		return
+	}
+
+	model, err := ModelLoader.LoadModel(modelName)
+	if err != nil {
+		fmt.Printf("Warning: Failed to load model %s for block %s: %v\n", modelName, def.Name, err)
+		return
+	}
+
+	// Store the elements for rendering usage
+	def.Elements = model.Elements
+
+	// Infer physical properties from elements
+	// If ANY element is a full opaque cube, we consider the block solid.
+	isFullBlock := false
+	if len(model.Elements) > 0 {
+		epsilon := float32(0.001)
+		isZero := func(v [3]float32) bool {
+			return v[0] > -epsilon && v[0] < epsilon &&
+				v[1] > -epsilon && v[1] < epsilon &&
+				v[2] > -epsilon && v[2] < epsilon
+		}
+		isSixteen := func(v [3]float32) bool {
+			return v[0] > 16.0-epsilon && v[0] < 16.0+epsilon &&
+				v[1] > 16.0-epsilon && v[1] < 16.0+epsilon &&
+				v[2] > 16.0-epsilon && v[2] < 16.0+epsilon
+		}
+
+		for _, e := range model.Elements {
+			if isZero(e.From) && isSixteen(e.To) {
+				isFullBlock = true
+				break
+			}
+		}
+	} else if def.IsSolid {
+		// No elements parsed (maybe manual block?) but labeled IsSolid. Keep it.
+		isFullBlock = true
+	}
+
+	// If it's not a full block, force non-solid/transparent.
+	// But if it IS a full block (like Grass which has 1 full element + 1 overlay),
+	// we keep the IsSolid=true from registration.
+	if !isFullBlock {
+		def.IsSolid = false
+		def.IsTransparent = true
+	}
+
+	for _, elem := range model.Elements {
+		if face, ok := elem.Faces["up"]; ok {
+			def.TextureTop = resolveTextureName(face.Texture, model)
+		}
+		if face, ok := elem.Faces["down"]; ok {
+			def.TextureBot = resolveTextureName(face.Texture, model)
+		}
+
+		sideFaces := []string{"north", "south", "east", "west"}
+		for _, side := range sideFaces {
+			if face, ok := elem.Faces[side]; ok {
+				def.TextureSide = resolveTextureName(face.Texture, model)
+				if def.TextureSide != "" {
+					break
+				}
+			}
+		}
+
+		if def.TextureTop != "" && def.TextureBot != "" && def.TextureSide != "" {
+			break
+		}
+	}
+}
+
+func resolveTextureName(ref string, model *blockmodel.Model) string {
+	resolved := ModelLoader.ResolveTexture(ref, model)
+	base := filepath.Base(resolved)
+	if base == "." || base == "/" {
+		return ""
+	}
+	return base + ".png"
 }
 
 func registerTexture(name string) {
@@ -45,13 +164,14 @@ func registerTexture(name string) {
 }
 
 func InitRegistry() {
-	// Pre-register critical textures to ensure specific ID order
-	// This guarantees grass_top is ID 0, grass_side is ID 1, dirt is ID 2
+	cwd, _ := os.Getwd()
+	assetsDir := filepath.Join(cwd, "assets")
+	ModelLoader = blockmodel.NewLoader(assetsDir)
+
 	registerTexture("grass_top.png")
 	registerTexture("grass_side.png")
 	registerTexture("dirt.png")
 
-	// Air
 	RegisterBlock(&BlockDefinition{
 		ID:            world.BlockTypeAir,
 		Name:          "air",
@@ -59,116 +179,85 @@ func InitRegistry() {
 		IsTransparent: true,
 	})
 
-	// Grass
 	RegisterBlock(&BlockDefinition{
-		ID:          world.BlockTypeGrass,
-		Name:        "grass",
-		TextureTop:  "grass_top.png",
-		TextureSide: "grass_side.png",
-		TextureBot:  "dirt.png",
-		IsSolid:     true,
-		TintColor:   0x7DFF5C, // Grass Green
-		TintFaces:   map[world.BlockFace]bool{world.FaceTop: true},
-		Hardness:    0.6,
+		ID:        world.BlockTypeGrass,
+		Name:      "grass",
+		IsSolid:   true,
+		TintColor: 0x7DFF5C,
+		TintFaces: map[world.BlockFace]bool{world.FaceTop: true},
+		Hardness:  0.6,
 	})
 
-	// Dirt
 	RegisterBlock(&BlockDefinition{
-		ID:          world.BlockTypeDirt,
-		Name:        "dirt",
-		TextureTop:  "dirt.png",
-		TextureSide: "dirt.png",
-		TextureBot:  "dirt.png",
-		IsSolid:     true,
-		Hardness:    0.5,
+		ID:       world.BlockTypeDirt,
+		Name:     "dirt",
+		IsSolid:  true,
+		Hardness: 0.5,
 	})
 
 	// Stone
 	RegisterBlock(&BlockDefinition{
-		ID:          world.BlockTypeStone,
-		Name:        "stone",
-		TextureTop:  "stone.png",
-		TextureSide: "stone.png",
-		TextureBot:  "stone.png",
-		IsSolid:     true,
-		Hardness:    1.5,
+		ID:       world.BlockTypeStone,
+		Name:     "stone",
+		IsSolid:  true,
+		Hardness: 1.5,
 	})
 
 	// Bedrock
 	RegisterBlock(&BlockDefinition{
-		ID:          world.BlockTypeBedrock,
-		Name:        "bedrock",
-		TextureTop:  "bedrock.png",
-		TextureSide: "bedrock.png",
-		TextureBot:  "bedrock.png",
-		IsSolid:     true,
-		Hardness:    -1.0, // Unbreakable
+		ID:       world.BlockTypeBedrock,
+		Name:     "bedrock",
+		IsSolid:  true,
+		Hardness: -1.0, // Unbreakable
 	})
 
 	// Stone Brick
 	RegisterBlock(&BlockDefinition{
-		ID:          world.BlockTypeStoneBrick,
-		Name:        "stonebrick",
-		TextureTop:  "stonebrick.png",
-		TextureSide: "stonebrick.png",
-		TextureBot:  "stonebrick.png",
-		IsSolid:     true,
-		Hardness:    1.5,
+		ID:       world.BlockTypeStoneBrick,
+		Name:     "stonebrick",
+		IsSolid:  true,
+		Hardness: 1.5,
 	})
 
 	// Oak Planks
 	RegisterBlock(&BlockDefinition{
-		ID:          world.BlockTypePlanksOak,
-		Name:        "planks_oak",
-		TextureTop:  "planks_oak.png",
-		TextureSide: "planks_oak.png",
-		TextureBot:  "planks_oak.png",
-		IsSolid:     true,
-		Hardness:    2.0,
+		ID:       world.BlockTypePlanksOak,
+		Name:     "oak_planks", // Changed from "planks_oak" to match json?
+		IsSolid:  true,
+		Hardness: 2.0,
 	})
+	// ... need to fix naming for other planks too
 
 	// Birch Planks
 	RegisterBlock(&BlockDefinition{
-		ID:          world.BlockTypePlanksBirch,
-		Name:        "planks_birch",
-		TextureTop:  "planks_birch.png",
-		TextureSide: "planks_birch.png",
-		TextureBot:  "planks_birch.png",
-		IsSolid:     true,
-		Hardness:    2.0,
+		ID:       world.BlockTypePlanksBirch,
+		Name:     "birch_planks",
+		IsSolid:  true,
+		Hardness: 2.0,
 	})
 
 	// Spruce Planks
 	RegisterBlock(&BlockDefinition{
-		ID:          world.BlockTypePlanksSpruce,
-		Name:        "planks_spruce",
-		TextureTop:  "planks_spruce.png",
-		TextureSide: "planks_spruce.png",
-		TextureBot:  "planks_spruce.png",
-		IsSolid:     true,
-		Hardness:    2.0,
+		ID:       world.BlockTypePlanksSpruce,
+		Name:     "spruce_planks",
+		IsSolid:  true,
+		Hardness: 2.0,
 	})
 
 	// Jungle Planks
 	RegisterBlock(&BlockDefinition{
-		ID:          world.BlockTypePlanksJungle,
-		Name:        "planks_jungle",
-		TextureTop:  "planks_jungle.png",
-		TextureSide: "planks_jungle.png",
-		TextureBot:  "planks_jungle.png",
-		IsSolid:     true,
-		Hardness:    2.0,
+		ID:       world.BlockTypePlanksJungle,
+		Name:     "jungle_planks",
+		IsSolid:  true,
+		Hardness: 2.0,
 	})
 
 	// Acacia Planks
 	RegisterBlock(&BlockDefinition{
-		ID:          world.BlockTypePlanksAcacia,
-		Name:        "planks_acacia",
-		TextureTop:  "planks_acacia.png",
-		TextureSide: "planks_acacia.png",
-		TextureBot:  "planks_acacia.png",
-		IsSolid:     true,
-		Hardness:    2.0,
+		ID:       world.BlockTypePlanksAcacia,
+		Name:     "acacia_planks",
+		IsSolid:  true,
+		Hardness: 2.0,
 	})
 }
 

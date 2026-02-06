@@ -36,6 +36,7 @@ type Session struct {
 
 	Frames           int
 	LastFPSCheckTime time.Time
+	lastEviction     time.Time
 }
 
 func NewSession(window *glfw.Window, mode player.GameMode) (*Session, error) {
@@ -187,6 +188,18 @@ func (s *Session) processWorldUpdates() {
 		defer profiling.Track("blocks.ProcessMeshResults")()
 		blocks.ProcessMeshResults()
 	}()
+
+	// Periodic cleanup (every 1 second)
+	if time.Since(s.lastEviction) > time.Second {
+		func() {
+			defer profiling.Track("world.EvictFarChunks")()
+			// Use EvictRadius (e.g. 2x render distance) to avoid thrashing
+			evictRadius := config.GetChunkEvictRadius()
+			s.World.EvictFarChunks(s.Player.Position[0], s.Player.Position[2], evictRadius)
+			blocks.PruneMeshesByWorld(s.World, s.Player.Position[0], s.Player.Position[2], evictRadius)
+		}()
+		s.lastEviction = time.Now()
+	}
 }
 
 func (s *Session) handleInputActions(im *standardInput.InputManager) {

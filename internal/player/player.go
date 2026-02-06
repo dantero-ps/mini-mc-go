@@ -726,9 +726,9 @@ func (p *Player) UpdatePosition(dt float64, im *input.InputManager) {
 		}
 
 		// Horizontal friction in air is different
-		friction := float32(0.05) // Flying speed
+		friction := float32(1.05) // Flying speed
 		if p.IsSprinting {
-			friction *= 2.0
+			friction *= 1.0
 		}
 
 		applyMovement(strafe, forward, friction)
@@ -999,7 +999,7 @@ func (p *Player) Fall(distance float32, damageMultiplier float32) {
 	// TODO: Get jump boost effect amplifier if implemented
 	// if potionEffect != nil { jumpBoostReduction = float32(amplifier + 1) }
 
-	mcDistance := float64(distance)*0.82 + 0.6
+	mcDistance := float64(distance)*0.82 + 0.2
 	damage := int(math.Ceil((mcDistance - 3.0 - float64(jumpBoostReduction)) * float64(damageMultiplier)))
 
 	if damage > 0 {

@@ -1,0 +1,6 @@
+{
+    "parent": "block/test_cube",
+    "textures": {
+        "particle": "block/dirt"
+    }
+}
