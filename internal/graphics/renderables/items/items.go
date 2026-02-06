@@ -9,6 +9,7 @@ import (
 	"mini-mc/internal/item"
 	"mini-mc/internal/registry"
 	"mini-mc/internal/world"
+	"mini-mc/pkg/blockmodel"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
@@ -16,9 +17,9 @@ import (
 
 type Items struct {
 	shader *graphics.Shader
-	vao    uint32
-	vbo    uint32
-	cube   []float32
+
+	// Cache for generated item meshes
+	meshCache map[world.BlockType]*ItemMesh
 
 	// Viewport dimensions for GUI rendering
 	width  float32
@@ -27,8 +28,9 @@ type Items struct {
 
 func NewItems() *Items {
 	return &Items{
-		width:  900,
-		height: 600,
+		meshCache: make(map[world.BlockType]*ItemMesh),
+		width:     900,
+		height:    600,
 	}
 }
 
@@ -39,74 +41,40 @@ func (i *Items) Init() error {
 		return err
 	}
 
-	// Cube vertices ... (kept same)
-	vertices := []float32{
-		// Back face (North, -Z)
-		-0.5, -0.5, -0.5, 1.0, 1.0, 0.0, 0.0, -1.0,
-		0.5, 0.5, -0.5, 0.0, 0.0, 0.0, 0.0, -1.0,
-		0.5, -0.5, -0.5, 0.0, 1.0, 0.0, 0.0, -1.0,
-		0.5, 0.5, -0.5, 0.0, 0.0, 0.0, 0.0, -1.0,
-		-0.5, -0.5, -0.5, 1.0, 1.0, 0.0, 0.0, -1.0,
-		-0.5, 0.5, -0.5, 1.0, 0.0, 0.0, 0.0, -1.0,
+	// Generate meshes for all registered blocks/items
+	for bType, def := range registry.Blocks {
+		var elements []blockmodel.Element
 
-		// Front face (South, +Z)
-		-0.5, -0.5, 0.5, 0.0, 1.0, 0.0, 0.0, 1.0,
-		0.5, -0.5, 0.5, 1.0, 1.0, 0.0, 0.0, 1.0,
-		0.5, 0.5, 0.5, 1.0, 0.0, 0.0, 0.0, 1.0,
-		0.5, 0.5, 0.5, 1.0, 0.0, 0.0, 0.0, 1.0,
-		-0.5, 0.5, 0.5, 0.0, 0.0, 0.0, 0.0, 1.0,
-		-0.5, -0.5, 0.5, 0.0, 1.0, 0.0, 0.0, 1.0,
+		// 1. Try to load specific item model first
+		// This handles cases where item looks different than block (e.g. saplings, flats)
+		// registry.ModelLoader is available.
+		itemModelName := def.Name
 
-		// Left face (West, -X)
-		-0.5, 0.5, 0.5, 1.0, 0.0, -1.0, 0.0, 0.0,
-		-0.5, 0.5, -0.5, 0.0, 0.0, -1.0, 0.0, 0.0,
-		-0.5, -0.5, -0.5, 0.0, 1.0, -1.0, 0.0, 0.0,
-		-0.5, -0.5, -0.5, 0.0, 1.0, -1.0, 0.0, 0.0,
-		-0.5, -0.5, 0.5, 1.0, 1.0, -1.0, 0.0, 0.0,
-		-0.5, 0.5, 0.5, 1.0, 0.0, -1.0, 0.0, 0.0,
+		// Determine if we should check for item model?
+		// registry.ModelLoader.LoadItemModel will look for "item/<name>"
+		model, err := registry.ModelLoader.LoadItemModel(itemModelName)
 
-		// Right face (East, +X)
-		0.5, 0.5, 0.5, 0.0, 0.0, 1.0, 0.0, 0.0,
-		0.5, -0.5, -0.5, 1.0, 1.0, 1.0, 0.0, 0.0,
-		0.5, 0.5, -0.5, 1.0, 0.0, 1.0, 0.0, 0.0,
-		0.5, -0.5, -0.5, 1.0, 1.0, 1.0, 0.0, 0.0,
-		0.5, 0.5, 0.5, 0.0, 0.0, 1.0, 0.0, 0.0,
-		0.5, -0.5, 0.5, 0.0, 1.0, 1.0, 0.0, 0.0,
+		// Using the loaded model's elements if found
+		if err == nil && len(model.Elements) > 0 {
+			elements = model.Elements
+		} else {
+			// Fallback: Use the block definition's elements (which were loaded from block model)
+			elements = def.Elements
+		}
 
-		// Bottom face (-Y)
-		-0.5, -0.5, -0.5, 0.0, 0.0, 0.0, -1.0, 0.0,
-		0.5, -0.5, -0.5, 1.0, 0.0, 0.0, -1.0, 0.0,
-		0.5, -0.5, 0.5, 1.0, 1.0, 0.0, -1.0, 0.0,
-		0.5, -0.5, 0.5, 1.0, 1.0, 0.0, -1.0, 0.0,
-		-0.5, -0.5, 0.5, 0.0, 1.0, 0.0, -1.0, 0.0,
-		-0.5, -0.5, -0.5, 0.0, 0.0, 0.0, -1.0, 0.0,
+		// Skip if no elements (e.g. Air)
+		if len(elements) == 0 {
+			continue
+		}
 
-		// Top face (+Y)
-		-0.5, 0.5, -0.5, 0.0, 1.0, 0.0, 1.0, 0.0,
-		0.5, 0.5, 0.5, 1.0, 0.0, 0.0, 1.0, 0.0,
-		0.5, 0.5, -0.5, 1.0, 1.0, 0.0, 1.0, 0.0,
-		0.5, 0.5, 0.5, 1.0, 0.0, 0.0, 1.0, 0.0,
-		-0.5, 0.5, -0.5, 0.0, 1.0, 0.0, 1.0, 0.0,
-		-0.5, 0.5, 0.5, 0.0, 0.0, 0.0, 1.0, 0.0,
+		mesh, err := BuildItemMesh(elements)
+		if err != nil {
+			// fmt.Printf("Failed to build mesh for %s: %v\n", def.Name, err)
+			continue
+		}
+
+		i.meshCache[bType] = mesh
 	}
-	i.cube = vertices
-
-	gl.GenVertexArrays(1, &i.vao)
-	gl.GenBuffers(1, &i.vbo)
-
-	gl.BindVertexArray(i.vao)
-	gl.BindBuffer(gl.ARRAY_BUFFER, i.vbo)
-	gl.BufferData(gl.ARRAY_BUFFER, len(vertices)*4, gl.Ptr(vertices), gl.STATIC_DRAW)
-
-	// Pos
-	gl.EnableVertexAttribArray(0)
-	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, 8*4, gl.PtrOffset(0))
-	// UV
-	gl.EnableVertexAttribArray(1)
-	gl.VertexAttribPointer(1, 2, gl.FLOAT, false, 8*4, gl.PtrOffset(3*4))
-	// Normal
-	gl.EnableVertexAttribArray(2)
-	gl.VertexAttribPointer(2, 3, gl.FLOAT, false, 8*4, gl.PtrOffset(5*4))
 
 	return nil
 }
@@ -127,11 +95,17 @@ func (i *Items) Render(ctx renderer.RenderContext) {
 		i.shader.SetInt("textureArray", 0)
 	}
 
-	gl.BindVertexArray(i.vao)
+	gl.BindVertexArray(0)
 
 	for _, ent := range ctx.World.Entities {
 		itemEnt, ok := ent.(*entity.ItemEntity)
 		if !ok {
+			continue
+		}
+
+		// Check if we have a mesh for this item
+		mesh, exists := i.meshCache[itemEnt.Stack.Type]
+		if !exists || mesh == nil {
 			continue
 		}
 
@@ -150,9 +124,12 @@ func (i *Items) Render(ctx renderer.RenderContext) {
 		// Scale (0.25 size block)
 		model = model.Mul4(mgl32.Scale3D(0.25, 0.25, 0.25))
 
+		// Center the mesh (0..1 -> -0.5..0.5)
+		model = model.Mul4(mgl32.Translate3D(-0.5, -0.5, -0.5))
+
 		i.shader.SetMatrix4("model", &model[0])
 
-		i.drawBlock(itemEnt.Stack.Type)
+		i.drawBlock(itemEnt.Stack.Type, mesh)
 	}
 }
 
@@ -181,7 +158,10 @@ func (i *Items) RenderGUI(stack *item.ItemStack, x, y, size float32) {
 		i.shader.SetInt("textureArray", 0)
 	}
 
-	gl.BindVertexArray(i.vao)
+	mesh, exists := i.meshCache[stack.Type]
+	if !exists || mesh == nil {
+		return
+	}
 
 	// Model matrix for positioning
 	// 1. Scale to size
@@ -207,9 +187,12 @@ func (i *Items) RenderGUI(stack *item.ItemStack, x, y, size float32) {
 	model = model.Mul4(mgl32.HomogRotate3DX(mgl32.DegToRad(30)))
 	model = model.Mul4(mgl32.HomogRotate3DY(mgl32.DegToRad(45)))
 
+	// Center mesh
+	model = model.Mul4(mgl32.Translate3D(-0.5, -0.5, -0.5))
+
 	i.shader.SetMatrix4("model", &model[0])
 
-	i.drawBlock(stack.Type)
+	i.drawBlock(stack.Type, mesh)
 
 	gl.BindVertexArray(0)
 }
@@ -235,40 +218,34 @@ func (i *Items) RenderHand(stack *item.ItemStack, proj mgl32.Mat4, model mgl32.M
 		i.shader.SetInt("textureArray", 0)
 	}
 
-	gl.BindVertexArray(i.vao)
-	i.drawBlock(stack.Type)
+	mesh, exists := i.meshCache[stack.Type]
+	if !exists || mesh == nil {
+		return
+	}
+
+	// Center mesh mismatch adjustment
+	model = model.Mul4(mgl32.Translate3D(-0.5, -0.5, -0.5))
+	i.shader.SetMatrix4("model", &model[0])
+
+	i.drawBlock(stack.Type, mesh)
 	gl.BindVertexArray(0)
 }
 
-func (i *Items) drawBlock(blockType world.BlockType) {
-	// Draw each face with correct texture
+func (i *Items) drawBlock(blockType world.BlockType, mesh *ItemMesh) {
+	// Set tint color for the whole item
+	// Individual faces will apply it based on TintIndex attribute
 	def, hasDef := registry.Blocks[blockType]
 
-	faces := []world.BlockFace{
-		world.FaceNorth,
-		world.FaceSouth,
-		world.FaceWest,
-		world.FaceEast,
-		world.FaceBottom,
-		world.FaceTop,
+	r, g, b := float32(1.0), float32(1.0), float32(1.0)
+	if hasDef && def.TintColor != 0 {
+		r = float32((def.TintColor>>16)&0xFF) / 255.0
+		g = float32((def.TintColor>>8)&0xFF) / 255.0
+		b = float32(def.TintColor&0xFF) / 255.0
 	}
+	i.shader.SetVector3("tintColor", r, g, b)
 
-	for fIdx, face := range faces {
-		texID := registry.GetTextureLayer(blockType, face)
-		i.shader.SetInt("textureID", int32(texID))
-
-		r, g, b := float32(1.0), float32(1.0), float32(1.0)
-		if hasDef && def.TintColor != 0 {
-			if def.TintFaces[face] {
-				r = float32((def.TintColor>>16)&0xFF) / 255.0
-				g = float32((def.TintColor>>8)&0xFF) / 255.0
-				b = float32(def.TintColor&0xFF) / 255.0
-			}
-		}
-		i.shader.SetVector3("tintColor", r, g, b)
-
-		gl.DrawArrays(gl.TRIANGLES, int32(fIdx*6), 6)
-	}
+	gl.BindVertexArray(mesh.VAO)
+	gl.DrawArrays(gl.TRIANGLES, 0, mesh.VertexCount)
 }
 
 // SetViewport updates the items renderer viewport dimensions for GUI rendering
@@ -278,6 +255,9 @@ func (i *Items) SetViewport(width, height int) {
 }
 
 func (i *Items) Dispose() {
-	gl.DeleteVertexArrays(1, &i.vao)
-	gl.DeleteBuffers(1, &i.vbo)
+	for _, mesh := range i.meshCache {
+		gl.DeleteVertexArrays(1, &mesh.VAO)
+		gl.DeleteBuffers(1, &mesh.VBO)
+	}
+	i.meshCache = nil
 }

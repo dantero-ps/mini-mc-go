@@ -120,26 +120,39 @@ func loadTexturesFromModel(def *BlockDefinition) {
 		def.IsTransparent = true
 	}
 
+	// Scan ALL elements to register referenced textures and identify main faces
 	for _, elem := range model.Elements {
-		if face, ok := elem.Faces["up"]; ok {
-			def.TextureTop = resolveTextureName(face.Texture, model)
-		}
-		if face, ok := elem.Faces["down"]; ok {
-			def.TextureBot = resolveTextureName(face.Texture, model)
-		}
-
-		sideFaces := []string{"north", "south", "east", "west"}
-		for _, side := range sideFaces {
-			if face, ok := elem.Faces[side]; ok {
-				def.TextureSide = resolveTextureName(face.Texture, model)
-				if def.TextureSide != "" {
-					break
-				}
+		// 1. Register ALL textures used by this element
+		for _, face := range elem.Faces {
+			texName := resolveTextureName(face.Texture, model)
+			if texName != "" {
+				registerTexture(texName)
 			}
 		}
 
-		if def.TextureTop != "" && def.TextureBot != "" && def.TextureSide != "" {
-			break
+		// 2. Identify representative textures for struct fields (if not already set)
+		if def.TextureTop == "" {
+			if face, ok := elem.Faces["up"]; ok {
+				def.TextureTop = resolveTextureName(face.Texture, model)
+			}
+		}
+		if def.TextureBot == "" {
+			if face, ok := elem.Faces["down"]; ok {
+				def.TextureBot = resolveTextureName(face.Texture, model)
+			}
+		}
+
+		// For side, try to match any side face
+		if def.TextureSide == "" {
+			sideFaces := []string{"north", "south", "east", "west"}
+			for _, side := range sideFaces {
+				if face, ok := elem.Faces[side]; ok {
+					def.TextureSide = resolveTextureName(face.Texture, model)
+					if def.TextureSide != "" {
+						break
+					}
+				}
+			}
 		}
 	}
 }
@@ -167,10 +180,6 @@ func InitRegistry() {
 	cwd, _ := os.Getwd()
 	assetsDir := filepath.Join(cwd, "assets")
 	ModelLoader = blockmodel.NewLoader(assetsDir)
-
-	registerTexture("grass_top.png")
-	registerTexture("grass_side.png")
-	registerTexture("dirt.png")
 
 	RegisterBlock(&BlockDefinition{
 		ID:            world.BlockTypeAir,
