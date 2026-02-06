@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -59,9 +60,18 @@ func (l *Loader) LoadModel(name string) (*Model, error) {
 		if len(model.Elements) == 0 {
 			model.Elements = parent.Elements
 		}
+		if model.Textures == nil {
+			model.Textures = make(map[string]string)
+		}
 		for key, val := range parent.Textures {
 			if _, ok := model.Textures[key]; !ok {
 				model.Textures[key] = val
+			}
+		}
+		if len(model.Display) == 0 && len(parent.Display) > 0 {
+			model.Display = make(map[string]Display)
+			for key, val := range parent.Display {
+				model.Display[key] = val
 			}
 		}
 	}
@@ -69,6 +79,15 @@ func (l *Loader) LoadModel(name string) (*Model, error) {
 	l.resolveTextures(&model)
 	l.modelCache[name] = &model
 	return &model, nil
+}
+
+// LoadItemModel loads an item model from the item models directory
+func (l *Loader) LoadItemModel(name string) (*Model, error) {
+	if !strings.Contains(name, "/") {
+		name = "item/" + name
+	}
+
+	return l.LoadModel(name)
 }
 
 func (l *Loader) resolveTextures(m *Model) {
@@ -99,7 +118,7 @@ func (l *Loader) ResolveTexture(textureName string, m *Model) string {
 func (l *Loader) LoadBlockState(name string) (*BlockState, error) {
 	path := filepath.Join(l.assetsPath, "blockstates", name+".json")
 
-	data, err := ioutil.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("could not read blockstate file: %w", err)
 	}
