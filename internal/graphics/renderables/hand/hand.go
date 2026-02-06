@@ -153,6 +153,7 @@ func (h *Hand) renderHand(p *player.Player, dt float64, camera *graphics.Camera)
 	if p.EquippedItem != nil && h.items != nil {
 		itemModel := mgl32.Ident4()
 		itemModel = h.setupViewBobbing(p, itemModel, dt)
+		itemModel = h.setupHandSway(p, itemModel, dt)
 
 		// Item used transformations (bobbing during swing)
 		itemModel = itemModel.Mul4(mgl32.Translate3D(isX, isY, isZ))
@@ -174,6 +175,7 @@ func (h *Hand) renderHand(p *player.Player, dt float64, camera *graphics.Camera)
 	} else { // Show hand even when sneaking
 		model := mgl32.Ident4()
 		model = h.setupViewBobbing(p, model, dt)
+		model = h.setupHandSway(p, model, dt)
 		model = model.Mul4(mgl32.Translate3D(asX, asY, asZ))
 
 		// Hand position/rotation (renderPlayerArm)
@@ -231,6 +233,21 @@ func (h *Hand) setupViewBobbing(p *player.Player, model mgl32.Mat4, dt float64) 
 
 	angX2 := float32(f3) * float32(deg2rad) / 15
 	model = model.Mul4(mgl32.HomogRotate3D(angX2, mgl32.Vec3{1, 0, 0}))
+
+	return model
+}
+
+func (h *Hand) setupHandSway(p *player.Player, model mgl32.Mat4, dt float64) mgl32.Mat4 {
+	interpPitch := p.PrevRenderArmPitch + (p.RenderArmPitch-p.PrevRenderArmPitch)*float32(dt)
+	interpYaw := p.PrevRenderArmYaw + (p.RenderArmYaw-p.PrevRenderArmYaw)*float32(dt)
+
+	// Minecraft uses rotationPitch/Yaw - interp
+	// (entityplayerspIn.rotationPitch - f) * 0.1F
+	swayPitch := (float32(p.CamPitch) - interpPitch) * 0.1
+	swayYaw := (float32(p.CamYaw) - interpYaw) * 0.1
+
+	model = model.Mul4(mgl32.HomogRotate3DX(mgl32.DegToRad(swayPitch)))
+	model = model.Mul4(mgl32.HomogRotate3DY(mgl32.DegToRad(swayYaw)))
 
 	return model
 }

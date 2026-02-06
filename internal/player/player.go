@@ -81,6 +81,12 @@ type Player struct {
 	PrevCameraPitch float32
 	CameraPitch     float32
 
+	// Render arm sway (sway when turning head)
+	PrevRenderArmYaw   float32
+	RenderArmYaw       float32
+	PrevRenderArmPitch float32
+	RenderArmPitch     float32
+
 	// Interaction
 	HoveredBlock    [3]int
 	HasHoveredBlock bool
@@ -152,6 +158,10 @@ func New(world *world.World, mode GameMode) *Player {
 		CameraYaw:            0,
 		PrevCameraPitch:      0,
 		CameraPitch:          0,
+		PrevRenderArmYaw:     0,
+		RenderArmYaw:         0,
+		PrevRenderArmPitch:   0,
+		RenderArmPitch:       0,
 		Health:               20.0,
 		MaxHealth:            20.0,
 		FoodLevel:            20.0,
@@ -401,6 +411,9 @@ func (p *Player) Update(dt float64, im *input.InputManager) {
 	} else {
 		p.HandSwingProgress = 0
 	}
+
+	// Update render arm sway
+	p.UpdateRenderArm(dt)
 }
 
 func (p *Player) ResetMining() {
@@ -1089,6 +1102,22 @@ func (p *Player) UpdateCameraBob() {
 	// Smooth interpolation towards target values (Minecraft uses 0.4F and 0.8F)
 	p.CameraYaw += (f - p.CameraYaw) * 0.03
 	p.CameraPitch += (f1 - p.CameraPitch) * 0.1
+}
+
+// UpdateRenderArm updates renderArmYaw and renderArmPitch for hand sway animation
+func (p *Player) UpdateRenderArm(dt float64) {
+	p.PrevRenderArmYaw = p.RenderArmYaw
+	p.PrevRenderArmPitch = p.RenderArmPitch
+
+	// To soften the sway loop, we use a slower decay than the perfect MC (13.86)
+	// Using 10.0 makes the arm lag a bit more behind, creating a smoother/softer sway.
+	// If it's too laggy, we increase this.
+	// Formula: Current += (Target - Current) * (1 - exp(-speed * dt))
+	decaySpeed := 25.0
+	factor := float32(1.0 - math.Exp(-decaySpeed*dt))
+
+	p.RenderArmPitch += (float32(p.CamPitch) - p.RenderArmPitch) * factor
+	p.RenderArmYaw += (float32(p.CamYaw) - p.RenderArmYaw) * factor
 }
 
 func (p *Player) GetFrontVector() mgl32.Vec3 {
