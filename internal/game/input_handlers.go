@@ -31,7 +31,7 @@ func SetupInputHandlers(app *App) {
 			if s.Player.IsInventoryOpen {
 				s.HUDRenderer.HandleInventoryClick(s.Player, s.Player.MouseX, s.Player.MouseY, button, action)
 			} else {
-				s.Player.HandleMouseButton(button, action, mods)
+				s.Player.HandleMouseButton(button, action)
 			}
 		}
 	})
@@ -40,7 +40,7 @@ func SetupInputHandlers(app *App) {
 		if app.session != nil && !app.session.Paused {
 			s := app.session
 			if !s.Player.IsInventoryOpen {
-				s.Player.HandleScroll(w, xoff, yoff)
+				s.Player.HandleScroll(yoff)
 			}
 		}
 	})

@@ -170,6 +170,8 @@ func (s *Session) SetPaused(paused bool) {
 	s.Paused = paused
 	if s.Paused {
 		s.Window.SetInputMode(glfw.CursorMode, glfw.CursorNormal)
+		w, h := s.Window.GetSize()
+		s.Window.SetCursorPos(float64(w)/2, float64(h)/2)
 	} else {
 		s.Window.SetInputMode(glfw.CursorMode, glfw.CursorDisabled)
 		s.Player.FirstMouse = true

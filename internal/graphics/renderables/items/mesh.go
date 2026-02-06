@@ -88,10 +88,29 @@ func BuildItemMesh(elements []blockmodel.Element) (*ItemMesh, error) {
 			// Normal
 			var nx, ny, nz float32
 
-			// UVs: Minecraft default is usually based on position. blockmodel loader might provide default UVs?
-			// If face.UV is all 0, we should infer. But usually loader or JSON has it.
-			// faceDef.UV is [4]float32 {x1, y1, x2, y2}
-			u1, v1, u2, v2 := faceDef.UV[0]/16.0, faceDef.UV[1]/16.0, faceDef.UV[2]/16.0, faceDef.UV[3]/16.0
+			// 2. Identify representative textures for struct fields (if not already set)
+			// u1, v1, u2, v2 := faceDef.UV[0]/16.0, faceDef.UV[1]/16.0, faceDef.UV[2]/16.0, faceDef.UV[3]/16.0
+			uvs := faceDef.UV
+			if uvs[0] == 0 && uvs[1] == 0 && uvs[2] == 0 && uvs[3] == 0 {
+				// Default UVs based on Minecraft box mapping
+				switch faceName {
+				case "north": // -Z
+					uvs = [4]float32{16 - el.To[0], 16 - el.To[1], 16 - el.From[0], 16 - el.From[1]}
+				case "south": // +Z
+					uvs = [4]float32{el.From[0], 16 - el.To[1], el.To[0], 16 - el.From[1]}
+				case "west": // -X
+					uvs = [4]float32{el.From[2], 16 - el.To[1], el.To[2], 16 - el.From[1]}
+				case "east": // +X
+					uvs = [4]float32{16 - el.To[2], 16 - el.To[1], 16 - el.From[2], 16 - el.From[1]}
+				case "up": // +Y
+					uvs = [4]float32{el.From[0], el.From[2], el.To[0], el.To[2]}
+				case "down": // -Y
+					uvs = [4]float32{el.From[0], 16 - el.To[2], el.To[0], 16 - el.From[2]}
+				default:
+					uvs = [4]float32{0, 0, 16, 16}
+				}
+			}
+			u1, v1, u2, v2 := uvs[0]/16.0, uvs[1]/16.0, uvs[2]/16.0, uvs[3]/16.0
 
 			switch faceName {
 			case "north": // -Z

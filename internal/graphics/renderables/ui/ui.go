@@ -16,9 +16,8 @@ const (
 )
 
 var (
-	UIVertShader = filepath.Join(ShadersDir, "ui.vert")
-	UIFragShader = filepath.Join(ShadersDir, "ui.frag")
-	// Textured UI shaders
+	VertShader      = filepath.Join(ShadersDir, "ui.vert")
+	FragShader      = filepath.Join(ShadersDir, "ui.frag")
 	TexUIVertShader = filepath.Join(ShadersDir, "textured_ui.vert")
 	TexUIFragShader = filepath.Join(ShadersDir, "textured_ui.frag")
 )
@@ -95,7 +94,7 @@ func NewUI() *UI {
 func (u *UI) Init() error {
 	// Create flat color shader
 	var err error
-	u.shader, err = graphics.NewShader(UIVertShader, UIFragShader)
+	u.shader, err = graphics.NewShader(VertShader, FragShader)
 	if err != nil {
 		return err
 	}

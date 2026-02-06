@@ -191,7 +191,7 @@ func (p *Player) HandleMouseMovement(w *glfw.Window, xpos, ypos float64) {
 	}
 }
 
-func (p *Player) HandleMouseButton(button glfw.MouseButton, action glfw.Action, mods glfw.ModifierKey) {
+func (p *Player) HandleMouseButton(button glfw.MouseButton, action glfw.Action) {
 	if action == glfw.Press && p.HasHoveredBlock {
 		if button == glfw.MouseButtonLeft {
 			// Left click logic moved to Update for continuous breaking
@@ -231,7 +231,7 @@ func (p *Player) HandleMouseButton(button glfw.MouseButton, action glfw.Action, 
 	}
 }
 
-func (p *Player) HandleScroll(w *glfw.Window, xoff, yoff float64) {
+func (p *Player) HandleScroll(yoff float64) {
 	// Scroll to change inventory slot
 	// yoff > 0 is up, yoff < 0 is down
 	if yoff > 0 {
