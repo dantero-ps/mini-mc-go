@@ -29,6 +29,7 @@ type Hand struct {
 	vbo         uint32
 	vertexCount int32
 	items       *items.Items
+	texture     uint32
 }
 
 // NewHand creates a new hand renderable
@@ -49,6 +50,14 @@ func (h *Hand) Init() error {
 
 	// Setup VAO and VBO
 	h.setupHandVAO()
+
+	// Load skin texture
+	var dpth int
+	h.texture, _, dpth, err = graphics.LoadTexture("assets/textures/entity/steve.png")
+	if err != nil {
+		return err
+	}
+	_ = dpth
 
 	return nil
 }
@@ -78,35 +87,102 @@ func (h *Hand) SetViewport(width, height int) {
 
 // setupHandVAO creates a simple rectangular prism to represent the right arm
 func (h *Hand) setupHandVAO() {
-	l, rgt := float32(-2), float32(2)
-	b, top := float32(-2), float32(10)
-	bk, ft := float32(-2), float32(2)
+	// Minecraft Steve Right Arm Geometry
+	// Box Dimensions: 4x12x4
+	// Origin (Bottom-Top-Right corner of box relative to pivot?):
+	// MC uses: addBox(-3, -2, -2, 4, 12, 4)
+	// X: -3 to 1
+	// Y: -2 to 10
+	// Z: -2 to 2
 
-	// pos only (no normals) to keep shader minimal
+	// Pivot point: (-5, 2, 0)
+	// The Pivot translation is applied by ModelRenderer before drawing.
+	// Since we want our Model matrix to match the one in ItemRenderer (before renderRightArm),
+	// we must bake the Pivot translation AND the Global Scale (0.0625) into the vertices.
+
+	scale := float32(0.0625)
+	pX, pY, pZ := float32(-5.0), float32(2.0), float32(0.0)
+
+	// Box coordinates
+	x1, y1, z1 := float32(-3.0), float32(-2.0), float32(-2.0)
+	x2, y2, z2 := float32(1.0), float32(10.0), float32(2.0)
+
+	// Bake transform: v_final = (v_box + pivot) * scale
+	l := (x1 + pX) * scale
+	rgt := (x2 + pX) * scale
+
+	b := (y1 + pY) * scale
+	top := (y2 + pY) * scale
+
+	bk := (z1 + pZ) * scale
+	ft := (z2 + pZ) * scale
+
+	// UV Mapping (Steve Skin - 64x64)
+	s := float32(1.0 / 64.0)
+	uOut1, uOut2 := 40*s, 44*s
+	uFr1, uFr2 := 44*s, 48*s
+	uIn1, uIn2 := 48*s, 52*s
+	uBk1, uBk2 := 52*s, 56*s
+	uTop1, uTop2 := 44*s, 48*s
+	uBot1, uBot2 := 48*s, 52*s
+
+	// V coordinates (Swapped to fix vertical inversion)
+	vTop1, vTop2 := 20*s, 16*s
+	vBody1, vBody2 := 32*s, 20*s
+
+	// Note on Face Orientation:
+	// We map "Front" UV to +Z geometry.
+	// We map "Right" UV (Outside) to +X geometry (rgt).
+	// We map "Left" UV (Inside) to -X geometry (l).
+
 	vertexData := []float32{
-		// Front face - normal: (0,0,1)
-		l, b, ft, 0, 0, 1, rgt, b, ft, 0, 0, 1, rgt, top, ft, 0, 0, 1,
-		rgt, top, ft, 0, 0, 1, l, top, ft, 0, 0, 1, l, b, ft, 0, 0, 1,
+		// Front face (+Z) - normal: (0,0,1)
+		l, b, ft, 0, 0, 1, uFr2, vBody2,
+		rgt, b, ft, 0, 0, 1, uFr1, vBody2,
+		rgt, top, ft, 0, 0, 1, uFr1, vBody1,
+		rgt, top, ft, 0, 0, 1, uFr1, vBody1,
+		l, top, ft, 0, 0, 1, uFr2, vBody1,
+		l, b, ft, 0, 0, 1, uFr2, vBody2,
 
-		// Back face - normal: (0,0,-1)
-		rgt, b, bk, 0, 0, -1, l, b, bk, 0, 0, -1, l, top, bk, 0, 0, -1,
-		l, top, bk, 0, 0, -1, rgt, top, bk, 0, 0, -1, rgt, b, bk, 0, 0, -1,
+		// Back face (-Z) - normal: (0,0,-1)
+		rgt, b, bk, 0, 0, -1, uBk2, vBody2,
+		l, b, bk, 0, 0, -1, uBk1, vBody2,
+		l, top, bk, 0, 0, -1, uBk1, vBody1,
+		l, top, bk, 0, 0, -1, uBk1, vBody1,
+		rgt, top, bk, 0, 0, -1, uBk2, vBody1,
+		rgt, b, bk, 0, 0, -1, uBk2, vBody2,
 
-		// Left face - normal: (-1,0,0)
-		l, b, bk, -1, 0, 0, l, b, ft, -1, 0, 0, l, top, ft, -1, 0, 0,
-		l, top, ft, -1, 0, 0, l, top, bk, -1, 0, 0, l, b, bk, -1, 0, 0,
+		// Left face (-X) (Inside) - normal: (-1,0,0)
+		l, b, bk, -1, 0, 0, uIn2, vBody2,
+		l, b, ft, -1, 0, 0, uIn1, vBody2,
+		l, top, ft, -1, 0, 0, uIn1, vBody1,
+		l, top, ft, -1, 0, 0, uIn1, vBody1,
+		l, top, bk, -1, 0, 0, uIn2, vBody1,
+		l, b, bk, -1, 0, 0, uIn2, vBody2,
 
-		// Right face - normal: (1,0,0)
-		rgt, b, ft, 1, 0, 0, rgt, b, bk, 1, 0, 0, rgt, top, bk, 1, 0, 0,
-		rgt, top, bk, 1, 0, 0, rgt, top, ft, 1, 0, 0, rgt, b, ft, 1, 0, 0,
+		// Right face (+X) (Outside) - normal: (1,0,0)
+		rgt, b, ft, 1, 0, 0, uOut2, vBody2,
+		rgt, b, bk, 1, 0, 0, uOut1, vBody2,
+		rgt, top, bk, 1, 0, 0, uOut1, vBody1,
+		rgt, top, bk, 1, 0, 0, uOut1, vBody1,
+		rgt, top, ft, 1, 0, 0, uOut2, vBody1,
+		rgt, b, ft, 1, 0, 0, uOut2, vBody2,
 
-		// Top face - normal: (0,1,0)
-		l, top, ft, 0, 1, 0, rgt, top, ft, 0, 1, 0, rgt, top, bk, 0, 1, 0,
-		rgt, top, bk, 0, 1, 0, l, top, bk, 0, 1, 0, l, top, ft, 0, 1, 0,
+		// Top face (+Y) - normal: (0,1,0)
+		l, top, ft, 0, 1, 0, uTop1, vTop2,
+		rgt, top, ft, 0, 1, 0, uTop2, vTop2,
+		rgt, top, bk, 0, 1, 0, uTop2, vTop1,
+		rgt, top, bk, 0, 1, 0, uTop2, vTop1,
+		l, top, bk, 0, 1, 0, uTop1, vTop1,
+		l, top, ft, 0, 1, 0, uTop1, vTop2,
 
-		// Bottom face - normal: (0,-1,0)
-		l, b, bk, 0, -1, 0, rgt, b, bk, 0, -1, 0, rgt, b, ft, 0, -1, 0,
-		rgt, b, ft, 0, -1, 0, l, b, ft, 0, -1, 0, l, b, bk, 0, -1, 0,
+		// Bottom face (-Y) - normal: (0,-1,0)
+		l, b, bk, 0, -1, 0, uBot1, vTop1,
+		rgt, b, bk, 0, -1, 0, uBot2, vTop1,
+		rgt, b, ft, 0, -1, 0, uBot2, vTop2,
+		rgt, b, ft, 0, -1, 0, uBot2, vTop2,
+		l, b, ft, 0, -1, 0, uBot1, vTop2,
+		l, b, bk, 0, -1, 0, uBot1, vTop1,
 	}
 
 	gl.GenVertexArrays(1, &h.vao)
@@ -117,20 +193,26 @@ func (h *Hand) setupHandVAO() {
 
 	// Position attribute (location = 0)
 	gl.EnableVertexAttribArray(0)
-	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, 6*4, gl.PtrOffset(0))
+	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, 8*4, gl.PtrOffset(0))
 
 	// Normal attribute (location = 1)
 	gl.EnableVertexAttribArray(1)
-	gl.VertexAttribPointer(1, 3, gl.FLOAT, false, 6*4, gl.PtrOffset(3*4))
+	gl.VertexAttribPointer(1, 3, gl.FLOAT, false, 8*4, gl.PtrOffset(3*4))
+
+	// TexCoord attribute (location = 2)
+	gl.EnableVertexAttribArray(2)
+	gl.VertexAttribPointer(2, 2, gl.FLOAT, false, 8*4, gl.PtrOffset(6*4))
 
 	gl.BindBuffer(gl.ARRAY_BUFFER, 0)
 	gl.BindVertexArray(0)
-	h.vertexCount = int32(len(vertexData) / 6)
+	h.vertexCount = int32(len(vertexData) / 8)
 }
 
 func (h *Hand) renderHand(p *player.Player, dt float64, camera *graphics.Camera) {
 	gl.Clear(gl.DEPTH_BUFFER_BIT)
-	proj := mgl32.Perspective(mgl32.DegToRad(camera.FOV), camera.AspectRatio, camera.NearPlane, camera.FarPlane)
+	// Minecraft uses a fixed 70.0 FOV for hand rendering, ignoring game settings.
+	// It also uses 0.05 for near plane.
+	proj := mgl32.Perspective(mgl32.DegToRad(70.0), camera.AspectRatio, 0.05, camera.FarPlane)
 
 	swing := p.GetHandSwingProgress()
 	equip := p.GetHandEquipProgress()
@@ -179,7 +261,7 @@ func (h *Hand) renderHand(p *player.Player, dt float64, camera *graphics.Camera)
 		model = model.Mul4(mgl32.Translate3D(asX, asY, asZ))
 
 		// Hand position/rotation (renderPlayerArm)
-		model = model.Mul4(mgl32.Translate3D(0.64000005, -0.3, -0.72))
+		model = model.Mul4(mgl32.Translate3D(0.64000005, -0.6, -0.72))
 		model = model.Mul4(mgl32.Translate3D(0.0, (1.0-equip)*-0.6, 0.0))
 		model = model.Mul4(mgl32.HomogRotate3DY(mgl32.DegToRad(45.0)))
 
@@ -193,7 +275,6 @@ func (h *Hand) renderHand(p *player.Player, dt float64, camera *graphics.Camera)
 		model = model.Mul4(mgl32.HomogRotate3DX(mgl32.DegToRad(200.0)))
 		model = model.Mul4(mgl32.HomogRotate3DY(mgl32.DegToRad(-135.0)))
 		model = model.Mul4(mgl32.Translate3D(5.6, 0.0, 0.0))
-		model = model.Mul4(mgl32.Scale3D(0.0625, 0.0625, 0.0625))
 
 		h.shader.Use()
 		h.shader.SetMatrix4("proj", &proj[0])
@@ -204,6 +285,10 @@ func (h *Hand) renderHand(p *player.Player, dt float64, camera *graphics.Camera)
 
 		viewPos := mgl32.Vec3{0, 50, 0}
 		h.shader.SetVector3("viewPos", viewPos.X(), viewPos.Y(), viewPos.Z())
+
+		gl.ActiveTexture(gl.TEXTURE0)
+		gl.BindTexture(gl.TEXTURE_2D, h.texture)
+		h.shader.SetInt("skinTexture", 0)
 
 		gl.Disable(gl.CULL_FACE)
 		gl.BindVertexArray(h.vao)

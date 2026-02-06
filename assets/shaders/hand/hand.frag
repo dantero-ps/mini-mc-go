@@ -1,17 +1,22 @@
 #version 330 core
 in vec3 FragPos;
 in vec3 Normal;
+in vec2 TexCoord;
 
 out vec4 FragColor;
 
 uniform vec3 lightPos;
 uniform vec3 viewPos;
+uniform sampler2D skinTexture;
 
 void main() {
-    vec3 baseColor = vec3(0.95, 0.79, 0.69);
+    vec4 texColor = texture(skinTexture, TexCoord);
+    if(texColor.a < 0.1) discard;
+
+    vec3 baseColor = texColor.rgb;
 
     // Ambient lighting
-    float ambientStrength = 0.3;
+    float ambientStrength = 0.5;
     vec3 ambient = ambientStrength * baseColor;
 
     // Diffuse lighting
@@ -20,7 +25,7 @@ void main() {
     float diff = max(dot(norm, lightDir), 0.0);
     vec3 diffuse = diff * baseColor;
 
-    // Specular lighting (optional, hafif parlaklık için)
+    // Specular lighting (optional)
     float specularStrength = 0.1;
     vec3 viewDir = normalize(viewPos - FragPos);
     vec3 reflectDir = reflect(-lightDir, norm);
