@@ -49,7 +49,7 @@ func NewApp(window *glfw.Window, im *standardInput.InputManager) *App {
 	}
 
 	// Create independent font renderer for menu
-	atlas, err := font.BuildFontAtlas("assets/fonts/Roboto-Regular.ttf", 90)
+	atlas, err := font.BuildFontAtlas("assets/fonts/Minecraft.otf", 90)
 	if err != nil {
 		panic(err)
 	}
