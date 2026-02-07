@@ -68,7 +68,7 @@ func GetChunkLoadRadius() int {
 
 // GetChunkEvictRadius returns radius for chunk eviction (larger than load radius)
 func GetChunkEvictRadius() int {
-	return GetRenderDistance() * 2
+	return GetRenderDistance() + 4
 }
 
 // GetMaxRenderRadius returns maximum render radius for pre-culling

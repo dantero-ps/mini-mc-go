@@ -132,8 +132,14 @@ func (w *World) GetChunk(chunkX, chunkY, chunkZ int, create bool) *Chunk {
 	chunk, exists := w.chunks[coord]
 	w.mu.RUnlock()
 	if !exists && create {
-		chunk = NewChunk(chunkX, chunkY, chunkZ)
 		w.mu.Lock()
+		// Double-check locking: another goroutine might have created it while we were waiting for the lock
+		if existing, ok := w.chunks[coord]; ok {
+			w.mu.Unlock()
+			return existing
+		}
+
+		chunk = NewChunk(chunkX, chunkY, chunkZ)
 		w.chunks[coord] = chunk
 		w.modCount++
 		// maintain column index
@@ -459,7 +465,6 @@ func (w *World) worker() {
 
 // generateChunkSync builds and installs a chunk if missing
 func (w *World) generateChunkSync(coord ChunkCoord) {
-	defer profiling.Track("world.generateChunkSync")()
 	// quick check
 	w.mu.RLock()
 	_, exists := w.chunks[coord]
@@ -493,7 +498,6 @@ func (w *World) generateChunkSync(coord ChunkCoord) {
 
 // populateChunk fills a chunk using noise heightmap
 func (w *World) populateChunk(c *Chunk) {
-	defer profiling.Track("world.populateChunk")()
 	chunkBaseY := c.Y * ChunkSizeY
 	for lx := range ChunkSizeX {
 		for lz := range ChunkSizeZ {
@@ -526,7 +530,6 @@ func (w *World) populateChunk(c *Chunk) {
 
 // heightAt computes world surface height (block Y) at world X,Z
 func (w *World) heightAt(worldX, worldZ int) int {
-	defer profiling.Track("world.heightAt")()
 	x := float64(worldX) * w.scale
 	z := float64(worldZ) * w.scale
 	n := octaveNoise2D(x, z, w.seed, w.octaves, w.persistence, w.lacunarity)

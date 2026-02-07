@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	initialAtlasBytes = 100 * 1024 * 1024
-	maxAtlasBytes     = 300 * 1024 * 1024
+	initialAtlasBytes = 256 * 1024 * 1024
+	maxAtlasBytes     = 512 * 1024 * 1024
 	compactInterval   = 2000 // frames
 )
 
@@ -55,28 +55,29 @@ func copyAtlasBuffer(oldVBO, newVBO uint32, bytes int) {
 	if oldVBO == 0 || newVBO == 0 || bytes <= 0 {
 		return
 	}
-	gl.BindBuffer(gl.ARRAY_BUFFER, oldVBO)
-	srcPtr := gl.MapBufferRange(gl.ARRAY_BUFFER, 0, bytes, gl.MAP_READ_BIT)
-	gl.BindBuffer(gl.ARRAY_BUFFER, newVBO)
-	dstPtr := gl.MapBufferRange(gl.ARRAY_BUFFER, 0, bytes, gl.MAP_WRITE_BIT|gl.MAP_INVALIDATE_BUFFER_BIT)
+	gl.BindBuffer(gl.COPY_READ_BUFFER, oldVBO)
+	srcPtr := gl.MapBufferRange(gl.COPY_READ_BUFFER, 0, bytes, gl.MAP_READ_BIT)
+
+	gl.BindBuffer(gl.COPY_WRITE_BUFFER, newVBO)
+	dstPtr := gl.MapBufferRange(gl.COPY_WRITE_BUFFER, 0, bytes, gl.MAP_WRITE_BIT|gl.MAP_INVALIDATE_BUFFER_BIT)
 
 	if srcPtr != nil && dstPtr != nil {
-		src := unsafe.Slice((*int16)(srcPtr), bytes/2)
-		dst := unsafe.Slice((*int16)(dstPtr), bytes/2)
+		src := unsafe.Slice((*byte)(srcPtr), bytes)
+		dst := unsafe.Slice((*byte)(dstPtr), bytes)
 		copy(dst, src)
-		gl.UnmapBuffer(gl.ARRAY_BUFFER)
-		gl.BindBuffer(gl.ARRAY_BUFFER, oldVBO)
-		gl.UnmapBuffer(gl.ARRAY_BUFFER)
+
+		gl.UnmapBuffer(gl.COPY_WRITE_BUFFER)
+		gl.UnmapBuffer(gl.COPY_READ_BUFFER)
 	} else {
 		if dstPtr != nil {
-			gl.UnmapBuffer(gl.ARRAY_BUFFER)
+			gl.UnmapBuffer(gl.COPY_WRITE_BUFFER)
 		}
-		gl.BindBuffer(gl.ARRAY_BUFFER, oldVBO)
 		if srcPtr != nil {
-			gl.UnmapBuffer(gl.ARRAY_BUFFER)
+			gl.UnmapBuffer(gl.COPY_READ_BUFFER)
 		}
 	}
-	gl.BindBuffer(gl.ARRAY_BUFFER, 0)
+	gl.BindBuffer(gl.COPY_READ_BUFFER, 0)
+	gl.BindBuffer(gl.COPY_WRITE_BUFFER, 0)
 }
 
 func setupRegionVAO(region *atlasRegion) {
@@ -292,75 +293,113 @@ func compactRegion(r *atlasRegion) {
 		return
 	}
 
-	// Reconstruct total floats from all columns that belong to this region
+	// Calculate total size needed for all active columns
 	totalFloats := 0
+	activeCols := make([]*columnMesh, 0, len(columnMeshes))
 
-	// We only track columns now
+	// Find all columns belonging to this region
 	for _, c := range columnMeshes {
 		if c == nil || c.regionKey != r.key {
 			continue
 		}
-		// Calculate exact size from current chunks because c.vertexCount might be stale
-		size := calculateColumnFloats(c.x, c.z)
+		if c.vertexCount <= 0 || c.firstVertex < 0 {
+			continue
+		}
+		// Stride is 6 shorts (12 bytes). VertexCount is number of vertices.
+		// Size in floats? The codebase tracks 'firstFloat' which is offset in shorts/ints?
+		// Wait, 'totalFloats' in struct is actually 'totalShorts' or 'totalAllocatedItems'.
+		// In queueRegionWrite: offsetBytes.
+		// c.firstFloat is actually index in the int16 buffer.
+		// c.vertexCount is number of vertices. 1 vertex = 6 int16s.
+		// So size in int16s = c.vertexCount * 6.
+
+		size := int(c.vertexCount) * 6
 		totalFloats += size
+		activeCols = append(activeCols, c)
 	}
+
+	// Sort active columns by their current position in VBO to hopefully make reads sequential
+	sort.Slice(activeCols, func(i, j int) bool {
+		return activeCols[i].firstVertex < activeCols[j].firstVertex
+	})
 
 	requiredBytes := totalFloats * 2 // 2 bytes per short
-	if requiredBytes > r.capacityBytes {
-		if !ensureRegionCapacity(r, requiredBytes) {
-			return
+
+	// Create new VBO
+	var newVBO uint32
+	gl.GenBuffers(1, &newVBO)
+	gl.BindBuffer(gl.COPY_WRITE_BUFFER, newVBO)
+
+	// Ensure capacity
+	newCap := r.capacityBytes
+	if requiredBytes > newCap {
+		newCap = requiredBytes * 3 / 2 // Grow if needed, though compact usually shrinks
+		if newCap > maxAtlasBytes {
+			newCap = maxAtlasBytes
 		}
 	}
-	if totalFloats == 0 {
-		r.totalFloats = 0
-		r.orderedColumns = r.orderedColumns[:0]
-		return
-	}
+	// If drastically smaller, maybe shrink capability? For now keep capacity stable to avoid thrashing.
 
-	gl.BindBuffer(gl.ARRAY_BUFFER, r.vbo)
-	gl.BufferData(gl.ARRAY_BUFFER, r.capacityBytes, nil, gl.DYNAMIC_DRAW)
-	flags := uint32(gl.MAP_WRITE_BIT | gl.MAP_INVALIDATE_BUFFER_BIT)
-	ptr := gl.MapBufferRange(gl.ARRAY_BUFFER, 0, requiredBytes, flags)
-	if ptr == nil {
-		gl.BindBuffer(gl.ARRAY_BUFFER, 0)
-		return
-	}
-	dst := unsafe.Slice((*int16)(ptr), requiredBytes/2)
-	offset := 0
+	gl.BufferData(gl.COPY_WRITE_BUFFER, newCap, nil, gl.DYNAMIC_DRAW)
 
-	// NOTE: We do NOT iterate chunkMeshes here anymore because we don't support standalone chunks in atlas.
+	// Map old VBO as read source (CopyBufferSubData is unsupported on this driver)
+	gl.BindBuffer(gl.COPY_READ_BUFFER, r.vbo)
+	srcPtr := gl.MapBufferRange(gl.COPY_READ_BUFFER, 0, r.capacityBytes, gl.MAP_READ_BIT)
 
-	cols := make([]*columnMesh, 0, len(columnMeshes))
-	for _, c := range columnMeshes {
-		if c == nil || c.regionKey != r.key {
-			continue
+	// Map new VBO as write target
+	dstPtr := gl.MapBufferRange(gl.COPY_WRITE_BUFFER, 0, newCap, gl.MAP_WRITE_BIT|gl.MAP_INVALIDATE_BUFFER_BIT)
+
+	if srcPtr != nil && dstPtr != nil {
+		srcData := unsafe.Slice((*byte)(srcPtr), r.capacityBytes)
+		dstData := unsafe.Slice((*byte)(dstPtr), newCap)
+
+		currentOffsetShorts := 0
+
+		for _, c := range activeCols {
+			sizeShorts := int(c.vertexCount) * 6
+			sizeBytes := sizeShorts * 2
+
+			// Previous offset in bytes
+			srcOffsetBytes := int(c.firstVertex) * 6 * 2
+			dstOffsetBytes := currentOffsetShorts * 2
+
+			// Copy this column's data
+			if srcOffsetBytes+sizeBytes <= len(srcData) {
+				copy(dstData[dstOffsetBytes:], srcData[srcOffsetBytes:srcOffsetBytes+sizeBytes])
+			}
+
+			// Update column metadata
+			c.firstFloat = currentOffsetShorts
+			c.firstVertex = int32(currentOffsetShorts / 6)
+			// vertexCount remains same
+
+			currentOffsetShorts += sizeShorts
 		}
 
-		// Re-gather data from chunks
-		verts := collectColumnVerts(c.x, c.z)
-		if len(verts) == 0 {
-			// Column became empty?
-			c.vertexCount = 0
-			c.firstFloat = -1
-			c.firstVertex = -1
-			// Don't append to cols, effectively removing from atlas render list
-			continue
-		}
+		gl.UnmapBuffer(gl.COPY_WRITE_BUFFER)
+		gl.UnmapBuffer(gl.COPY_READ_BUFFER)
 
-		copy(dst[offset:], verts)
-		c.firstFloat = offset
-		c.firstVertex = int32(offset / 6)     // Stride is 6 shorts now
-		c.vertexCount = int32(len(verts) / 6) // Update just in case
-		offset += len(verts)
-		cols = append(cols, c)
+		// Update region metadata
+		r.totalFloats = currentOffsetShorts
 	}
-	gl.UnmapBuffer(gl.ARRAY_BUFFER)
-	gl.BindBuffer(gl.ARRAY_BUFFER, 0)
 
-	r.totalFloats = offset
-	sort.Slice(cols, func(i, j int) bool { return cols[i].firstVertex < cols[j].firstVertex })
-	r.orderedColumns = cols
+	gl.BindBuffer(gl.COPY_READ_BUFFER, 0)
+	gl.BindBuffer(gl.COPY_WRITE_BUFFER, 0)
+
+	// Delete old VBO
+	gl.DeleteBuffers(1, &r.vbo)
+	r.vbo = newVBO
+	r.capacityBytes = newCap
+
+	// Re-bind VAO to new VBO
+	setupRegionVAO(r)
+
+	// Update ordered columns for rendering
+	r.orderedColumns = activeCols
 	r.lastCompact = currentFrame
+	r.fragmentedBytes = 0
+
+	log.Printf("atlas region %v compacted (CPU-MemCpy): %d bytes used, %d columns moved", r.key, r.totalFloats*2, len(activeCols))
 }
 
 func maybeCompactRegions() {
@@ -368,11 +407,14 @@ func maybeCompactRegions() {
 		if len(r.pendingWrites) > 0 {
 			continue // önce pending flush
 		}
-		usedBytes := r.totalFloats * 2
-		freeBytes := r.capacityBytes - usedBytes
-		if freeBytes > (r.capacityBytes*3)/4 {
-			continue // çok boşluk var, kompaktlama gereksiz
+
+		// Only compact if fragmentation is significant (>25% of capacity OR >10MB wasted)
+		isHighFragmentation := r.fragmentedBytes > (r.capacityBytes/4) || r.fragmentedBytes > 10*1024*1024
+		if !isHighFragmentation {
+			continue
 		}
+
+		// Ensure interval passed
 		if (currentFrame - r.lastCompact) > compactInterval {
 			compactRegion(r)
 		}
@@ -429,6 +471,11 @@ func ensureColumnMeshForXZ(x, z int) *columnMesh {
 
 	// Do NOT store cpuVerts in col
 	// col.cpuVerts = buf
+
+	// Mark old location as fragmented if valid (before overwriting firstFloat)
+	if col.firstFloat >= 0 && col.vertexCount > 0 {
+		r.fragmentedBytes += int(col.vertexCount) * 12
+	}
 
 	col.vertexCount = vertexCount
 	col.firstFloat = r.totalFloats

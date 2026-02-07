@@ -175,19 +175,24 @@ func PruneMeshesByWorld(w *world.World, centerX, centerZ float32, radiusChunks i
 		}
 	}
 
-	// Also prune column meshes that are completely out of range?
+	// Also prune column meshes that are completely out of range
 	for key, col := range columnMeshes {
 		dx := key[0] - cx
 		dz := key[1] - cz
 		if dx*dx+dz*dz > radiusChunks*radiusChunks {
-			// Mark as empty
+			// Mark as empty and reclaim space tracking
+			if col.firstFloat >= 0 && col.vertexCount > 0 {
+				if r := atlasRegions[col.regionKey]; r != nil {
+					r.fragmentedBytes += int(col.vertexCount) * 12
+				}
+			}
+
 			col.vertexCount = 0
 			col.firstFloat = -1
 			col.firstVertex = -1
 			col.dirty = true
 			// We remove it from the map so it can be GC'd.
 			// The reference in atlasRegion.orderedColumns will be dropped during the next compaction
-			// because we set vertexCount=0 and made it dirty (which might trigger re-check but since it's out of range, no new chunks will populate it).
 			delete(columnMeshes, key)
 		}
 	}

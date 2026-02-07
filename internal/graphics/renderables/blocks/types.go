@@ -19,15 +19,16 @@ type atlasWrite struct {
 }
 
 type atlasRegion struct {
-	key            [2]int
-	vao            uint32
-	vbo            uint32
-	capacityBytes  int
-	totalFloats    int // Total int16 count in the atlas
-	orderedColumns []*columnMesh
-	pendingWrites  []atlasWrite
-	lastCompact    uint64
-	growthCount    int
+	key             [2]int
+	vao             uint32
+	vbo             uint32
+	capacityBytes   int
+	totalFloats     int // Total int16 count in the atlas
+	orderedColumns  []*columnMesh
+	pendingWrites   []atlasWrite
+	lastCompact     uint64
+	growthCount     int
+	fragmentedBytes int
 }
 
 type chunkMesh struct {

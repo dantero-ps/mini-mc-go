@@ -181,7 +181,6 @@ func (s *Session) SetPaused(paused bool) {
 func (s *Session) processWorldUpdates() {
 	if !s.Paused {
 		func() {
-			defer profiling.Track("world.StreamChunksAroundAsync")()
 			s.World.StreamChunksAroundAsync(s.Player.Position[0], s.Player.Position[2], config.GetChunkLoadRadius())
 		}()
 	}

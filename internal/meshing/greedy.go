@@ -1,7 +1,6 @@
 package meshing
 
 import (
-	"mini-mc/internal/profiling"
 	"mini-mc/internal/registry"
 	"mini-mc/internal/world"
 	"sync"
@@ -30,6 +29,16 @@ var (
 	// Global direction worker pool
 	globalDirectionPool *DirectionWorkerPool
 	poolOnce            sync.Once
+
+	// Buffer pool for greedy meshing masks to reduce GC pressure
+	// Max size is usually ChunkSizeY * ChunkSizeX (256*16 = 4096 ints)
+	maskPool = sync.Pool{
+		New: func() interface{} {
+			// Allocate for the largest possible face (Dimensions are usually 16, 256, 16)
+			// Max face is 256x16 = 4096
+			return make([]int, 0, 4096)
+		},
+	}
 )
 
 // GetDirectionPool returns the global direction worker pool (singleton)
@@ -100,7 +109,6 @@ func (p *DirectionWorkerPool) SubmitJob(w *world.World, c *world.Chunk, nx, ny, 
 // V1: X (5), Y (9), Z (5), Normal (3), Brightness (8)
 // V2: TextureID (16), Tint (1 bit - unused in pack but available)
 func BuildGreedyMeshForChunk(w *world.World, c *world.Chunk) []uint32 {
-	defer profiling.Track("meshing.BuildGreedyMeshForChunk")()
 	if c == nil {
 		return nil
 	}
@@ -174,7 +182,6 @@ func BuildGreedyMeshForChunk(w *world.World, c *world.Chunk) []uint32 {
 // The direction is specified by a normal (nx,ny,nz) where exactly one component is -1 or +1 and the others are 0.
 // It returns packed vertices forming triangles.
 func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int) []uint32 {
-	defer profiling.Track("meshing.buildGreedyForDirection")()
 	// Determine the axis fixed by the face normal and the two in-plane axes (u,v)
 	// We will iterate layers along the normal axis, and build a UxV mask for each layer.
 	var (
@@ -321,8 +328,20 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int) []u
 	if nx != 0 { // Faces perpendicular to X axis, plane is Y-Z
 		// Layers along X
 		for x := range sx {
-			// Mask size sy x sz, store TextureID + 1 (0 means hidden)
-			mask := make([]int, sy*sz)
+			// Mask size sy x sz
+			// Get buffer from pool
+			maskPtr := maskPool.Get().([]int)
+			// Resize cap if needed (shouldn't be if pool is sized right, but safe is safe)
+			reqSize := sy * sz
+			if cap(maskPtr) < reqSize {
+				maskPtr = make([]int, reqSize)
+			}
+			mask := maskPtr[:reqSize]
+			// Zero out the slice (since we reuse it)
+			for k := range mask {
+				mask[k] = 0
+			}
+
 			for y := range sy {
 				for z := range sz {
 					bt := c.GetBlock(x, y, z)
@@ -427,13 +446,25 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int) []u
 					}
 				}
 			}
+			// Return buffer to pool
+			maskPool.Put(maskPtr)
 		}
 		return vertices
 	}
 
 	if ny != 0 { // Faces perpendicular to Y axis, plane is X-Z
 		for y := range sy {
-			mask := make([]int, sx*sz)
+			// Get buffer from pool
+			maskPtr := maskPool.Get().([]int)
+			reqSize := sx * sz
+			if cap(maskPtr) < reqSize {
+				maskPtr = make([]int, reqSize)
+			}
+			mask := maskPtr[:reqSize]
+			for k := range mask {
+				mask[k] = 0
+			}
+
 			for x := range sx {
 				for z := range sz {
 					bt := c.GetBlock(x, y, z)
@@ -530,13 +561,25 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int) []u
 					}
 				}
 			}
+			// Return buffer to pool
+			maskPool.Put(maskPtr)
 		}
 		return vertices
 	}
 
 	// nz != 0 // Faces perpendicular to Z axis, plane is X-Y
 	for z := range sz {
-		mask := make([]int, sx*sy)
+		// Get buffer from pool
+		maskPtr := maskPool.Get().([]int)
+		reqSize := sx * sy
+		if cap(maskPtr) < reqSize {
+			maskPtr = make([]int, reqSize)
+		}
+		mask := maskPtr[:reqSize]
+		for k := range mask {
+			mask[k] = 0
+		}
+
 		for x := range sx {
 			for y := range sy {
 				bt := c.GetBlock(x, y, z)
@@ -637,6 +680,8 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int) []u
 				}
 			}
 		}
+		// Return buffer to pool
+		maskPool.Put(maskPtr)
 	}
 	return vertices
 
