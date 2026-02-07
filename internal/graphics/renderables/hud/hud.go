@@ -6,6 +6,7 @@ import (
 	"mini-mc/internal/graphics"
 	"mini-mc/internal/graphics/renderables/font"
 	"mini-mc/internal/graphics/renderables/items"
+	"mini-mc/internal/graphics/renderables/playermodel"
 	"mini-mc/internal/graphics/renderables/ui"
 	"mini-mc/internal/graphics/renderer"
 	"mini-mc/internal/inventory"
@@ -27,6 +28,7 @@ type HUD struct {
 	fontRenderer  *font.FontRenderer
 	uiRenderer    *ui.UI
 	itemRenderer  *items.Items
+	playerModel   *playermodel.PlayerModel
 	showProfiling bool
 
 	// Viewport dimensions
@@ -134,6 +136,13 @@ func (h *HUD) Init() error {
 	h.fontRenderer = fontRenderer
 	h.uiRenderer = uiRenderer
 	h.itemRenderer = itemRenderer
+
+	// Create Player Model
+	playerModel := playermodel.NewPlayerModel()
+	if err := playerModel.Init(); err != nil {
+		return err
+	}
+	h.playerModel = playerModel
 
 	// Load Textures
 	widgetsPath := "assets/textures/gui/widgets.png"
@@ -441,6 +450,21 @@ func (h *HUD) renderInventory(p *player.Player) {
 	craftingY := y + 16*scale
 	h.fontRenderer.Render("Crafting", craftingX, craftingY, 0.35, mgl32.Vec3{0.3, 0.3, 0.3})
 
+	// Render Player Entity
+	// Position in MC: x + 51, y + 75. Scale 30.
+	// Our HUD is scaled by 2.0.
+	// 51*2 = 102. 75*2 = 150. Scale 30*2 = 60?
+	// Let's rely on standard MC values scaled by UI scale.
+	playerX := x + 51*scale
+	playerY := y + 75*scale
+	playerScale := 30.0 * scale
+
+	// Mouse relative to player center
+	// Note: RenderInventoryPlayer function handles calculation of relative mouse pos if we pass raw mouse pos?
+	// The function I wrote accepts raw mouseX/Y and computes relative.
+
+	h.playerModel.RenderInventoryPlayer(p, playerX, playerY, playerScale, float32(p.MouseX), float32(p.MouseY), h.width, h.height, glfw.GetTime())
+
 	// Draw Items
 	itemSize := 16 * scale
 
@@ -736,6 +760,9 @@ func (h *HUD) MoveHoveredItemToHotbar(p *player.Player, hotbarSlot int) {
 func (h *HUD) Dispose() {
 	h.uiRenderer.Dispose()
 	h.itemRenderer.Dispose()
+	if h.playerModel != nil {
+		h.playerModel.Dispose()
+	}
 	// Font resources are managed by graphics package
 }
 
