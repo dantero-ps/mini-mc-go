@@ -4,8 +4,16 @@ import (
 	"math"
 )
 
-// Generator handles terrain generation logic.
-type Generator struct {
+// TerrainGenerator handles terrain generation for a chunk.
+type TerrainGenerator interface {
+	// HeightAt computes world surface height (block Y) at world X,Z.
+	HeightAt(x, z int) int
+	// PopulateChunk fills the given chunk with blocks based on the generation logic.
+	PopulateChunk(c *Chunk)
+}
+
+// StandardGenerator handles terrain generation logic using Perlin noise.
+type StandardGenerator struct {
 	seed        int64
 	scale       float64
 	baseHeight  int
@@ -16,9 +24,9 @@ type Generator struct {
 }
 
 // NewGenerator creates a new generator with default settings.
-// Seed can be parameterized here.
-func NewGenerator(seed int64) *Generator {
-	return &Generator{
+// Returns a TerrainGenerator interface.
+func NewGenerator(seed int64) TerrainGenerator {
+	return &StandardGenerator{
 		seed:        seed,
 		scale:       1.0 / 64.0,
 		baseHeight:  32,
@@ -30,7 +38,7 @@ func NewGenerator(seed int64) *Generator {
 }
 
 // HeightAt computes world surface height (block Y) at world X,Z.
-func (g *Generator) HeightAt(worldX, worldZ int) int {
+func (g *StandardGenerator) HeightAt(worldX, worldZ int) int {
 	x := float64(worldX) * g.scale
 	z := float64(worldZ) * g.scale
 	n := octaveNoise2D(x, z, g.seed, g.octaves, g.persistence, g.lacunarity)
@@ -42,7 +50,7 @@ func (g *Generator) HeightAt(worldX, worldZ int) int {
 }
 
 // PopulateChunk fills a chunk using noise heightmap.
-func (g *Generator) PopulateChunk(c *Chunk) {
+func (g *StandardGenerator) PopulateChunk(c *Chunk) {
 	chunkBaseY := c.Y * ChunkSizeY
 	for lx := range ChunkSizeX {
 		for lz := range ChunkSizeZ {
@@ -67,6 +75,57 @@ func (g *Generator) PopulateChunk(c *Chunk) {
 				c.SetBlock(lx, topLocal, lz, BlockTypeBedrock)
 			} else {
 				c.SetBlock(lx, topLocal, lz, BlockTypeGrass)
+			}
+		}
+	}
+	c.dirty = true
+}
+
+// FlatGenerator generates a flat world at a specific height.
+type FlatGenerator struct {
+	Height int
+}
+
+// NewFlatGenerator creates a new flat world generator.
+func NewFlatGenerator(height int) TerrainGenerator {
+	return &FlatGenerator{
+		Height: height,
+	}
+}
+
+func (g *FlatGenerator) HeightAt(x, z int) int {
+	return g.Height
+}
+
+func (g *FlatGenerator) PopulateChunk(c *Chunk) {
+	chunkBaseY := c.Y * ChunkSizeY
+	flatHeight := g.Height
+
+	for lx := range ChunkSizeX {
+		for lz := range ChunkSizeZ {
+			maxY := flatHeight - chunkBaseY
+
+			// If the entire chunk is above the flat height, do nothing (air)
+			if maxY < 0 {
+				continue
+			}
+
+			// Clamp to chunk top
+			limit := maxY
+			if limit >= ChunkSizeY {
+				limit = ChunkSizeY - 1
+			}
+
+			for ly := 0; ly <= limit; ly++ {
+				y := chunkBaseY + ly
+				if y == 0 {
+					c.SetBlock(lx, ly, lz, BlockTypeBedrock)
+				} else if y < flatHeight {
+					c.SetBlock(lx, ly, lz, BlockTypeDirt)
+				} else {
+					// y == flatHeight
+					c.SetBlock(lx, ly, lz, BlockTypeGrass)
+				}
 			}
 		}
 	}

@@ -17,7 +17,7 @@ type World struct {
 	// Components
 	store    *ChunkStore
 	entities *EntityManager
-	gen      *Generator
+	gen      TerrainGenerator
 	streamer *ChunkStreamer
 }
 

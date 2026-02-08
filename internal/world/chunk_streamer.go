@@ -22,11 +22,11 @@ type ChunkStreamer struct {
 
 	// Dependencies
 	store *ChunkStore
-	gen   *Generator
+	gen   TerrainGenerator
 }
 
 // NewChunkStreamer creates a new chunk streamer.
-func NewChunkStreamer(store *ChunkStore, gen *Generator) *ChunkStreamer {
+func NewChunkStreamer(store *ChunkStore, gen TerrainGenerator) *ChunkStreamer {
 	cs := &ChunkStreamer{
 		jobs:           make(chan ChunkCoord, 4096),
 		pending:        make(map[ChunkCoord]struct{}),

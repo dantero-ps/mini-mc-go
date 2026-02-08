@@ -322,7 +322,7 @@ func (w *World) GetChunk(chunkX, chunkY, chunkZ int, create bool) *Chunk {
 
 ### Phase 3: Architecture Improvements (Backlog)
 1. ⬜ Standardize physics coordinate system
-2. ⬜ Extract `TerrainGenerator` interface
+2. ✅ Extract `TerrainGenerator` interface
 3. ⬜ Remove singleton pattern from meshing pool
 4. ⬜ Create `Entity` interface with `GetBounds()`
 

@@ -58,7 +58,15 @@ func (l *Loader) LoadModel(name string) (*Model, error) {
 			model.AmbientOcclusion = parent.AmbientOcclusion
 		}
 		if len(model.Elements) == 0 {
-			model.Elements = parent.Elements
+			model.Elements = make([]Element, len(parent.Elements))
+			for i, pElem := range parent.Elements {
+				newElem := pElem
+				newElem.Faces = make(map[string]Face, len(pElem.Faces))
+				for dir, face := range pElem.Faces {
+					newElem.Faces[dir] = face
+				}
+				model.Elements[i] = newElem
+			}
 		}
 		if model.Textures == nil {
 			model.Textures = make(map[string]string)
