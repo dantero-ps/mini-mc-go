@@ -31,10 +31,11 @@ Transform a basic heightmap-based voxel game into a full-featured Minecraft clon
   4. Generation remains deterministic from same seed
   5. Performance maintains 60 FPS during chunk generation
 
-**Plans**: TBD
+**Plans:** 2 plans
 
 Plans:
-- [ ] TBD
+- [ ] 01-01-PLAN.md — 3D noise functions + DensityGenerator implementation and wiring
+- [ ] 01-02-PLAN.md — Determinism/correctness tests + visual verification
 
 ### Phase 2: Multi-Biome System
 **Goal**: Add multiple distinct biomes with smooth climate-based transitions
@@ -214,7 +215,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. 3D Terrain Foundation | 0/TBD | Not started | - |
+| 1. 3D Terrain Foundation | 0/2 | Planning complete | - |
 | 2. Multi-Biome System | 0/TBD | Not started | - |
 | 3. Natural Cave Generation | 0/TBD | Not started | - |
 | 4. World Features & Decoration | 0/TBD | Not started | - |
