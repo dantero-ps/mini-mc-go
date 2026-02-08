@@ -229,3 +229,98 @@ func (cp *ChunkProvider189) generateHighLowNoise(xChunk, zChunk int, noiseField 
 
 	return noiseField
 }
+
+// GenerateChunk generates a chunk at the specified coordinates
+func (cp *ChunkProvider189) GenerateChunk(xChunk, zChunk int) *Chunk {
+	chunk := NewChunk(xChunk, 0, zChunk)
+
+	// Generate noise field
+	// We pass nil to allocate new array, or we could reuse a buffer if we had one per provider (not thread safe)
+	// For now allocate new.
+	noiseField := cp.generateHighLowNoise(xChunk, zChunk, nil)
+
+	const xSize = 5
+	const zSize = 5
+	const ySize = 33
+
+	// Tri-linear interpolation
+	for x := 0; x < 4; x++ {
+		for z := 0; z < 4; z++ {
+			for y := 0; y < 32; y++ {
+				// 8 corners of the 4x4x8 cell
+				// Index mapping: (x * 5 * 33) + (z * 33) + y
+
+				idx000 := (x * zSize * ySize) + (z * ySize) + y
+				idx001 := idx000 + 1
+
+				idx010 := (x * zSize * ySize) + ((z + 1) * ySize) + y
+				idx011 := idx010 + 1
+
+				idx100 := ((x + 1) * zSize * ySize) + (z * ySize) + y
+				idx101 := idx100 + 1
+
+				idx110 := ((x + 1) * zSize * ySize) + ((z + 1) * ySize) + y
+				idx111 := idx110 + 1
+
+				d000 := noiseField[idx000]
+				d001 := noiseField[idx001]
+				d010 := noiseField[idx010]
+				d011 := noiseField[idx011]
+				d100 := noiseField[idx100]
+				d101 := noiseField[idx101]
+				d110 := noiseField[idx110]
+				d111 := noiseField[idx111]
+
+				// Interpolate
+				for ly := 0; ly < 8; ly++ {
+					// Lerp factors for Y
+					// 0..8
+					ty := float64(ly) / 8.0
+
+					// Interpolate along Y for 4 vertical lines
+					d00 := d000 + (d001-d000)*ty
+					d01 := d010 + (d011-d010)*ty
+					d10 := d100 + (d101-d100)*ty
+					d11 := d110 + (d111-d110)*ty
+
+					for lx := 0; lx < 4; lx++ {
+						tx := float64(lx) / 4.0
+
+						// Interpolate along X for 2 lines
+						d0 := d00 + (d10-d00)*tx
+						d1 := d01 + (d11-d01)*tx
+
+						for lz := 0; lz < 4; lz++ {
+							tz := float64(lz) / 4.0
+
+							// Interpolate along Z
+							val := d0 + (d1-d0)*tz
+
+							// Block position
+							bx := x*4 + lx
+							by := y*8 + ly
+							bz := z*4 + lz
+
+							if val > 0 {
+								chunk.SetBlock(bx, by, bz, BlockTypeStone)
+							} else if by < 63 {
+								chunk.SetBlock(bx, by, bz, BlockTypeWater)
+							} else {
+								chunk.SetBlock(bx, by, bz, BlockTypeAir)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Bedrock at bottom
+	for x := 0; x < 16; x++ {
+		for z := 0; z < 16; z++ {
+			chunk.SetBlock(x, 0, z, BlockTypeBedrock)
+		}
+	}
+
+	return chunk
+}

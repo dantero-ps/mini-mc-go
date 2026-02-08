@@ -14,6 +14,8 @@ const (
 	BlockTypePlanksSpruce
 	BlockTypePlanksJungle
 	BlockTypePlanksAcacia
+	BlockTypeCobblestone
+	BlockTypeWater
 )
 
 // Block data
