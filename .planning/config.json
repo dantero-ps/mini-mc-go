@@ -1,0 +1,18 @@
+{
+  "project_name": "Minecraft Clone (Go)",
+  "initialized": "2026-02-08",
+  "workflow_version": "1.0",
+  "preferences": {
+    "research_depth": "deep",
+    "commit_docs": true,
+    "auto_verify": true,
+    "parallel_execution": true
+  },
+  "model_profile": "balanced",
+  "phase_settings": {
+    "planner_model": "sonnet",
+    "executor_model": "sonnet",
+    "verifier_model": "sonnet",
+    "researcher_model": "sonnet"
+  }
+}
