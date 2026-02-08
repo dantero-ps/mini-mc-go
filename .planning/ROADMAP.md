@@ -17,6 +17,7 @@ Transform a basic heightmap-based voxel game into a full-featured Minecraft clon
 - [ ] **Phase 9: Visual Polish** - Enhance rendering with lighting, effects, and optimization
 - [ ] **Phase 10: World Persistence** - Enable save/load functionality
 - [ ] **Phase 11: UI & Menus** - Complete user interface and game flow
+- [ ] **Phase 12: Implement 1.8.9 World Gen Logic & Config Menus** - Implement original MC world gen logic and config menus
 
 ## Phase Details
 
@@ -211,6 +212,22 @@ Plans:
 Plans:
 - [ ] TBD
 
+### Phase 12: Implement 1.8.9 World Gen Logic & Config Menus
+**Goal**: Implement original Minecraft 1.8.9 world generation logic and add configuration menus
+**Depends on**: Phase 11 (UI required for config menus)
+**Requirements**: MC-GEN-01, MC-GEN-02
+**Success Criteria** (what must be TRUE):
+  1. World generation logic matches MC 1.8.9 specification
+  2. Configuration menus allow customizing world generation
+  3. Reference logic from `research/mc-1.8.9/` and `/Users/furkandogan/Downloads/MCP-919-main/src/`
+  4. Assets imported from `/Users/furkandogan/Downloads/MCP-919-main/jars/versions/1.8.9/extracted/assets/` if needed
+
+**Plans**: 2 plans
+
+Plans:
+- [ ] 12-01-PLAN.md — Implement 1.8.9 World Gen Logic
+- [ ] 12-02-PLAN.md — World Gen Config & UI
+
 ## Progress
 
 | Phase | Plans Complete | Status | Completed |
@@ -226,6 +243,7 @@ Plans:
 | 9. Visual Polish | 0/TBD | Not started | - |
 | 10. World Persistence | 0/TBD | Not started | - |
 | 11. UI & Menus | 0/TBD | Not started | - |
+| 12. Implement 1.8.9 World Gen Logic & Config Menus | 0/2 | Planning complete | - |
 
 ---
 *Roadmap created: 2026-02-08*
