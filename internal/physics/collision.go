@@ -1,7 +1,9 @@
 package physics
 
 import (
+	"fmt"
 	"math"
+	"time"
 
 	"mini-mc/internal/profiling"
 	"mini-mc/internal/world"
@@ -11,6 +13,8 @@ import (
 
 // Checks if a position collides with any block in the world
 func Collides(pos mgl32.Vec3, width, height float32, world *world.World) bool {
+	now := time.Now()
+
 	defer profiling.Track("physics.Collides")()
 	minX := int(math.Floor(float64(pos.X() - width/2)))
 	maxX := int(math.Floor(float64(pos.X() + width/2)))
@@ -20,10 +24,13 @@ func Collides(pos mgl32.Vec3, width, height float32, world *world.World) bool {
 	minZ := int(math.Floor(float64(pos.Z() - width/2)))
 	maxZ := int(math.Floor(float64(pos.Z() + width/2)))
 
+	iterations := 0
+
 	for x := minX - 1; x <= maxX+1; x++ {
 		for y := minY - 1; y <= maxY+1; y++ {
 			for z := minZ - 1; z <= maxZ+1; z++ {
 				if !world.IsAir(x, y, z) {
+					iterations++
 					blockMinX := float32(x)
 					blockMaxX := float32(x) + 1.0
 					// Standard mapping: Y range is [y, y+1)
@@ -46,6 +53,11 @@ func Collides(pos mgl32.Vec3, width, height float32, world *world.World) bool {
 				}
 			}
 		}
+	}
+
+	d := time.Since(now)
+	if d > 10*time.Millisecond {
+		fmt.Println(maxX, maxY, maxZ, iterations)
 	}
 
 	return false

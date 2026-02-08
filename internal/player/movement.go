@@ -1,9 +1,12 @@
 package player
 
 import (
+	"fmt"
 	"math"
 	"mini-mc/internal/input"
 	"mini-mc/internal/physics"
+	"mini-mc/internal/profiling"
+	"time"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
@@ -24,6 +27,14 @@ const (
 )
 
 func (p *Player) UpdatePosition(dt float64, im *input.InputManager) {
+	start := time.Now()
+	defer func() {
+		d := time.Since(start)
+		if d > 10*time.Millisecond {
+			fmt.Println(d)
+		}
+	}()
+	defer profiling.Track("player.Update.Position")()
 	// Update flight mode double-tap timer
 	if p.lastSpacePressTime >= 0 {
 		p.lastSpacePressTime += dt

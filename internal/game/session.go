@@ -15,12 +15,14 @@ import (
 	"mini-mc/internal/graphics/renderables/wireframe"
 	"mini-mc/internal/graphics/renderer"
 	standardInput "mini-mc/internal/input"
+	"mini-mc/internal/physics"
 	"mini-mc/internal/player"
 	"mini-mc/internal/profiling"
 	"mini-mc/internal/ui/menu"
 	"mini-mc/internal/world"
 
 	"github.com/go-gl/glfw/v3.3/glfw"
+	"github.com/go-gl/mathgl/mgl32"
 )
 
 type Session struct {
@@ -77,11 +79,27 @@ func NewSession(window *glfw.Window, mode player.GameMode) (*Session, error) {
 	gamePlayer := player.New(gameWorld, mode)
 
 	// Fix spawn position: find ground level at 0,0
-	// Ensure the chunk at 0,0 is generated or height is known
 	spawnX, spawnZ := 0, 0
-	groundY := gameWorld.SurfaceHeightAt(spawnX, spawnZ)
-	// Set player Y to ground + height + slight buffer
-	gamePlayer.Position[1] = float32(groundY) + 2.0
+
+	// Ensure spawn chunks are generated so we can check collisions
+	gameWorld.StreamChunksAroundSync(float32(spawnX), float32(spawnZ), 2)
+
+	// Calculate approximate Y (theoretical max)
+	approxY := gameWorld.SurfaceHeightAt(spawnX, spawnZ)
+
+	// Search for actual ground starting slightly above approximate Y
+	searchStartPos := mgl32.Vec3{float32(spawnX), float32(approxY) + 5, float32(spawnZ)}
+	pWidth, pHeight := gamePlayer.GetBounds()
+	groundY := physics.FindGroundLevel(float32(spawnX), float32(spawnZ), searchStartPos, pWidth, pHeight, gameWorld)
+
+	if groundY > -1000 {
+		// Found valid ground, place player exactly on it
+		gamePlayer.Position[1] = groundY
+	} else {
+		// Fallback to approximate height
+		gamePlayer.Position[1] = float32(approxY) + 2.0
+	}
+
 	// Reset velocity just in case
 	gamePlayer.Velocity = [3]float32{0, 0, 0}
 

@@ -1,7 +1,6 @@
 package game
 
 import (
-	// This is actually standard input package, aliased
 	"log"
 	"mini-mc/internal/graphics/renderables/font"
 	"mini-mc/internal/graphics/renderables/ui"
@@ -111,8 +110,8 @@ func (a *App) tick() {
 
 	// Check if frame took too long (> 16ms)
 	processingDuration := time.Since(startTick)
-	if processingDuration > 16*time.Millisecond {
-		log.Printf("Slow frame: %v. Top tasks: %s", processingDuration, profiling.TopNCurrentFrame(5))
+	if processingDuration > 5*time.Millisecond {
+		log.Printf("Slow frame: %v. Top tasks: %s", processingDuration)
 	}
 
 	a.inputManager.PostUpdate() // Clear "JustPressed" flags

@@ -4,6 +4,7 @@ import (
 	"mini-mc/internal/entity"
 	"mini-mc/internal/item"
 	"mini-mc/internal/physics"
+	"mini-mc/internal/profiling"
 	"mini-mc/internal/world"
 
 	"github.com/go-gl/glfw/v3.3/glfw"
@@ -68,6 +69,7 @@ func (p *Player) HandleNumKey(slot int) {
 }
 
 func (p *Player) CheckEntityCollisions(dt float64) {
+	defer profiling.Track("player.Update.collisionChecks.total")()
 	// Minecraft-style pickup: only when player collides with item
 	// No magnet effect - items don't move towards player
 	entities := p.World.GetEntities()
