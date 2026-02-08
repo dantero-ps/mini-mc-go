@@ -80,3 +80,4 @@ Thumbs.db
 # Keep assets in version control
 !assets/
 
+.agent/rules/file-paths.md
