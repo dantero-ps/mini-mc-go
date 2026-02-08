@@ -65,4 +65,9 @@ func (p *Player) Update(dt float64, im *input.InputManager) {
 
 	// Update render arm sway
 	p.UpdateRenderArm(dt)
+
+	// Update inventory item animations (for pickup pop effect)
+	if p.Inventory != nil {
+		p.Inventory.UpdateAnimations()
+	}
 }

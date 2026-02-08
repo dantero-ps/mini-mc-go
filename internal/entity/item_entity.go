@@ -8,6 +8,30 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 )
 
+// Stacking constants matching Minecraft 1.8.9
+const (
+	// Item entity dimensions
+	ItemEntityWidth  = 0.25
+	ItemEntityHeight = 0.25
+
+	// Stacking search range expansion
+	StackSearchExpandX = 0.5
+	StackSearchExpandY = 0.0
+	StackSearchExpandZ = 0.5
+
+	// Special values
+	InfinitePickupDelay = -1.0  // Equivalent to MC's 32767 (never pick up)
+	NoDespawnAge        = -6000 // Age that prevents despawn (300-(-6000)=6300 seconds = 105 minutes)
+
+	// Timing
+	StackSearchInterval = 25   // ticks (1.25 seconds)
+	TickDuration        = 0.05 // seconds per tick (1/20)
+)
+
+// NearbyItemsFunc is a callback function to get nearby item entities.
+// Takes center position and range, returns slice of interface{} that can be cast to *ItemEntity.
+type NearbyItemsFunc func(centerX, centerY, centerZ, rangeX, rangeY, rangeZ float32) []interface{}
+
 type ItemEntity struct {
 	Stack       item.ItemStack
 	Pos         mgl32.Vec3
@@ -20,6 +44,14 @@ type ItemEntity struct {
 	Dead        bool
 	PickupDelay float64
 	Owner       string // Owner name for pickup delay (empty if no owner)
+
+	// Stacking trigger fields (Minecraft 1.8.9 behavior)
+	ticksExisted                       int
+	prevBlockX, prevBlockY, prevBlockZ int
+	noDespawn                          bool // If true, item never despawns
+
+	// GetNearbyItems is a callback function for stacking queries (set by world after creation)
+	GetNearbyItems NearbyItemsFunc
 
 	// Pickup animation (visual only, not physical movement)
 	IsPickingUp     bool
@@ -43,6 +75,10 @@ func NewItemEntity(w WorldSource, pos mgl32.Vec3, stack item.ItemStack) *ItemEnt
 		RotationYaw: rand.Float64() * 360.0,
 		PickupDelay: 0.5, // 0.5 second delay (10 ticks = 0.5 second at 20 ticks/s, Minecraft default)
 		Owner:       "",  // No owner by default
+		// Initialize previous block positions to current
+		prevBlockX: int(math.Floor(float64(pos.X()))),
+		prevBlockY: int(math.Floor(float64(pos.Y()))),
+		prevBlockZ: int(math.Floor(float64(pos.Z()))),
 	}
 }
 
@@ -70,7 +106,8 @@ func (e *ItemEntity) Update(dt float64) {
 
 	// Minecraft: items despawn after 6000 ticks (300 seconds at 20 ticks/s)
 	// Age is in seconds, so 300 seconds = 5 minutes
-	if e.Age >= 300.0 {
+	// Unless noDespawn is set
+	if !e.noDespawn && e.Age >= 300.0 {
 		e.Dead = true
 		return
 	}
@@ -125,6 +162,126 @@ func (e *ItemEntity) Update(dt float64) {
 		frictionFactor := float32(math.Pow(float64(friction), dt*20))
 		e.Vel = mgl32.Vec3{e.Vel.X() * frictionFactor, e.Vel.Y(), e.Vel.Z() * frictionFactor}
 	}
+
+	// Increment tick counter (convert dt to ticks and accumulate)
+	e.ticksExisted++
+
+	// Check if position crossed block boundary (Minecraft stacking trigger)
+	currentBlockX := int(math.Floor(float64(e.Pos.X())))
+	currentBlockY := int(math.Floor(float64(e.Pos.Y())))
+	currentBlockZ := int(math.Floor(float64(e.Pos.Z())))
+
+	crossedBlockBoundary := currentBlockX != e.prevBlockX ||
+		currentBlockY != e.prevBlockY ||
+		currentBlockZ != e.prevBlockZ
+
+	// Update previous position for next frame
+	e.prevBlockX = currentBlockX
+	e.prevBlockY = currentBlockY
+	e.prevBlockZ = currentBlockZ
+
+	// Search for nearby items to merge with (Minecraft 1.8.9 behavior)
+	// Trigger when crossing block boundary OR every 25 ticks
+	if e.GetNearbyItems != nil && (crossedBlockBoundary || e.ticksExisted%StackSearchInterval == 0) {
+		e.searchForOtherItemsNearby()
+	}
+}
+
+// searchForOtherItemsNearby finds and attempts to combine with nearby items
+// Matching Minecraft 1.8.9 EntityItem.searchForOtherItemsNearby()
+func (e *ItemEntity) searchForOtherItemsNearby() {
+	if e.Dead || e.GetNearbyItems == nil {
+		return
+	}
+
+	// Calculate search range (expand by 0.5 on X/Z, 0.0 on Y)
+	halfWidth := float32(ItemEntityWidth / 2)
+	halfHeight := float32(ItemEntityHeight / 2)
+
+	rangeX := halfWidth + StackSearchExpandX
+	rangeY := halfHeight // No Y expansion
+	rangeZ := halfWidth + StackSearchExpandZ
+
+	nearbyItems := e.GetNearbyItems(
+		e.Pos.X(), e.Pos.Y(), e.Pos.Z(),
+		rangeX, rangeY, rangeZ,
+	)
+
+	for _, other := range nearbyItems {
+		if otherItem, ok := other.(*ItemEntity); ok {
+			if e.combineItems(otherItem) {
+				// This item is now dead, stop searching
+				return
+			}
+		}
+	}
+}
+
+// combineItems attempts to merge this item with another
+// Returns true if merge was successful (this entity was killed)
+// Matching Minecraft 1.8.9 EntityItem.combineItems()
+func (e *ItemEntity) combineItems(other *ItemEntity) bool {
+	// 1. Self-check
+	if other == e {
+		return false
+	}
+
+	// 2. Both must be alive
+	if other.Dead || e.Dead {
+		return false
+	}
+
+	// 3. Don't merge items currently being picked up
+	if other.IsPickingUp || e.IsPickingUp {
+		return false
+	}
+
+	thisStack := e.Stack
+	otherStack := other.Stack
+
+	// 4. Neither can have infinite pickup delay (represents items that can't be picked up)
+	if e.PickupDelay == InfinitePickupDelay || other.PickupDelay == InfinitePickupDelay {
+		return false
+	}
+
+	// 5. Neither can have "no despawn" flag (special items in MC have age = -32768)
+	if e.noDespawn || other.noDespawn {
+		return false
+	}
+
+	// 6. Check if stacks can be combined (same item type, metadata, etc.)
+	if !thisStack.CanStackWith(otherStack) {
+		return false
+	}
+
+	// 7. IMPORTANT: Smaller stack merges into larger stack
+	// If this stack is larger, reverse the merge direction
+	if otherStack.Count < thisStack.Count {
+		return other.combineItems(e)
+	}
+
+	// 8. Combined size cannot exceed max stack size
+	if otherStack.Count+thisStack.Count > thisStack.GetMaxStackSize() {
+		return false
+	}
+
+	// 9. MERGE: Add this stack to other stack
+	other.Stack.Count += thisStack.Count
+
+	// 10. Pickup delay: Use the MAXIMUM of both delays (more restrictive)
+	if e.PickupDelay > other.PickupDelay {
+		other.PickupDelay = e.PickupDelay
+	}
+
+	// 11. Age: Use the MINIMUM age (younger survives longer, despawns later)
+	if e.Age < other.Age {
+		other.Age = e.Age
+	}
+
+	// 12. Kill this entity
+	e.SetDead()
+
+	return true
 }
 
 func (e *ItemEntity) checkCollision(x, y, z float32) bool {
@@ -175,4 +332,19 @@ func (e *ItemEntity) IsDead() bool {
 
 func (e *ItemEntity) SetDead() {
 	e.Dead = true
+}
+
+// GetBounds returns the item entity dimensions
+func (e *ItemEntity) GetBounds() (width, height float32) {
+	return ItemEntityWidth, ItemEntityHeight
+}
+
+// SetNoDespawn marks this item as never despawning
+func (e *ItemEntity) SetNoDespawn() {
+	e.noDespawn = true
+}
+
+// SetInfinitePickupDelay marks this item as unpickable
+func (e *ItemEntity) SetInfinitePickupDelay() {
+	e.PickupDelay = InfinitePickupDelay
 }

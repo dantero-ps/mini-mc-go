@@ -28,6 +28,22 @@ func (em *EntityManager) Add(e Ticker) {
 // Update updates all entities and removes dead ones.
 func (em *EntityManager) Update(dt float64) {
 	defer profiling.Track("world.UpdateEntities")()
+
+	// First, get a copy of entities to update (holding lock briefly)
+	em.mu.RLock()
+	entitiesToUpdate := make([]Ticker, len(em.entities))
+	copy(entitiesToUpdate, em.entities)
+	em.mu.RUnlock()
+
+	// Update all entities WITHOUT holding the lock
+	// This prevents deadlock when ItemEntity.Update() calls GetEntitiesInAABB()
+	for _, e := range entitiesToUpdate {
+		if !e.IsDead() {
+			e.Update(dt)
+		}
+	}
+
+	// Now compact the slice to remove dead entities (holding write lock)
 	em.mu.Lock()
 	defer em.mu.Unlock()
 
@@ -35,15 +51,10 @@ func (em *EntityManager) Update(dt float64) {
 	for i := 0; i < len(em.entities); i++ {
 		e := em.entities[i]
 		if !e.IsDead() {
-			e.Update(dt)
-			if !e.IsDead() {
-				// Keep alive
-				em.entities[activeCount] = e
-				activeCount++
-			}
+			em.entities[activeCount] = e
+			activeCount++
 		}
 	}
-	// Trim slice to remove dead entities
 	em.entities = em.entities[:activeCount]
 }
 
@@ -56,5 +67,27 @@ func (em *EntityManager) GetAll() []Ticker {
 	// while we modify the internal slice
 	result := make([]Ticker, len(em.entities))
 	copy(result, em.entities)
+	return result
+}
+
+// GetEntitiesInAABB returns all entities within the given axis-aligned bounding box.
+// Used for item stacking logic to find nearby items.
+func (em *EntityManager) GetEntitiesInAABB(minX, minY, minZ, maxX, maxY, maxZ float32) []Ticker {
+	em.mu.RLock()
+	defer em.mu.RUnlock()
+
+	var result []Ticker
+	for _, e := range em.entities {
+		if e.IsDead() {
+			continue
+		}
+		pos := e.Position()
+		// Check if entity's center is within the AABB
+		if pos.X() >= minX && pos.X() <= maxX &&
+			pos.Y() >= minY && pos.Y() <= maxY &&
+			pos.Z() >= minZ && pos.Z() <= maxZ {
+			result = append(result, e)
+		}
+	}
 	return result
 }

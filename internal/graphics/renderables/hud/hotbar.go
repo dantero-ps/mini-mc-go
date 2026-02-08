@@ -68,20 +68,33 @@ func (h *HUD) renderHotbar(p *player.Player) {
 	for i := range 9 {
 		stack := p.Inventory.MainInventory[i]
 		if stack != nil {
-			// Calculate slot position
-			slotX := x + float32(3+20*i)*scale
-			slotY := y + float32(3)*scale
+			// Calculate slot center position
+			baseSlotX := x + float32(3+20*i)*scale
+			baseSlotY := y + float32(3)*scale
+			itemSize := float32(16) * scale
 
-			// Render Item
-			itemSize := 16 * scale
-			h.itemRenderer.RenderGUI(stack, slotX, slotY, itemSize)
+			// Get animation scale factors (1.0 if no animation)
+			scaleX, scaleY := stack.GetAnimationScale()
 
-			// Render Count if > 1
+			// Calculate scaled dimensions
+			renderWidth := itemSize * scaleX
+			renderHeight := itemSize * scaleY
+
+			// Calculate position to keep item centered during animation
+			centerX := baseSlotX + itemSize/2
+			centerY := baseSlotY + itemSize/2
+			slotX := centerX - renderWidth/2
+			slotY := centerY - renderHeight/2
+
+			// Render Item with animation scale
+			h.itemRenderer.RenderGUIScaled(stack, slotX, slotY, renderWidth, renderHeight)
+
+			// Render Count if > 1 (always at base position)
 			if stack.Count > 1 {
 				countText := fmt.Sprintf("%d", stack.Count)
 				// Bottom right of slot
-				tx := slotX + itemSize/2
-				ty := slotY + itemSize/2
+				tx := baseSlotX + itemSize/2
+				ty := baseSlotY + itemSize/2
 				h.fontRenderer.Render(countText, tx, ty, 0.3, mgl32.Vec3{1, 1, 1})
 			}
 		}

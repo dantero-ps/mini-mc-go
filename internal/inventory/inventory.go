@@ -79,6 +79,9 @@ func (inv *Inventory) AddItem(stack *item.ItemStack) bool {
 					existing.Count += toAdd
 					stack.Count -= toAdd
 
+					// Trigger pickup animation for this slot
+					existing.TriggerAnimation()
+
 					if stack.Count == 0 {
 						return true
 					}
@@ -99,6 +102,9 @@ func (inv *Inventory) AddItem(stack *item.ItemStack) bool {
 			// Create new stack in slot
 			newItem := item.NewItemStack(stack.Type, toAdd)
 			inv.MainInventory[emptySlot] = &newItem
+
+			// Trigger pickup animation for the new slot
+			inv.MainInventory[emptySlot].TriggerAnimation()
 
 			stack.Count -= toAdd
 		} else {
@@ -152,4 +158,19 @@ func (inv *Inventory) HasItem(t item.ItemStack) bool {
 		}
 	}
 	return false
+}
+
+// UpdateAnimations decrements animation counters for all item stacks.
+// Should be called once per game tick.
+func (inv *Inventory) UpdateAnimations() {
+	for _, slot := range inv.MainInventory {
+		if slot != nil {
+			slot.UpdateAnimation()
+		}
+	}
+	for _, slot := range inv.ArmorInventory {
+		if slot != nil {
+			slot.UpdateAnimation()
+		}
+	}
 }

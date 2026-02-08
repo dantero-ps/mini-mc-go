@@ -110,32 +110,82 @@ func (i *Items) Render(ctx renderer.RenderContext) {
 			continue
 		}
 
+		// Calculate how many items to render based on stack count (Minecraft style)
+		// 1 item: 1 copy
+		// 2-16 items: 2 copies
+		// 17-32 items: 3 copies
+		// 33-48 items: 4 copies
+		// 49-64 items: 5 copies
+		renderCount := getStackRenderCount(itemEnt.Stack.Count)
+
 		// Animation logic (bobbing & rotation)
 		age := float32(itemEnt.Age * 20.0) // Convert seconds to ticks approx
 		hover := float32(math.Sin(float64(age/10.0+float32(itemEnt.HoverStart))))*0.1 + 0.25
 		rot := (age/20.0 + float32(itemEnt.HoverStart)) * (180.0 / math.Pi)
 
-		// Translate
 		pos := itemEnt.Position()
-		model := mgl32.Translate3D(pos.X(), pos.Y()+hover, pos.Z())
 
-		// Rotate (around Y)
-		model = model.Mul4(mgl32.HomogRotate3DY(mgl32.DegToRad(rot)))
+		// Render multiple items for stacks
+		for j := 0; j < renderCount; j++ {
+			// Offset each item slightly for visual stacking effect
+			// Use deterministic offsets based on index for consistent appearance
+			offsetX := float32(0)
+			offsetY := float32(j) * 0.03 // Stack vertically
+			offsetZ := float32(0)
 
-		// Scale (0.25 size block)
-		model = model.Mul4(mgl32.Scale3D(0.25, 0.25, 0.25))
+			// Add slight random-like horizontal offset for items beyond first
+			if j > 0 {
+				// Use sine/cosine for pseudo-random but deterministic offsets
+				angle := float32(j) * 2.39996 // Golden angle for nice distribution
+				offsetX = float32(math.Sin(float64(angle))) * 0.05
+				offsetZ = float32(math.Cos(float64(angle))) * 0.05
+			}
 
-		// Center the mesh (0..1 -> -0.5..0.5)
-		model = model.Mul4(mgl32.Translate3D(-0.5, -0.5, -0.5))
+			// Translate
+			model := mgl32.Translate3D(pos.X()+offsetX, pos.Y()+hover+offsetY, pos.Z()+offsetZ)
 
-		i.shader.SetMatrix4("model", &model[0])
+			// Rotate (around Y) - each layer rotates slightly differently
+			layerRot := rot + float32(j)*15.0
+			model = model.Mul4(mgl32.HomogRotate3DY(mgl32.DegToRad(layerRot)))
 
-		i.drawBlock(itemEnt.Stack.Type, mesh)
+			// Scale (0.25 size block)
+			model = model.Mul4(mgl32.Scale3D(0.25, 0.25, 0.25))
+
+			// Center the mesh (0..1 -> -0.5..0.5)
+			model = model.Mul4(mgl32.Translate3D(-0.5, -0.5, -0.5))
+
+			i.shader.SetMatrix4("model", &model[0])
+
+			i.drawBlock(itemEnt.Stack.Type, mesh)
+		}
+	}
+}
+
+// getStackRenderCount returns how many item copies to render based on stack count
+// Matches Minecraft's visual stacking behavior
+func getStackRenderCount(count int) int {
+	switch {
+	case count <= 1:
+		return 1
+	case count <= 16:
+		return 2
+	case count <= 32:
+		return 3
+	case count <= 48:
+		return 4
+	default:
+		return 5
 	}
 }
 
 // RenderGUI draws an item stack at 2D screen coordinates (x,y) with given size
 func (i *Items) RenderGUI(stack *item.ItemStack, x, y, size float32) {
+	i.RenderGUIScaled(stack, x, y, size, size)
+}
+
+// RenderGUIScaled draws an item stack at 2D screen coordinates with separate width/height
+// This allows for animated scaling effects (squeeze/stretch)
+func (i *Items) RenderGUIScaled(stack *item.ItemStack, x, y, width, height float32) {
 	if stack == nil {
 		return
 	}
@@ -171,16 +221,19 @@ func (i *Items) RenderGUI(stack *item.ItemStack, x, y, size float32) {
 
 	// Center of item is at (0,0,0) in model space
 	// Screen coords (x,y) are top-left usually, let's adjust to center
-	cx := x + size/2
-	cy := i.height - (y + size/2)
+	cx := x + width/2
+	cy := i.height - (y + height/2)
 
 	model := mgl32.Translate3D(cx, cy, 0)
 
 	// Minecraft GUI item scale and rotation
 	// We use -size for Y because the UI coordinate system has Y increasing downwards
 	// The 0.65 factor compensates for the isometric expansion to fit inside 16x16 slot area
-	guiScale := size * 0.65
-	model = model.Mul4(mgl32.Scale3D(guiScale, guiScale, guiScale))
+	// Use the smaller dimension to maintain aspect ratio of the block model
+	guiScaleX := width * 0.65
+	guiScaleY := height * 0.65
+	guiScaleZ := (width + height) / 2 * 0.65 // Average for Z depth
+	model = model.Mul4(mgl32.Scale3D(guiScaleX, guiScaleY, guiScaleZ))
 
 	// Minecraft standard GUI item rotation:
 	// 1. Rotate 45 degrees around Y

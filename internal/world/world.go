@@ -12,6 +12,10 @@ type Ticker interface {
 	Position() mgl32.Vec3
 }
 
+// ItemEntityConfigurator is called when adding ItemEntity to configure it with world services
+// This avoids import cycles by using a function reference set from the entity package
+var ItemEntityConfigurator func(item Ticker, world interface{})
+
 // World represents the game world, composed of chunks
 type World struct {
 	// Components
@@ -53,6 +57,10 @@ func (w *World) Close() {
 
 // AddEntity adds an entity to the world
 func (w *World) AddEntity(e Ticker) {
+	// If the configurator is set and this is an ItemEntity, configure it
+	if ItemEntityConfigurator != nil {
+		ItemEntityConfigurator(e, w)
+	}
 	w.entities.Add(e)
 }
 
@@ -64,6 +72,25 @@ func (w *World) UpdateEntities(dt float64) {
 // GetEntities returns a safe copy of the current entities in the world
 func (w *World) GetEntities() []Ticker {
 	return w.entities.GetAll()
+}
+
+// GetNearbyEntities returns entities within a box centered at (cx, cy, cz) with ranges (rx, ry, rz).
+// Returns []interface{} to avoid import cycles - callers type-assert to specific entity types.
+func (w *World) GetNearbyEntities(cx, cy, cz, rx, ry, rz float32) []interface{} {
+	minX := cx - rx
+	maxX := cx + rx
+	minY := cy - ry
+	maxY := cy + ry
+	minZ := cz - rz
+	maxZ := cz + rz
+
+	tickers := w.entities.GetEntitiesInAABB(minX, minY, minZ, maxX, maxY, maxZ)
+
+	result := make([]interface{}, len(tickers))
+	for i, t := range tickers {
+		result[i] = t
+	}
+	return result
 }
 
 // GetChunk returns the chunk at the specified chunk coordinates
