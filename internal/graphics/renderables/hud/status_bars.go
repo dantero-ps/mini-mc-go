@@ -1,7 +1,10 @@
 package hud
 
 import (
+	"fmt"
 	"math"
+
+	"mini-mc/internal/graphics"
 
 	"mini-mc/internal/player"
 
@@ -15,7 +18,7 @@ func (h *HUD) renderHealth(p *player.Player) {
 
 	hbH := 22.0 * scale
 	yHotbar := screenHeight - hbH - 10.0
-	y := yHotbar - 17.0*scale
+	y := yHotbar - 7.0*scale
 
 	// Start X: Same as hotbar left
 	hbW := 182.0 * scale
@@ -41,17 +44,23 @@ func (h *HUD) renderHealth(p *player.Player) {
 	maxHearts := int(math.Ceil(float64(p.MaxHealth) / 2.0))
 	currentHealth := int(math.Ceil(float64(p.Health)))
 
+	texIcons, err := graphics.GetTexture("assets/textures/gui/icons.png")
+	if err != nil {
+		fmt.Printf("Error loading icons texture: %v\n", err)
+		return
+	}
+
 	for i := 0; i < maxHearts; i++ {
 		x := startBaseX + float32(i*8)*scale
 
 		// Draw Empty Heart (Background)
-		h.uiRenderer.DrawTexturedRect(x, y, heartW, heartH, h.iconsTexture, uEmpty, vEmpty, uEmpty+uWidth, vEmpty+vHeight, color, 1.0)
+		h.uiRenderer.DrawTexturedRect(x, y, heartW, heartH, texIcons, uEmpty, vEmpty, uEmpty+uWidth, vEmpty+vHeight, color, 1.0)
 
 		// Draw Full or Half
 		if (i*2 + 1) < currentHealth {
-			h.uiRenderer.DrawTexturedRect(x, y, heartW, heartH, h.iconsTexture, uFull, vEmpty, uFull+uWidth, vEmpty+vHeight, color, 1.0)
+			h.uiRenderer.DrawTexturedRect(x, y, heartW, heartH, texIcons, uFull, vEmpty, uFull+uWidth, vEmpty+vHeight, color, 1.0)
 		} else if (i*2 + 1) == currentHealth {
-			h.uiRenderer.DrawTexturedRect(x, y, heartW, heartH, h.iconsTexture, uHalf, vEmpty, uHalf+uWidth, vEmpty+vHeight, color, 1.0)
+			h.uiRenderer.DrawTexturedRect(x, y, heartW, heartH, texIcons, uHalf, vEmpty, uHalf+uWidth, vEmpty+vHeight, color, 1.0)
 		}
 	}
 }
@@ -63,7 +72,7 @@ func (h *HUD) renderFood(p *player.Player) {
 
 	hbH := 22.0 * scale
 	yHotbar := screenHeight - hbH - 10.0
-	y := yHotbar - 17.0*scale
+	y := yHotbar - 7.0*scale
 
 	// Center point
 	centerX := screenWidth / 2.0
@@ -90,18 +99,24 @@ func (h *HUD) renderFood(p *player.Player) {
 	maxFood := int(math.Ceil(float64(p.MaxFoodLevel) / 2.0))
 	currentFood := int(math.Ceil(float64(p.FoodLevel)))
 
+	// Load texture again (cached)
+	texIcons, err := graphics.GetTexture("assets/textures/gui/icons.png")
+	if err != nil {
+		return
+	}
+
 	for i := 0; i < maxFood; i++ {
 		// x = rightEdge - i*8*scale - 9*scale
 		x := rightEdge - float32(i*8)*scale - 9.0*scale
 
 		// Draw Empty Food (Background)
-		h.uiRenderer.DrawTexturedRect(x, y, iconW, iconH, h.iconsTexture, uEmpty, vBase, uEmpty+uWidth, vBase+vHeight, color, 1.0)
+		h.uiRenderer.DrawTexturedRect(x, y, iconW, iconH, texIcons, uEmpty, vBase, uEmpty+uWidth, vBase+vHeight, color, 1.0)
 
 		// Draw Full or Half
 		if (i*2 + 1) < currentFood {
-			h.uiRenderer.DrawTexturedRect(x, y, iconW, iconH, h.iconsTexture, uFull, vBase, uFull+uWidth, vBase+vHeight, color, 1.0)
+			h.uiRenderer.DrawTexturedRect(x, y, iconW, iconH, texIcons, uFull, vBase, uFull+uWidth, vBase+vHeight, color, 1.0)
 		} else if (i*2 + 1) == currentFood {
-			h.uiRenderer.DrawTexturedRect(x, y, iconW, iconH, h.iconsTexture, uHalf, vBase, uHalf+uWidth, vBase+vHeight, color, 1.0)
+			h.uiRenderer.DrawTexturedRect(x, y, iconW, iconH, texIcons, uHalf, vBase, uHalf+uWidth, vBase+vHeight, color, 1.0)
 		}
 	}
 }

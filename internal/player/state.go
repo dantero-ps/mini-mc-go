@@ -89,6 +89,9 @@ type Player struct {
 	// Forward double-tap detection for sprint
 	lastForwardPressTime float64
 
+	// Events
+	OnInventoryStateChange func(isOpen bool)
+
 	Health       float32
 	MaxHealth    float32
 	FoodLevel    float32
@@ -139,6 +142,17 @@ func New(world *world.World, mode GameMode) *Player {
 		FallDistance:         0,
 		JumpStartY:           0,
 		MaxJumpHeight:        0,
+	}
+}
+
+// SetInventoryOpen updates inventory state and triggers callback
+func (p *Player) SetInventoryOpen(open bool) {
+	if p.IsInventoryOpen == open {
+		return
+	}
+	p.IsInventoryOpen = open
+	if p.OnInventoryStateChange != nil {
+		p.OnInventoryStateChange(open)
 	}
 }
 

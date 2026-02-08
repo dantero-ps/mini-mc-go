@@ -318,7 +318,7 @@ func (w *World) GetChunk(chunkX, chunkY, chunkZ int, create bool) *Chunk {
 ### Phase 2: God File Splits (Next Sprint)
 1. ✅ Split `player/player.go` into 5 files
 2. ✅ Split `hud/hud.go` into 5 files
-3. ⬜ Split `world/world.go` into 4 files
+3. ✅ Split `world/world.go` into 4 files
 
 ### Phase 3: Architecture Improvements (Backlog)
 1. ⬜ Standardize physics coordinate system

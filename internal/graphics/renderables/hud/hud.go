@@ -1,17 +1,17 @@
 package hud
 
 import (
-	"fmt"
-	"mini-mc/internal/graphics"
 	"mini-mc/internal/graphics/renderables/font"
 	"mini-mc/internal/graphics/renderables/items"
 	"mini-mc/internal/graphics/renderables/playermodel"
 	"mini-mc/internal/graphics/renderables/ui"
 	"mini-mc/internal/graphics/renderer"
+	"mini-mc/internal/player"
 	"mini-mc/internal/profiling"
 	"path/filepath"
 	"time"
 
+	"github.com/go-gl/glfw/v3.3/glfw"
 	"github.com/go-gl/mathgl/mgl32"
 )
 
@@ -28,16 +28,6 @@ type HUD struct {
 	width  float32
 	height float32
 
-	// Textures
-	widgetsTexture   uint32
-	inventoryTexture uint32
-	iconsTexture     uint32
-
-	// Inventory state
-	HoveredSlot   int       // -1 if no hover, otherwise slot index (0-35)
-	lastClickSlot int       // Last clicked slot
-	lastClickTime time.Time // Time of last click
-
 	// Profiling state
 	frames       int
 	lastFPSCheck time.Time
@@ -45,22 +35,39 @@ type HUD struct {
 
 	// Enhanced profiling metrics
 	profilingStats ProfilingStats
+
+	// Current active screen (e.g. inventory)
+	currentScreen Screen
 }
 
 // NewHUD creates a new HUD renderable
 func NewHUD() *HUD {
 	return &HUD{
 		showProfiling: false,
-		HoveredSlot:   -1,
 		width:         900,
 		height:        600,
+		currentScreen: &NullScreen{},
+	}
+}
+
+// SetInventoryOpen handles inventory state changes
+func (h *HUD) SetInventoryOpen(open bool, p *player.Player) {
+	if open {
+		if !h.currentScreen.IsActive() {
+			h.currentScreen = NewInventoryScreen(h, p)
+		}
+	} else {
+		if h.currentScreen.IsActive() {
+			h.currentScreen.Close()
+			h.currentScreen = &NullScreen{}
+		}
 	}
 }
 
 // Init initializes the HUD rendering system
 func (h *HUD) Init() error {
 	// Load font atlas and renderer
-	fontPath := filepath.Join("assets", "fonts", "OpenSans-Regular.ttf")
+	fontPath := filepath.Join("assets", "fonts", "Minecraft.otf")
 	atlas, err := font.BuildFontAtlas(fontPath, 48)
 	if err != nil {
 		return err
@@ -97,36 +104,11 @@ func (h *HUD) Init() error {
 	}
 	h.playerModel = playerModel
 
-	// Load Textures
-	widgetsPath := "assets/textures/gui/widgets.png"
-	tex, _, _, err := graphics.LoadTexture(widgetsPath)
-	if err != nil {
-		return fmt.Errorf("failed to load widgets texture: %v", err)
-	}
-	h.widgetsTexture = tex
-
-	// Inventory texture loading
-	invPath := "assets/textures/gui/inventory.png"
-	texInv, _, _, err := graphics.LoadTexture(invPath)
-	if err != nil {
-		return fmt.Errorf("failed to load inventory texture: %v", err)
-	}
-	h.inventoryTexture = texInv
-
-	// Icons texture loading
-	iconsPath := "assets/textures/gui/icons.png"
-	texIcons, _, _, err := graphics.LoadTexture(iconsPath)
-	if err != nil {
-		return fmt.Errorf("failed to load icons texture: %v", err)
-	}
-	h.iconsTexture = texIcons
-
 	return nil
 }
 
 // Render renders the HUD elements
 func (h *HUD) Render(ctx renderer.RenderContext) {
-	// Update FPS tracking
 	h.frames++
 	if time.Since(h.lastFPSCheck) >= time.Second {
 		h.currentFPS = h.frames
@@ -134,22 +116,26 @@ func (h *HUD) Render(ctx renderer.RenderContext) {
 		h.frames = 0
 	}
 
-	// Render player position
-	h.renderPlayerPosition(ctx.Player)
-
-	// Render FPS
-	h.renderFPS()
+	// Render World-Level HUD elements (Hotbar, Health, Food) which should be dimmed by menus
+	h.renderHotbar(ctx.Player)
+	h.renderHealth(ctx.Player)
+	h.renderFood(ctx.Player)
 
 	if ctx.Player.IsInventoryOpen {
 		// Dim background
 		h.uiRenderer.DrawFilledRect(0, 0, h.width, h.height, mgl32.Vec3{0, 0, 0}, 0.70)
 
-		h.renderInventory(ctx.Player)
+		h.currentScreen.Render(ctx.Player.MouseX, ctx.Player.MouseY)
+	} else {
+		if h.currentScreen.IsActive() {
+			h.currentScreen.Close()
+			h.currentScreen = &NullScreen{}
+		}
 	}
-	// Render Hotbar always
-	h.renderHotbar(ctx.Player)
-	h.renderHealth(ctx.Player)
-	h.renderFood(ctx.Player)
+
+	// Render Debug Info (FPS, Coords) - Always on top
+	h.renderPlayerPosition(ctx.Player)
+	h.renderFPS()
 
 	// Render profiling info if enabled
 	if h.showProfiling {
@@ -159,8 +145,44 @@ func (h *HUD) Render(ctx renderer.RenderContext) {
 		}()
 	}
 
-	// Flush any remaining UI commands (should be minimal; main flush points are inside renderHotbar/renderInventory)
+	// Flush any remaining UI commands
 	h.uiRenderer.Flush()
+}
+
+func (h *HUD) HandleInventoryClick(x, y float64, button glfw.MouseButton, action glfw.Action) bool {
+	return h.currentScreen.HandleClick(x, y, button, action)
+}
+
+// MoveHoveredItemToHotbar moves the hovered item to the specified hotbar slot
+func (h *HUD) MoveHoveredItemToHotbar(hotbarSlot int) {
+	hoveredSlot := h.currentScreen.GetHoveredSlot()
+	if hoveredSlot == -1 {
+		return
+	}
+
+	container := h.currentScreen.GetContainer()
+	if container == nil {
+		return
+	}
+
+	targetSlotIndex := 27 + hotbarSlot
+
+	if hoveredSlot < 0 || hoveredSlot >= len(container.Slots) {
+		return
+	}
+	if targetSlotIndex < 0 || targetSlotIndex >= len(container.Slots) {
+		return
+	}
+
+	sourceSlot := container.Slots[hoveredSlot]
+	targetSlot := container.Slots[targetSlotIndex]
+
+	sourceStack := sourceSlot.GetStack()
+	targetStack := targetSlot.GetStack()
+
+	// Swap them
+	sourceSlot.PutStack(targetStack)
+	targetSlot.PutStack(sourceStack)
 }
 
 func (h *HUD) Dispose() {
@@ -169,7 +191,6 @@ func (h *HUD) Dispose() {
 	if h.playerModel != nil {
 		h.playerModel.Dispose()
 	}
-	// Font resources are managed by graphics package
 }
 
 // RenderText renders text using the font renderer

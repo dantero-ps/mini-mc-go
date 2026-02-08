@@ -80,7 +80,8 @@ func (i *Items) Init() error {
 }
 
 func (i *Items) Render(ctx renderer.RenderContext) {
-	if len(ctx.World.Entities) == 0 {
+	entities := ctx.World.GetEntities()
+	if len(entities) == 0 {
 		return
 	}
 
@@ -97,7 +98,7 @@ func (i *Items) Render(ctx renderer.RenderContext) {
 
 	gl.BindVertexArray(0)
 
-	for _, ent := range ctx.World.Entities {
+	for _, ent := range entities {
 		itemEnt, ok := ent.(*entity.ItemEntity)
 		if !ok {
 			continue
@@ -139,9 +140,6 @@ func (i *Items) RenderGUI(stack *item.ItemStack, x, y, size float32) {
 		return
 	}
 
-	gl.Enable(gl.DEPTH_TEST)      // GUI items need depth test for 3D look
-	gl.Clear(gl.DEPTH_BUFFER_BIT) // Clear depth so items don't clip with world or each other
-
 	i.shader.Use()
 
 	// Orthographic projection for UI
@@ -162,6 +160,9 @@ func (i *Items) RenderGUI(stack *item.ItemStack, x, y, size float32) {
 	if !exists || mesh == nil {
 		return
 	}
+
+	gl.Enable(gl.DEPTH_TEST)      // GUI items need depth test for 3D look
+	gl.Clear(gl.DEPTH_BUFFER_BIT) // Clear depth so items don't clip with world or each other
 
 	// Model matrix for positioning
 	// 1. Scale to size
@@ -195,6 +196,7 @@ func (i *Items) RenderGUI(stack *item.ItemStack, x, y, size float32) {
 	i.drawBlock(stack.Type, mesh)
 
 	gl.BindVertexArray(0)
+	gl.Disable(gl.DEPTH_TEST)
 }
 
 // RenderHand draws an item stack in the player's hand using provided projection and model matrices

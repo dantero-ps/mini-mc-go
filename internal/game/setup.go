@@ -11,7 +11,7 @@ func SetupWindow() (*glfw.Window, error) {
 	glfw.WindowHint(glfw.OpenGLForwardCompatible, glfw.True)
 	glfw.WindowHint(glfw.OpenGLProfile, glfw.OpenGLCoreProfile)
 
-	window, err := glfw.CreateWindow(900, 600, "mini-mc", nil, nil)
+	window, err := glfw.CreateWindow(900, 600, "Minecraft", nil, nil)
 	if err != nil {
 		return nil, err
 	}

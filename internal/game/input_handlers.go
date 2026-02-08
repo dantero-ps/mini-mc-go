@@ -29,7 +29,7 @@ func SetupInputHandlers(app *App) {
 		if app.session != nil && !app.session.Paused {
 			s := app.session
 			if s.Player.IsInventoryOpen {
-				s.HUDRenderer.HandleInventoryClick(s.Player, s.Player.MouseX, s.Player.MouseY, button, action)
+				s.HUDRenderer.HandleInventoryClick(s.Player.MouseX, s.Player.MouseY, button, action)
 			} else {
 				s.Player.HandleMouseButton(button, action)
 			}
@@ -71,6 +71,18 @@ func SetupInputHandlers(app *App) {
 	window.SetSizeCallback(func(w *glfw.Window, width, height int) {
 		if app.session != nil {
 			app.session.Renderer.UpdateViewport(width, height)
+		}
+	})
+
+	// Focus callback
+	window.SetFocusCallback(func(w *glfw.Window, focused bool) {
+		if !focused && app.session != nil && !app.session.Paused {
+			s := app.session
+			if s.Player.IsInventoryOpen {
+				s.Player.SetInventoryOpen(false)
+				s.Player.DropCursorItem()
+			}
+			s.SetPaused(true)
 		}
 	})
 

@@ -4,6 +4,28 @@ import (
 	"mini-mc/internal/item"
 )
 
+// GetItem returns the item stack at the given global index
+// 0-35: Main Inventory (including hotbar)
+// 36-39: Armor Inventory
+func (inv *Inventory) GetItem(index int) *item.ItemStack {
+	if index >= 0 && index < MainInventorySize {
+		return inv.MainInventory[index]
+	}
+	if index >= MainInventorySize && index < MainInventorySize+ArmorInventorySize {
+		return inv.ArmorInventory[index-MainInventorySize]
+	}
+	return nil
+}
+
+// SetItem sets the item stack at the given global index
+func (inv *Inventory) SetItem(index int, stack *item.ItemStack) {
+	if index >= 0 && index < MainInventorySize {
+		inv.MainInventory[index] = stack
+	} else if index >= MainInventorySize && index < MainInventorySize+ArmorInventorySize {
+		inv.ArmorInventory[index-MainInventorySize] = stack
+	}
+}
+
 const (
 	MainInventorySize  = 36
 	ArmorInventorySize = 4

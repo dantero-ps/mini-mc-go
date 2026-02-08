@@ -91,6 +91,11 @@ func NewSession(window *glfw.Window, mode player.GameMode) (*Session, error) {
 	width, height := window.GetSize()
 	r.UpdateViewport(width, height)
 
+	// Connect inventory state changes to HUD
+	gamePlayer.OnInventoryStateChange = func(isOpen bool) {
+		hudRenderer.SetInventoryOpen(isOpen, gamePlayer)
+	}
+
 	return &Session{
 		Window:           window,
 		Renderer:         r,
@@ -123,6 +128,7 @@ func (s *Session) Update(dt float64, im *standardInput.InputManager) menu.Action
 		switch action {
 		case menu.ActionResume:
 			s.SetPaused(false)
+			return menu.ActionNone
 		case menu.ActionQuitToMenu:
 			return menu.ActionQuitToMenu
 		case menu.ActionQuitGame:
@@ -243,8 +249,9 @@ func (s *Session) handleInputActions(im *standardInput.InputManager) {
 
 	if im.JustPressed(standardInput.ActionInventory) {
 		if !s.Paused {
-			p.IsInventoryOpen = !p.IsInventoryOpen
-			if p.IsInventoryOpen {
+			newState := !p.IsInventoryOpen
+			p.SetInventoryOpen(newState)
+			if newState {
 				s.Window.SetInputMode(glfw.CursorMode, glfw.CursorNormal)
 				w, h := s.Window.GetSize()
 				s.Window.SetCursorPos(float64(w)/2, float64(h)/2)
@@ -258,7 +265,7 @@ func (s *Session) handleInputActions(im *standardInput.InputManager) {
 
 	if im.JustPressed(standardInput.ActionPause) {
 		if p.IsInventoryOpen {
-			p.IsInventoryOpen = false
+			p.SetInventoryOpen(false)
 			p.DropCursorItem()
 			s.Window.SetInputMode(glfw.CursorMode, glfw.CursorDisabled)
 			p.FirstMouse = true
@@ -278,7 +285,7 @@ func (s *Session) handleInputActions(im *standardInput.InputManager) {
 
 func (s *Session) handleHotbar(slot int) {
 	if s.Player.IsInventoryOpen {
-		s.HUDRenderer.MoveHoveredItemToHotbar(s.Player, slot)
+		s.HUDRenderer.MoveHoveredItemToHotbar(slot)
 	} else {
 		s.Player.HandleNumKey(slot)
 	}

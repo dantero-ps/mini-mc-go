@@ -69,8 +69,7 @@ func (p *Player) HandleNumKey(slot int) {
 func (p *Player) CheckEntityCollisions(dt float64) {
 	// Minecraft-style pickup: only when player collides with item
 	// No magnet effect - items don't move towards player
-	p.World.EntitiesMu.RLock()
-	defer p.World.EntitiesMu.RUnlock()
+	entities := p.World.GetEntities()
 
 	// Player collision box: 0.6 width, 1.8 height
 	// Item collision box: 0.25x0.25x0.25
@@ -81,7 +80,7 @@ func (p *Player) CheckEntityCollisions(dt float64) {
 	playerHeight := float32(1.8)
 	itemHalfSize := float32(0.125) // Half of 0.25
 
-	for _, e := range p.World.Entities {
+	for _, e := range entities {
 		if itemEnt, ok := e.(*entity.ItemEntity); ok {
 			if itemEnt.IsDead() {
 				continue

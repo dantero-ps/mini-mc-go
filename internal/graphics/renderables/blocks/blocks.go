@@ -14,7 +14,6 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 )
 
-// Blocks implements block rendering feature
 type Blocks struct {
 	mainShader     *graphics.Shader
 	visibleScratch []world.ChunkWithCoord
@@ -31,7 +30,6 @@ type Blocks struct {
 	cachedNearby   []world.ChunkWithCoord
 }
 
-// NewBlocks creates a new blocks renderable
 func NewBlocks() *Blocks {
 	return &Blocks{
 		visibleScratch: make([]world.ChunkWithCoord, 0, 1024),
@@ -45,9 +43,7 @@ func NewBlocks() *Blocks {
 	}
 }
 
-// Init initializes the blocks rendering system
 func (b *Blocks) Init() error {
-	// Initialize shader
 	var err error
 	b.mainShader, err = graphics.NewShader(MainVertShader, MainFragShader)
 	if err != nil {
@@ -57,22 +53,18 @@ func (b *Blocks) Init() error {
 	// Set static face colors once after linking the main shader
 	b.mainShader.Use()
 
-	// Initialize global data structures
 	chunkMeshes = make(map[world.ChunkCoord]*chunkMesh)
 	columnMeshes = make(map[[2]int]*columnMesh)
 
-	// Initialize texture atlas
 	if err := InitTextureAtlas(); err != nil {
 		return err
 	}
 
-	// Setup atlas
 	setupAtlas()
 
 	return nil
 }
 
-// Render renders all visible blocks
 func (b *Blocks) Render(ctx renderer.RenderContext) {
 	// Apply wireframe polygon mode if toggled, then always reset to FILL after drawing blocks
 	if config.GetWireframeMode() {
@@ -88,14 +80,11 @@ func (b *Blocks) Render(ctx renderer.RenderContext) {
 	}()
 }
 
-// Dispose cleans up OpenGL resources
 func (b *Blocks) Dispose() {
-	// Clean up shaders
 	if b.mainShader != nil {
 		// Note: Shader cleanup would need to be implemented in the Shader type
 	}
 
-	// Clean up atlas resources
 	for _, r := range atlasRegions {
 		if r == nil {
 			continue
@@ -108,7 +97,6 @@ func (b *Blocks) Dispose() {
 		}
 	}
 
-	// Clean up chunk meshes
 	for _, m := range chunkMeshes {
 		if m != nil {
 			m.cpuVerts = nil
@@ -116,7 +104,6 @@ func (b *Blocks) Dispose() {
 	}
 }
 
-// SetViewport updates viewport dimensions (not needed for blocks)
 func (b *Blocks) SetViewport(width, height int) {
 	// Blocks don't need viewport dimensions
 }
@@ -124,10 +111,8 @@ func (b *Blocks) SetViewport(width, height int) {
 func (b *Blocks) renderBlocksInternal(ctx renderer.RenderContext) {
 	func() {
 		defer profiling.Track("renderer.renderBlocks.shaderSetup")()
-		// Track shader binding time (only the Use() call)
 		b.mainShader.Use()
 
-		// Bind texture array
 		if GlobalTextureAtlas != nil {
 			gl.ActiveTexture(gl.TEXTURE0)
 			gl.BindTexture(gl.TEXTURE_2D_ARRAY, GlobalTextureAtlas.TextureID)
@@ -145,7 +130,6 @@ func (b *Blocks) renderBlocksInternal(ctx renderer.RenderContext) {
 		b.mainShader.SetMatrix4("proj", &ctx.Proj[0])
 		b.mainShader.SetMatrix4("view", &ctx.View[0])
 
-		// Set light direction
 		light := mgl32.Vec3{0.3, 1.0, 0.3}.Normalize()
 		b.mainShader.SetVector3("lightDir", light.X(), light.Y(), light.Z())
 	}()
@@ -248,7 +232,6 @@ func (b *Blocks) renderBlocksInternal(ctx renderer.RenderContext) {
 		stop()
 	}
 
-	// Phase 2: single multi-draw over atlas
 	func() {
 		defer profiling.Track("renderer.renderBlocks.drawAtlas")()
 		// Aggregate visible chunks into unique XZ columns
@@ -257,7 +240,6 @@ func (b *Blocks) renderBlocksInternal(ctx renderer.RenderContext) {
 		for _, vc := range visible {
 			colSet[xz{vc.Coord.X, vc.Coord.Z}] = struct{}{}
 		}
-		// First ensure/update columns
 		// Increment frame and mark visible columns for this frame to avoid per-frame maps
 		forMarked := false
 		for k := range colSet {

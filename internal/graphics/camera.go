@@ -6,7 +6,6 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 )
 
-// Camera handles the view and projection matrices
 type Camera struct {
 	AspectRatio float32
 	FOV         float32
