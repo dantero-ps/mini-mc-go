@@ -18,4 +18,5 @@ type Entity interface {
 	Position() mgl32.Vec3
 	IsDead() bool
 	SetDead()
+	GetBounds() (width, height float32)
 }

@@ -251,10 +251,11 @@ func (p *Player) UpdatePosition(dt float64, im *input.InputManager) {
 
 	// Calculate new position using CURRENT velocity
 	newPos := p.Position.Add(p.Velocity.Mul(float32(dt)))
+	pWidth, pHeight := p.GetBounds()
 
 	if p.IsFlying {
 		testPosY := mgl32.Vec3{p.Position[0], newPos[1], p.Position[2]}
-		if !physics.Collides(testPosY, PlayerHeight, p.World) {
+		if !physics.Collides(testPosY, pWidth, pHeight, p.World) {
 			p.Position[1] = newPos[1]
 		} else {
 			p.Velocity[1] = 0
@@ -262,13 +263,13 @@ func (p *Player) UpdatePosition(dt float64, im *input.InputManager) {
 	} else {
 		// Resolve Y first to avoid stepping up vertical walls
 		testPosY := mgl32.Vec3{p.Position[0], newPos[1], p.Position[2]}
-		if !physics.Collides(testPosY, PlayerHeight, p.World) {
+		if !physics.Collides(testPosY, pWidth, pHeight, p.World) {
 			p.Position[1] = newPos[1]
 			if p.Velocity[1] > 0 {
 				// Clamp to ceiling if head intersects
-				ceiling := physics.FindCeilingLevel(p.Position[0], p.Position[2], p.Position, PlayerHeight, p.World)
-				if p.Position[1]+PlayerHeight > ceiling {
-					p.Position[1] = ceiling - PlayerHeight
+				ceiling := physics.FindCeilingLevel(p.Position[0], p.Position[2], p.Position, pWidth, pHeight, p.World)
+				if p.Position[1]+pHeight > ceiling {
+					p.Position[1] = ceiling - pHeight
 					p.Velocity[1] = 0
 					p.OnGround = false
 				}
@@ -278,7 +279,7 @@ func (p *Player) UpdatePosition(dt float64, im *input.InputManager) {
 		} else {
 			if p.Velocity[1] <= 0 {
 				// Landing on ground
-				groundLevel := physics.FindGroundLevel(p.Position[0], p.Position[2], p.Position, p.World)
+				groundLevel := physics.FindGroundLevel(p.Position[0], p.Position[2], p.Position, pWidth, pHeight, p.World)
 				if !float32IsInfNeg(groundLevel) {
 					p.OnGround = true
 					p.Velocity[1] = 0 // Reset vertical velocity on landing
@@ -288,8 +289,8 @@ func (p *Player) UpdatePosition(dt float64, im *input.InputManager) {
 				}
 			} else {
 				// Hitting ceiling
-				ceiling := physics.FindCeilingLevel(p.Position[0], p.Position[2], p.Position, PlayerHeight, p.World)
-				p.Position[1] = ceiling - PlayerHeight
+				ceiling := physics.FindCeilingLevel(p.Position[0], p.Position[2], p.Position, pWidth, pHeight, p.World)
+				p.Position[1] = ceiling - pHeight
 				p.OnGround = false
 				p.Velocity[1] = 0
 			}
@@ -298,8 +299,8 @@ func (p *Player) UpdatePosition(dt float64, im *input.InputManager) {
 
 	// Then resolve X at updated Y
 	testPosX := mgl32.Vec3{newPos[0], p.Position[1], p.Position[2]}
-	if !physics.Collides(testPosX, PlayerHeight, p.World) {
-		if p.IsSneaking && p.Velocity[1] == 0 && physics.FindGroundLevel(newPos[0], p.Position[2], p.Position, p.World) < p.Position[1]-0.1 {
+	if !physics.Collides(testPosX, pWidth, pHeight, p.World) {
+		if p.IsSneaking && p.Velocity[1] == 0 && physics.FindGroundLevel(newPos[0], p.Position[2], p.Position, pWidth, pHeight, p.World) < p.Position[1]-0.1 {
 			p.Velocity[0] = 0
 		} else {
 			p.Position[0] = newPos[0]
@@ -311,8 +312,8 @@ func (p *Player) UpdatePosition(dt float64, im *input.InputManager) {
 
 	// Finally resolve Z at updated Y
 	testPosZ := mgl32.Vec3{p.Position[0], p.Position[1], newPos[2]}
-	if !physics.Collides(testPosZ, PlayerHeight, p.World) {
-		if p.IsSneaking && p.Velocity[1] == 0 && physics.FindGroundLevel(p.Position[0], newPos[2], p.Position, p.World) < p.Position[1]-0.1 {
+	if !physics.Collides(testPosZ, pWidth, pHeight, p.World) {
+		if p.IsSneaking && p.Velocity[1] == 0 && physics.FindGroundLevel(p.Position[0], newPos[2], p.Position, pWidth, pHeight, p.World) < p.Position[1]-0.1 {
 			p.Velocity[2] = 0
 		} else {
 			p.Position[2] = newPos[2]
@@ -324,7 +325,7 @@ func (p *Player) UpdatePosition(dt float64, im *input.InputManager) {
 
 	// Final ground settle
 	if !p.IsFlying {
-		groundLevel := physics.FindGroundLevel(p.Position[0], p.Position[2], p.Position, p.World)
+		groundLevel := physics.FindGroundLevel(p.Position[0], p.Position[2], p.Position, pWidth, pHeight, p.World)
 		if !float32IsInfNeg(groundLevel) {
 			delta := p.Position[1] - groundLevel
 			if p.Velocity[1] <= 0 {
@@ -347,7 +348,7 @@ func (p *Player) UpdatePosition(dt float64, im *input.InputManager) {
 		// Double check if on ground
 		if p.OnGround {
 			checkPos := mgl32.Vec3{p.Position[0], p.Position[1] - 0.01, p.Position[2]}
-			if !physics.Collides(checkPos, PlayerHeight, p.World) {
+			if !physics.Collides(checkPos, pWidth, pHeight, p.World) {
 				p.OnGround = false
 			}
 		}

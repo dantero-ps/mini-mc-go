@@ -112,7 +112,7 @@ func (w *Wireframe) renderHighlightedBlock(blockPos [3]int, view, projection mgl
 	// Create model matrix for the highlighted block
 	model := mgl32.Translate3D(
 		float32(blockPos[0])+0.5,
-		float32(blockPos[1])-0.5,
+		float32(blockPos[1])+0.5,
 		float32(blockPos[2])+0.5,
 	).Mul4(mgl32.Scale3D(1.01, 1.01, 1.01))
 

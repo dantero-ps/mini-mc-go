@@ -321,10 +321,10 @@ func (w *World) GetChunk(chunkX, chunkY, chunkZ int, create bool) *Chunk {
 3. ✅ Split `world/world.go` into 4 files
 
 ### Phase 3: Architecture Improvements (Backlog)
-1. ⬜ Standardize physics coordinate system
+1. ✅ Standardize physics coordinate system
 2. ✅ Extract `TerrainGenerator` interface
-3. ⬜ Remove singleton pattern from meshing pool
-4. ⬜ Create `Entity` interface with `GetBounds()`
+3. ✅ Remove singleton pattern from meshing pool
+4. ✅ Create `Entity` interface with `GetBounds()`
 
 ---
 

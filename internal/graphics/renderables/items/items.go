@@ -117,7 +117,7 @@ func (i *Items) Render(ctx renderer.RenderContext) {
 
 		// Translate
 		pos := itemEnt.Position()
-		model := mgl32.Translate3D(pos.X(), pos.Y()+hover-1.0, pos.Z())
+		model := mgl32.Translate3D(pos.X(), pos.Y()+hover, pos.Z())
 
 		// Rotate (around Y)
 		model = model.Mul4(mgl32.HomogRotate3DY(mgl32.DegToRad(rot)))

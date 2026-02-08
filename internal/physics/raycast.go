@@ -25,11 +25,17 @@ type RaycastResult struct {
 // Raycast performs a ray casting operation from a starting point in a given direction
 func Raycast(start mgl32.Vec3, direction mgl32.Vec3, minDist, maxDist float32, world *world.World) RaycastResult {
 	defer profiling.Track("physics.Raycast")()
-	stepSize := float32(0.02)
+	stepSize := float32(0.05) // Small enough to not miss thin blocks, but larger for perf
 	steps := int(maxDist / stepSize)
 
-	var lastEmptyPos [3]int
 	result := RaycastResult{Hit: false}
+
+	// Keep track of the last block position to determine adjacent face
+	// Initialize with the block containing the start position
+	startBlockX := int(math.Floor(float64(start.X())))
+	startBlockY := int(math.Floor(float64(start.Y())))
+	startBlockZ := int(math.Floor(float64(start.Z())))
+	lastBlockPos := [3]int{startBlockX, startBlockY, startBlockZ}
 
 	for i := 0; i <= steps; i++ {
 		dist := float32(i) * stepSize
@@ -39,27 +45,28 @@ func Raycast(start mgl32.Vec3, direction mgl32.Vec3, minDist, maxDist float32, w
 
 		pos := start.Add(direction.Mul(dist))
 
-		blockPos := [3]int{
-			int(math.Floor(float64(pos.X()))),
-			int(math.Ceil(float64(pos.Y()))),
-			int(math.Floor(float64(pos.Z()))),
+		// Convert to block coordinates (Standard: Bottom-Left corner is integer)
+		bx := int(math.Floor(float64(pos.X())))
+		by := int(math.Floor(float64(pos.Y())))
+		bz := int(math.Floor(float64(pos.Z())))
+
+		// Check bounds (optional, but good for safety)
+		if by < 0 || by > 255 {
+			lastBlockPos = [3]int{bx, by, bz}
+			continue
 		}
 
-		if !world.IsAir(blockPos[0], blockPos[1], blockPos[2]) {
-			bx, by, bz := float32(blockPos[0]), float32(blockPos[1]), float32(blockPos[2])
-			if pos.X() >= bx && pos.X() < bx+1.0 &&
-				pos.Y() > by-1.0 && pos.Y() <= by &&
-				pos.Z() >= bz && pos.Z() < bz+1.0 {
-
-				result.HitPosition = blockPos
-				result.AdjacentPosition = lastEmptyPos
-				result.Distance = dist
-				result.Hit = true
-				return result
-			}
+		// Check if block is not air
+		if !world.IsAir(bx, by, bz) {
+			// Hit found!
+			result.HitPosition = [3]int{bx, by, bz}
+			result.AdjacentPosition = lastBlockPos
+			result.Distance = dist
+			result.Hit = true
+			return result
 		}
 
-		lastEmptyPos = blockPos
+		lastBlockPos = [3]int{bx, by, bz}
 	}
 
 	return result

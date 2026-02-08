@@ -31,7 +31,7 @@ vec3 unpackRGB565(int val) {
 }
 
 void main() {
-	vec3 pos = vec3(aPos) - vec3(0.0, 1.0, 0.0);
+	vec3 pos = vec3(aPos);
 	FragPos = pos;
 	
 	// Decode info
@@ -54,10 +54,10 @@ void main() {
 	TintColor = unpackRGB565(tintVal);
 
 	// Generate UVs based on world position and normal
-	// pos is now in range [0,1] for X/Z and [-1,0] for Y (top-at-integer)
+	// pos is now in range [0,1] for X/Z and [0,1] for Y (bottom-left origin)
 	vec2 uv = vec2(0.0);
 	if (normalIdx == 0 || normalIdx == 1) { // North/South (Z) -> X, Y
-		uv = vec2(pos.x, -pos.y); 
+		uv = vec2(pos.x, -pos.y); // Use -y for texture coordinates to orient correctly (top-down texture mapping)
 	} else if (normalIdx == 2 || normalIdx == 3) { // East/West (X) -> Z, Y
 		uv = vec2(pos.z, -pos.y);
 	} else { // Top/Bottom (Y) -> X, Z

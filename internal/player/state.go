@@ -164,6 +164,11 @@ func (p *Player) GetEyePosition() mgl32.Vec3 {
 	return p.Position.Add(mgl32.Vec3{0, float32(eyeOffset), 0})
 }
 
+func (p *Player) GetBounds() (width, height float32) {
+	// Player width is 0.6 (radius 0.3 * 2), height is 1.8
+	return 0.6, PlayerHeight
+}
+
 func (p *Player) ApplyDamage(amount float32) {
 	if p.GameMode == GameModeCreative {
 		return

@@ -24,22 +24,33 @@ type MeshResult struct {
 
 // WorkerPool manages goroutines for mesh generation
 type WorkerPool struct {
-	jobQueue chan MeshJob
-	workers  int
-	ctx      context.Context
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
+	jobQueue      chan MeshJob
+	workers       int
+	ctx           context.Context
+	cancel        context.CancelFunc
+	wg            sync.WaitGroup
+	directionPool *DirectionWorkerPool
 }
 
 // NewWorkerPool creates a new mesh worker pool
 func NewWorkerPool(workers int, queueSize int) *WorkerPool {
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// Initialize inner direction pool
+	// 6 workers for 6 faces seems reasonable default, or maybe scaling with workers?
+	// The direction pool processes the 6 faces OF A SINGLE CHUNK in parallel.
+	// Since we have 'workers' chunks being processed in parallel, we might want to be careful.
+	// If we have 4 mesh workers, and each spawns 6 direction jobs, that's 24 go routines.
+	// That's fine.
+	directionPool := NewDirectionWorkerPool(6, 32)
+	directionPool.Start()
+
 	pool := &WorkerPool{
-		jobQueue: make(chan MeshJob, queueSize),
-		workers:  workers,
-		ctx:      ctx,
-		cancel:   cancel,
+		jobQueue:      make(chan MeshJob, queueSize),
+		workers:       workers,
+		ctx:           ctx,
+		cancel:        cancel,
+		directionPool: directionPool,
 	}
 
 	// Start worker goroutines
@@ -78,7 +89,7 @@ func (p *WorkerPool) worker(id int) {
 		select {
 		case job := <-p.jobQueue:
 			// Process the mesh job
-			vertices := BuildGreedyMeshForChunk(job.World, job.Chunk)
+			vertices := BuildGreedyMeshForChunk(job.World, job.Chunk, p.directionPool)
 
 			result := MeshResult{
 				Coord:    job.Coord,

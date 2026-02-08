@@ -31,7 +31,8 @@ func (p *Player) HandleMouseButton(button glfw.MouseButton, action glfw.Action) 
 						// or the block's top is at/below the player's feet (pillar-up case)
 						targetTop := float32(ay)
 						placingUnderFeet := targetTop <= p.Position[1]+0.001
-						if p.World.IsAir(ax, ay, az) && (placingUnderFeet || !physics.IntersectsBlock(p.Position, PlayerHeight, ax, ay, az)) {
+						width, height := p.GetBounds()
+						if p.World.IsAir(ax, ay, az) && (placingUnderFeet || !physics.IntersectsBlock(p.Position, width, height, ax, ay, az)) {
 							// Place the selected block type
 							p.World.Set(ax, ay, az, selectedStack.Type)
 							p.TriggerHandSwing()
@@ -108,7 +109,8 @@ func (p *Player) CheckEntityCollisions(dt float64) {
 
 			// Don't pick up items that are below the player's feet
 			// Player Y position is at feet level, so if item Y is lower, skip it
-			if itemPos.Y() < playerPos.Y()+0.5 {
+			// Allow tolerance (1.5) for items below feet (e.g. in holes or lower blocks)
+			if itemPos.Y() < playerPos.Y()-1.5 {
 				continue
 			}
 
@@ -118,7 +120,7 @@ func (p *Player) CheckEntityCollisions(dt float64) {
 			// Extend player Y range upward to pick up items on blocks above
 			playerMinX := playerPos.X() - playerHalfWidth
 			playerMaxX := playerPos.X() + playerHalfWidth
-			playerMinY := playerPos.Y()                      // Don't extend downward - can't pick up items below
+			playerMinY := playerPos.Y() - 1.0                // Extend downward to pick up items below
 			playerMaxY := playerPos.Y() + playerHeight + 1.0 // Extend upward to pick up items on blocks above
 			playerMinZ := playerPos.Z() - playerHalfWidth
 			playerMaxZ := playerPos.Z() + playerHalfWidth
@@ -141,7 +143,7 @@ func (p *Player) CheckEntityCollisions(dt float64) {
 					// If stack is now empty, start pickup animation (visual only)
 					if itemEnt.Stack.Count <= 0 && !itemEnt.IsPickingUp {
 						// Target position: player's body center (eye level - 0.3)
-						targetPos := p.GetEyePosition().Sub(mgl32.Vec3{0, 0.3, 0})
+						targetPos := p.GetEyePosition().Sub(mgl32.Vec3{0, 0, 0})
 						itemEnt.StartPickupAnimation(targetPos)
 					}
 				}
@@ -188,7 +190,7 @@ func (p *Player) DropHeldItem(dropStack bool) {
 func (p *Player) spawnItemEntity(stack item.ItemStack) {
 	// Start slightly in front and at eye level
 	front := p.GetFrontVector()
-	pos := p.GetEyePosition().Add(mgl32.Vec3{0, 0.65, 0}).Add(front.Mul(0.3))
+	pos := p.GetEyePosition().Add(mgl32.Vec3{0, -0.35, 0}).Add(front.Mul(0.3))
 
 	// Add some velocity in look direction
 	velocity := front.Mul(5.0)

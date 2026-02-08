@@ -26,10 +26,6 @@ type DirectionWorkerPool struct {
 }
 
 var (
-	// Global direction worker pool
-	globalDirectionPool *DirectionWorkerPool
-	poolOnce            sync.Once
-
 	// Buffer pool for greedy meshing masks to reduce GC pressure
 	// Max size is usually ChunkSizeY * ChunkSizeX (256*16 = 4096 ints)
 	maskPool = sync.Pool{
@@ -40,16 +36,6 @@ var (
 		},
 	}
 )
-
-// GetDirectionPool returns the global direction worker pool (singleton)
-func GetDirectionPool() *DirectionWorkerPool {
-	poolOnce.Do(func() {
-		// Create pool with 6 workers (one per face direction)
-		globalDirectionPool = NewDirectionWorkerPool(6, 32)
-		globalDirectionPool.Start()
-	})
-	return globalDirectionPool
-}
 
 // NewDirectionWorkerPool creates a new direction worker pool
 func NewDirectionWorkerPool(workers int, queueSize int) *DirectionWorkerPool {
@@ -104,19 +90,17 @@ func (p *DirectionWorkerPool) SubmitJob(w *world.World, c *world.Chunk, nx, ny, 
 
 // BuildGreedyMeshForChunk builds a greedy-meshed triangle list (packed uint32)
 // for the given chunk using world coordinates to decide face visibility across chunk borders.
-// Uses a pre-initialized worker pool to process all 6 directions in parallel.
+// Uses the provided worker pool to process all 6 directions in parallel.
 // Returns []uint32 where each vertex is 2 packed uint32s containing:
 // V1: X (5), Y (9), Z (5), Normal (3), Brightness (8)
 // V2: TextureID (16), Tint (1 bit - unused in pack but available)
-func BuildGreedyMeshForChunk(w *world.World, c *world.Chunk) []uint32 {
+func BuildGreedyMeshForChunk(w *world.World, c *world.Chunk, pool *DirectionWorkerPool) []uint32 {
 	if c == nil {
 		return nil
 	}
 
 	// World-space offset of this chunk is NOT baked into vertices anymore to save bits.
 	// We use chunk-local coordinates (0-15 for X/Z, 0-255 for Y).
-
-	pool := GetDirectionPool()
 
 	// Submit all 6 direction jobs to the worker pool
 	directions := []struct {
