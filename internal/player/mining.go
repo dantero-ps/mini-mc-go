@@ -97,15 +97,27 @@ func (p *Player) BreakBlock() {
 		p.World.Set(x, y, z, world.BlockTypeAir)
 
 		if p.GameMode != GameModeCreative {
-			// Create item entity in the world
-			// Start slightly above the bottom of the block, with random horizontal offset
-			offsetX := (rand.Float64() * 0.7) + 0.15
-			offsetY := 0.8
-			offsetZ := (rand.Float64() * 0.7) + 0.15
+			// Determine drops
+			dropType := blockType
+			dropCount := 1
 
-			pos := mgl32.Vec3{float32(x) + float32(offsetX), float32(y) + float32(offsetY), float32(z) + float32(offsetZ)}
-			itemEnt := entity.NewItemEntity(p.World, pos, item.NewItemStack(blockType, 1))
-			p.World.AddEntity(itemEnt)
+			def, ok := registry.Blocks[blockType]
+			if ok {
+				dropType = def.GetItemDropped()
+				dropCount = def.QuantityDropped()
+			}
+
+			if dropCount > 0 {
+				// Create item entity in the world
+				// Start slightly above the bottom of the block, with random horizontal offset
+				offsetX := (rand.Float64() * 0.7) + 0.15
+				offsetY := 0.8
+				offsetZ := (rand.Float64() * 0.7) + 0.15
+
+				pos := mgl32.Vec3{float32(x) + float32(offsetX), float32(y) + float32(offsetY), float32(z) + float32(offsetZ)}
+				itemEnt := entity.NewItemEntity(p.World, pos, item.NewItemStack(dropType, dropCount))
+				p.World.AddEntity(itemEnt)
+			}
 		}
 
 		// Reset mining

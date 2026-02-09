@@ -17,9 +17,10 @@ type MeshJob struct {
 
 // MeshResult contains the result of a meshing operation
 type MeshResult struct {
-	Coord    world.ChunkCoord
-	Vertices []uint32 // Packed vertices
-	Error    error
+	Coord         world.ChunkCoord
+	Vertices      []uint32  // Packed vertices
+	FluidVertices []float32 // Fluid vertices (custom format)
+	Error         error
 }
 
 // WorkerPool manages goroutines for mesh generation
@@ -90,11 +91,13 @@ func (p *WorkerPool) worker(id int) {
 		case job := <-p.jobQueue:
 			// Process the mesh job
 			vertices := BuildGreedyMeshForChunk(job.World, job.Chunk, p.directionPool)
+			fluidVertices := BuildFluidMesh(job.World, job.Chunk)
 
 			result := MeshResult{
-				Coord:    job.Coord,
-				Vertices: vertices,
-				Error:    nil,
+				Coord:         job.Coord,
+				Vertices:      vertices,
+				FluidVertices: fluidVertices,
+				Error:         nil,
 			}
 
 			// Send result back

@@ -9,8 +9,10 @@ const (
 )
 
 var (
-	MainVertShader = filepath.Join(ShadersDir, "main.vert")
-	MainFragShader = filepath.Join(ShadersDir, "main.frag")
+	MainVertShader  = filepath.Join(ShadersDir, "main.vert")
+	MainFragShader  = filepath.Join(ShadersDir, "main.frag")
+	FluidVertShader = filepath.Join(ShadersDir, "fluid.vert")
+	FluidFragShader = filepath.Join(ShadersDir, "fluid.frag")
 )
 
 type atlasWrite struct {
@@ -34,9 +36,10 @@ type atlasRegion struct {
 type chunkMesh struct {
 	vertexCount int32
 	cpuVerts    []uint32 // Packed vertices
-	firstFloat  int      // offset into atlas in shorts
-	firstVertex int32    // offset into atlas in vertices
-	regionKey   [2]int   // atlas region owning this mesh data
+	fluidVerts  []float32
+	firstFloat  int    // offset into atlas in shorts
+	firstVertex int32  // offset into atlas in vertices
+	regionKey   [2]int // atlas region owning this mesh data
 }
 
 type columnMesh struct {

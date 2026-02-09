@@ -22,6 +22,10 @@ type BlockDefinition struct {
 	TintFaces     map[world.BlockFace]bool
 	Hardness      float32
 	Elements      []blockmodel.Element
+
+	// Drop Logic
+	GetItemDropped  func() world.BlockType
+	QuantityDropped func() int
 }
 
 var (
@@ -33,8 +37,19 @@ var (
 )
 
 func RegisterBlock(def *BlockDefinition) {
-	if ModelLoader != nil && def.Name != "air" {
+	if ModelLoader != nil && def.Name != "air" && def.Name != "water_still" && def.Name != "lava_still" {
 		loadTexturesFromModel(def)
+	}
+
+	if def.GetItemDropped == nil {
+		def.GetItemDropped = func() world.BlockType {
+			return def.ID
+		}
+	}
+	if def.QuantityDropped == nil {
+		def.QuantityDropped = func() int {
+			return 1
+		}
 	}
 
 	Blocks[def.ID] = def
@@ -188,6 +203,35 @@ func InitRegistry() {
 		IsTransparent: true,
 	})
 
+	// Water - MC 1.8.9 accurate properties
+	RegisterBlock(&BlockDefinition{
+		ID:            world.BlockTypeWater,
+		Name:          "water_still",
+		TextureTop:    "water_still.png",
+		TextureSide:   "water_flow.png",
+		TextureBot:    "water_still.png",
+		IsSolid:       false, // Players can move through water
+		IsTransparent: true,  // Transparent rendering
+		Hardness:      100.0, // Cannot be mined
+	})
+
+	// Lava
+	RegisterBlock(&BlockDefinition{
+		ID:            world.BlockTypeLava,
+		Name:          "lava_still",
+		TextureTop:    "lava_still.png",
+		TextureSide:   "lava_flow.png",
+		TextureBot:    "lava_still.png",
+		IsSolid:       false,
+		IsTransparent: false, // Lava is not transparent in the sense of see-through?
+		// Actually lava is opaque in MC usually, but it flows.
+		// Let's set it to false for now, but we use the same fluid renderer.
+		// If we set IsTransparent=true, it might cull weirdly?
+		// BlockLiquidRenderer handles it.
+		// The key is that it uses the fluid renderer.
+		Hardness: 100.0,
+	})
+
 	RegisterBlock(&BlockDefinition{
 		ID:        world.BlockTypeGrass,
 		Name:      "grass",
@@ -195,6 +239,9 @@ func InitRegistry() {
 		TintColor: 0x7DFF5C,
 		TintFaces: map[world.BlockFace]bool{world.FaceTop: true},
 		Hardness:  0.6,
+		GetItemDropped: func() world.BlockType {
+			return world.BlockTypeDirt
+		},
 	})
 
 	RegisterBlock(&BlockDefinition{
@@ -210,6 +257,17 @@ func InitRegistry() {
 		Name:     "stone",
 		IsSolid:  true,
 		Hardness: 1.5,
+		GetItemDropped: func() world.BlockType {
+			return world.BlockTypeCobblestone
+		},
+	})
+
+	// Cobblestone
+	RegisterBlock(&BlockDefinition{
+		ID:       world.BlockTypeCobblestone,
+		Name:     "cobblestone",
+		IsSolid:  true,
+		Hardness: 2.0,
 	})
 
 	// Bedrock
@@ -268,6 +326,11 @@ func InitRegistry() {
 		IsSolid:  true,
 		Hardness: 2.0,
 	})
+
+	// Register extra fluid textures
+	registerTexture("water_flow.png")
+	registerTexture("lava_still.png")
+	registerTexture("lava_flow.png")
 }
 
 // GetTextureLayer returns the texture layer index for a given block and face

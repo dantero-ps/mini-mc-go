@@ -5,322 +5,358 @@ import (
 	"math/rand"
 )
 
-// ChunkProvider189 implements the Minecraft 1.8.9 chunk generation logic.
+// ChunkProvider189 implements TerrainGenerator using Minecraft 1.8.9 authentic noise.
+// Thread-safe: all noise buffers are allocated per-call, generators are read-only after init.
 type ChunkProvider189 struct {
-	rnd *rand.Rand
+	seed int64
 
-	minLimitNoise *AuthenticNoiseGeneratorOctaves
-	maxLimitNoise *AuthenticNoiseGeneratorOctaves
-	mainNoise     *AuthenticNoiseGeneratorOctaves
-	surfaceNoise  *AuthenticNoiseGeneratorOctaves
-	scaleNoise    *AuthenticNoiseGeneratorOctaves
-	depthNoise    *AuthenticNoiseGeneratorOctaves
-	forestNoise   *AuthenticNoiseGeneratorOctaves
+	minLimitNoise *AuthenticNoiseGeneratorOctaves // 16 octaves (field_147431_j)
+	maxLimitNoise *AuthenticNoiseGeneratorOctaves // 16 octaves (field_147432_k)
+	mainNoise     *AuthenticNoiseGeneratorOctaves // 8 octaves  (field_147429_l)
+	surfaceNoise  *AuthenticNoiseGeneratorOctaves // 4 octaves  (field_147430_m - actually Perlin, simplified here)
+	scaleNoise    *AuthenticNoiseGeneratorOctaves // 10 octaves (noiseGen5 → depthRegion)
+	depthNoise    *AuthenticNoiseGeneratorOctaves // 16 octaves (noiseGen6 → scaleRegion)
 
-	// Arrays for noise generation to reuse memory
-	minLimitRegion []float64
-	maxLimitRegion []float64
-	mainRegion     []float64
-	depthRegion    []float64 // scaleNoise in MC
-	scaleRegion    []float64 // depthNoise in MC
+	// MC default settings
+	coordinateScale  float64 // 684.412
+	heightScale      float64 // 684.412
+	mainNoiseScaleX  float64 // 80.0
+	mainNoiseScaleY  float64 // 160.0
+	mainNoiseScaleZ  float64 // 80.0
+	lowerLimitScale  float64 // 512.0
+	upperLimitScale  float64 // 512.0
+	baseSize         float64 // 8.5
+	stretchY         float64 // 12.0
+	depthNoiseScaleX float64 // 200.0
+	depthNoiseScaleZ float64 // 200.0
+	depthNoiseExpo   float64 // 0.5
+	biomeDepthWeight float64 // 1.0
+	biomeDepthOffset float64 // 0.0
+	biomeScaleWeight float64 // 1.0
+	biomeScaleOffset float64 // 0.0
+
+	// Precomputed parabolic blending weights (5x5 grid)
+	parabolicField [25]float64
 }
 
 func NewChunkProvider189(seed int64) *ChunkProvider189 {
 	rnd := rand.New(rand.NewSource(seed))
 
-	return &ChunkProvider189{
-		rnd:           rnd,
+	cp := &ChunkProvider189{
+		seed:          seed,
 		minLimitNoise: NewAuthenticNoiseGeneratorOctaves(rnd, 16),
 		maxLimitNoise: NewAuthenticNoiseGeneratorOctaves(rnd, 16),
 		mainNoise:     NewAuthenticNoiseGeneratorOctaves(rnd, 8),
 		surfaceNoise:  NewAuthenticNoiseGeneratorOctaves(rnd, 4),
-		scaleNoise:    NewAuthenticNoiseGeneratorOctaves(rnd, 10), // MC: noiseGen5
-		depthNoise:    NewAuthenticNoiseGeneratorOctaves(rnd, 16), // MC: noiseGen6
-		forestNoise:   NewAuthenticNoiseGeneratorOctaves(rnd, 8),
+		scaleNoise:    NewAuthenticNoiseGeneratorOctaves(rnd, 10),
+		depthNoise:    NewAuthenticNoiseGeneratorOctaves(rnd, 16),
+
+		coordinateScale:  684.412,
+		heightScale:      684.412,
+		mainNoiseScaleX:  80.0,
+		mainNoiseScaleY:  160.0,
+		mainNoiseScaleZ:  80.0,
+		lowerLimitScale:  512.0,
+		upperLimitScale:  512.0,
+		baseSize:         8.5,
+		stretchY:         12.0,
+		depthNoiseScaleX: 200.0,
+		depthNoiseScaleZ: 200.0,
+		depthNoiseExpo:   0.5,
+		biomeDepthWeight: 1.0,
+		biomeDepthOffset: 0.0,
+		biomeScaleWeight: 1.0,
+		biomeScaleOffset: 0.0,
 	}
+
+	// Precompute parabolic field: 10.0 / sqrt(dx^2 + dz^2 + 0.2)
+	for dx := -2; dx <= 2; dx++ {
+		for dz := -2; dz <= 2; dz++ {
+			cp.parabolicField[(dx+2)+(dz+2)*5] = 10.0 / math.Sqrt(float64(dx*dx+dz*dz)+0.2)
+		}
+	}
+
+	return cp
 }
 
-func (cp *ChunkProvider189) generateHighLowNoise(xChunk, zChunk int, noiseField []float64) []float64 {
-	if noiseField == nil {
-		noiseField = make([]float64, 5*5*33)
-	}
+// HeightAt returns a constant upper bound for the streamer.
+// ChunkProvider189 generates full 256-height chunks in a single call.
+func (cp *ChunkProvider189) HeightAt(_, _ int) int {
+	return 128
+}
 
-	scaleX := 684.412
-	scaleZ := 684.412
-	// MC 1.8 uses scaleNoise for depthRegion and depthNoise for scaleRegion logic naming is confusing.
-	// depthRegion derived from scaleNoise (10 octaves)
-	// scaleRegion derived from depthNoise (16 octaves)
+const (
+	noiseGridX = 5
+	noiseGridZ = 5
+	noiseGridY = 33
+	seaLevel   = 63
+)
 
-	// Generate base noise regions
-	// 5x5x1 for depth/scale (2D effectively, but usually generated as 3D with 1 y size)
-	// Actually MC generates them as 5x1x5
+// generateDensityField computes the 5x33x5 density field for a chunk.
+// This is a 1:1 port of MC's func_147423_a.
+// MC field_147434_q layout: [825] indexed as (x*5+z)*33+y (iterating k=x, l=z, l1=y).
+func (cp *ChunkProvider189) generateDensityField(xChunk, zChunk int) []float64 {
+	field := make([]float64, noiseGridX*noiseGridZ*noiseGridY)
 
-	// We need coordinates.
 	xPos := xChunk * 4
 	zPos := zChunk * 4
 
-	cp.scaleRegion = cp.depthNoise.GenerateNoiseOctaves(cp.scaleRegion, xPos, 0, zPos, 5, 1, 5, 200.0, 200.0, 200.0) // noiseGen6
-	cp.depthRegion = cp.scaleNoise.GenerateNoiseOctaves(cp.depthRegion, xPos, 0, zPos, 5, 1, 5, 1.121, 1.121, 1.121) // noiseGen5
+	// Depth noise: 2D (5x5), MC uses noiseGen6 with 2D bouncer
+	depthNoiseArray := cp.depthNoise.GenerateNoiseOctaves2D(nil, xPos, zPos, 5, 5,
+		cp.depthNoiseScaleX, cp.depthNoiseScaleZ, cp.depthNoiseExpo)
 
-	cp.mainRegion = cp.mainNoise.GenerateNoiseOctaves(cp.mainRegion, xPos, 0, zPos, 5, 33, 5, scaleX/80.0, 684.412/160.0, scaleZ/80.0)
-	cp.minLimitRegion = cp.minLimitNoise.GenerateNoiseOctaves(cp.minLimitRegion, xPos, 0, zPos, 5, 33, 5, scaleX, 684.412, scaleZ)
-	cp.maxLimitRegion = cp.maxLimitNoise.GenerateNoiseOctaves(cp.maxLimitRegion, xPos, 0, zPos, 5, 33, 5, scaleX, 684.412, scaleZ)
+	// 3D noise arrays
+	f := cp.coordinateScale
+	f1 := cp.heightScale
 
-	idx := 0
-	const xSize = 5
-	const zSize = 5
-	const ySize = 33
+	mainRegion := cp.mainNoise.GenerateNoiseOctaves(nil, xPos, 0, zPos, 5, 33, 5,
+		f/cp.mainNoiseScaleX, f1/cp.mainNoiseScaleY, f/cp.mainNoiseScaleZ)
+	minLimitRegion := cp.minLimitNoise.GenerateNoiseOctaves(nil, xPos, 0, zPos, 5, 33, 5,
+		f, f1, f)
+	maxLimitRegion := cp.maxLimitNoise.GenerateNoiseOctaves(nil, xPos, 0, zPos, 5, 33, 5,
+		f, f1, f)
 
-	for x := 0; x < xSize; x++ {
-		for z := 0; z < zSize; z++ {
+	// MC iterates: k (x 0..4), l (z 0..4), l1 (y 0..32)
+	// field_147434_q index i increments linearly
+	// depthNoiseArray index j increments per (x,z) column
+	noiseIdx := 0 // i in MC (3D noise index)
+	depthIdx := 0 // j in MC (2D depth noise index)
 
-			// Biome blending
-			// Center is (xPos + x, zPos + z) which are chunks of 4 blocks
-			// We need biomes.
-			// Using our simple GetBiomeForCoords.
-			// Coordinate for biome check: (xChunk * 16) + (x * 4) ...
-			// Actually MC calculates biomes at the chunk columns.
+	for k := 0; k < 5; k++ {
+		for l := 0; l < 5; l++ {
+			// Biome blending over 5x5 neighborhood
+			var f2, f3, f4 float64
 
-			// Parabolic blending
-			avgHeight := 0.0
-			avgScale := 0.0
-			totalWeight := 0.0
+			// Center biome at grid position
+			centerBiome := GetBiomeForCoords(
+				float64((xPos+k)*4+2),
+				float64((zPos+l)*4+2),
+				cp.seed,
+			)
 
-			// Center biome
-			// centerBiome := GetBiomeForCoords(float64(xPos+x)*4, float64(zPos+z)*4, 123)
-			// Wait, xPos is already xChunk*4. So block coords are (xPos + x)*4?
-			// No. xPos passed to GenerateNoiseOctaves is usually the noise coordinate.
-			// For noise generators, coords are passed as is.
-			// The grid is 5x5 covering 16x16 blocks.
-			// x=0..4. x=0 is block 0, x=4 is block 16 (overlap with next chunk).
-			// So grid spacing is 4 blocks.
+			for j1 := -2; j1 <= 2; j1++ {
+				for k1 := -2; k1 <= 2; k1++ {
+					biome := GetBiomeForCoords(
+						float64((xPos+k+j1)*4+2),
+						float64((zPos+l+k1)*4+2),
+						cp.seed,
+					)
 
-			// Let's get the center biome at (xPos + x, zPos + z) - wait, coordinates.
-			// xPos is xChunk * 4.
-			// realX := (xChunk * 4 + x) * 4 ? No.
-			// In MC:
-			// this.depthRegion = this.scaleNoise.generateNoiseOctaves(..., x * 4, 0, z * 4, 5, 1, 5, ...)
-			// So the input coordinates are scaled by 4 relative to chunk coords.
+					f5 := cp.biomeDepthOffset + biome.MinHeight*cp.biomeDepthWeight
+					f6 := cp.biomeScaleOffset + biome.MaxHeight*cp.biomeScaleWeight
 
-			centerX := (xChunk * 4) + x
-			centerZ := (zChunk * 4) + z
-
-			centerBiome := GetBiomeForCoords(float64(centerX*4+2), float64(centerZ*4+2), 0) // +2 for center of 4x4 block
-			// Seed for biome? GetBiomeForCoords takes seed. I'll use 0 or cp.seed if I stored it.
-			// I didn't store seed in cp directly, only in rnd. I'll just use 0 for now as biome gen is static per world seed usually.
-			// Wait, I should use the world seed.
-
-			for rx := -2; rx <= 2; rx++ {
-				for rz := -2; rz <= 2; rz++ {
-					// Neighbor biome
-					biome := GetBiomeForCoords(float64((centerX+rx)*4+2), float64((centerZ+rz)*4+2), 0)
-
-					baseHeight := biome.MinHeight
-					heightVariation := biome.MaxHeight
-
-					// Pre-adjust values
-					// MC 1.8:
-					// float base = biome.minHeight;
-					// float variation = biome.maxHeight;
-					// if (variation < 0 && base < 0) variation = -1.0 * 0.1? No...
-					// This logic is complex in MC 1.8. I'll implement a simplified version for now.
-					// Weights:
-					// weight := 10.0 / sqrt((rx*rx + rz*rz) + 0.2)
-
-					weight := 10.0 / math.Sqrt(float64(rx*rx+rz*rz)+0.2)
-
-					// Determine if biome is lower/higher?
-					// if neighbor height > center height, weight /= 2
+					// Parabolic weight: field / (depth + 2.0)
+					f7 := cp.parabolicField[(j1+2)+(k1+2)*5] / (f5 + 2.0)
 					if biome.MinHeight > centerBiome.MinHeight {
-						weight /= 2.0
+						f7 /= 2.0
 					}
 
-					avgHeight += baseHeight * weight
-					avgScale += heightVariation * weight
-					totalWeight += weight
+					f2 += f6 * f7 // scale accumulator
+					f3 += f5 * f7 // depth accumulator
+					f4 += f7      // weight accumulator
 				}
 			}
 
-			avgHeight /= totalWeight
-			avgScale /= totalWeight
+			f2 /= f4
+			f3 /= f4
+			f2 = f2*0.9 + 0.1
+			f3 = (f3*4.0 - 1.0) / 8.0
 
-			avgHeight = avgHeight*0.2 + 0.1 // Base offset?
-			avgScale = avgScale*0.9 + 0.1   // Scale offset?
-			// These magic numbers are from MC 1.8 usually.
+			// Depth noise processing
+			d7 := depthNoiseArray[depthIdx] / 8000.0
+			depthIdx++
 
-			scaleVal := (cp.scaleRegion[z*5+x] / 8000.0)
-			if scaleVal < 0 {
-				scaleVal = -scaleVal * 0.3
+			if d7 < 0 {
+				d7 = -d7 * 0.3
 			}
-			scaleVal = scaleVal*3.0 - 2.0
+			d7 = d7*3.0 - 2.0
 
-			if scaleVal < 0 {
-				scaleVal /= 2.0
-				if scaleVal < -1 {
-					scaleVal = -1
+			if d7 < 0 {
+				d7 /= 2.0
+				if d7 < -1 {
+					d7 = -1
 				}
-				scaleVal /= 1.4
-				scaleVal /= 2.0
+				d7 /= 1.4
+				d7 /= 2.0
 			} else {
-				if scaleVal > 1 {
-					scaleVal = 1
+				if d7 > 1 {
+					d7 = 1
 				}
-				scaleVal /= 8.0
+				d7 /= 8.0
 			}
 
-			// Density calculation
-			for y := 0; y < ySize; y++ {
-				// Scale/Height based density offset
-				offset := avgHeight
-				offset += scaleVal * 0.2
-				offset = offset * float64(ySize) / 16.0
+			d8 := f3
+			d9 := f2
+			d8 += d7 * 0.2
+			d8 = d8 * cp.baseSize / 8.0
+			d0 := cp.baseSize + d8*4.0
 
-				yPos := float64(y)
-				densityOffset := (yPos - offset) * 12.0 * 128.0 / 256.0 / avgScale
-				// 128.0/256.0 is 0.5. 12.0 is magic.
+			for l1 := 0; l1 < 33; l1++ {
+				d1 := (float64(l1) - d0) * cp.stretchY * 128.0 / 256.0 / d9
 
-				if densityOffset < 0 {
-					densityOffset *= 4.0
+				if d1 < 0 {
+					d1 *= 4.0
 				}
 
-				// Interpolate noise
-				// In 1.8:
-				// double min = minLimit[idx] / 512.0;
-				// double max = maxLimit[idx] / 512.0;
-				// double main = (mainNoise[idx] / 10.0 + 1.0) / 2.0;
-				// double val = lerp(main, min, max) - densityOffset;
+				d2 := minLimitRegion[noiseIdx] / cp.lowerLimitScale
+				d3 := maxLimitRegion[noiseIdx] / cp.upperLimitScale
+				d4 := (mainRegion[noiseIdx]/10.0 + 1.0) / 2.0
 
-				// My noise generators return X first?
-				// AuthenticNoiseGeneratorOctaves loops x, then z, then y.
-				// PopulateNoiseArray loops x, z, y.
-				// Indexing: x*zSize*ySize + z*ySize + y.
-				// xSize=5, zSize=5, ySize=33.
-				// idx = x*5*33 + z*33 + y.
-
-				// But here I'm looping x, z, y.
-				noiseIdx := (x * zSize * ySize) + (z * ySize) + y
-
-				min := cp.minLimitRegion[noiseIdx] / 512.0
-				max := cp.maxLimitRegion[noiseIdx] / 512.0
-				main := (cp.mainRegion[noiseIdx]/10.0 + 1.0) / 2.0
-
-				var val float64
-				if main < 0 {
-					val = min
-				} else if main > 1 {
-					val = max
+				var d5 float64
+				if d4 < 0 {
+					d5 = d2
+				} else if d4 > 1 {
+					d5 = d3
 				} else {
-					val = min + (max-min)*main
+					d5 = d2 + (d3-d2)*d4
 				}
 
-				val -= densityOffset
+				d5 -= d1
 
-				// Y limit clamp (Top/Bottom)
-				if y > 29 {
-					t := float64(y-29) / 3.0
-					val = val*(1.0-t) + -10.0*t
+				// Top fade: force air above y=29
+				if l1 > 29 {
+					d6 := float64(l1-29) / 3.0
+					d5 = d5*(1.0-d6) + -10.0*d6
 				}
 
-				noiseField[idx] = val
-				idx++
+				field[noiseIdx] = d5
+				noiseIdx++
 			}
 		}
 	}
 
-	return noiseField
+	return field
 }
 
-// GenerateChunk generates a chunk at the specified coordinates
-func (cp *ChunkProvider189) GenerateChunk(xChunk, zChunk int) *Chunk {
-	chunk := NewChunk(xChunk, 0, zChunk)
+// PopulateChunk fills a chunk using the MC 1.8.9 density field + trilinear interpolation.
+// This is a 1:1 port of MC's setBlocksInChunk.
+func (cp *ChunkProvider189) PopulateChunk(c *Chunk) {
+	xChunk := c.X
+	zChunk := c.Z
 
-	// Generate noise field
-	// We pass nil to allocate new array, or we could reuse a buffer if we had one per provider (not thread safe)
-	// For now allocate new.
-	noiseField := cp.generateHighLowNoise(xChunk, zChunk, nil)
+	noiseField := cp.generateDensityField(xChunk, zChunk)
 
-	const xSize = 5
-	const zSize = 5
-	const ySize = 33
+	// MC's interpolation loop:
+	// for i (x 0..3): j = i*5, k = (i+1)*5
+	//   for l (z 0..3): i1=(j+l)*33, j1=(j+l+1)*33, k1=(k+l)*33, l1=(k+l+1)*33
+	//     for i2 (y 0..31):
+	//       8 corners from noiseField[i1+i2], etc.
+	//       interpolate 8x4x4 sub-block
 
-	// Tri-linear interpolation
-	for x := 0; x < 4; x++ {
-		for z := 0; z < 4; z++ {
-			for y := 0; y < 32; y++ {
-				// 8 corners of the 4x4x8 cell
-				// Index mapping: (x * 5 * 33) + (z * 33) + y
+	for i := 0; i < 4; i++ {
+		j := i * 5
+		k := (i + 1) * 5
 
-				idx000 := (x * zSize * ySize) + (z * ySize) + y
-				idx001 := idx000 + 1
+		for l := 0; l < 4; l++ {
+			i1 := (j + l) * 33
+			j1 := (j + l + 1) * 33
+			k1 := (k + l) * 33
+			l1 := (k + l + 1) * 33
 
-				idx010 := (x * zSize * ySize) + ((z + 1) * ySize) + y
-				idx011 := idx010 + 1
+			for i2 := 0; i2 < 32; i2++ {
+				d1 := noiseField[i1+i2]
+				d2 := noiseField[j1+i2]
+				d3 := noiseField[k1+i2]
+				d4 := noiseField[l1+i2]
+				d5 := (noiseField[i1+i2+1] - d1) * 0.125
+				d6 := (noiseField[j1+i2+1] - d2) * 0.125
+				d7 := (noiseField[k1+i2+1] - d3) * 0.125
+				d8 := (noiseField[l1+i2+1] - d4) * 0.125
 
-				idx100 := ((x + 1) * zSize * ySize) + (z * ySize) + y
-				idx101 := idx100 + 1
+				for j2 := 0; j2 < 8; j2++ {
+					d10 := d1
+					d11 := d2
+					d12 := (d3 - d1) * 0.25
+					d13 := (d4 - d2) * 0.25
 
-				idx110 := ((x + 1) * zSize * ySize) + ((z + 1) * ySize) + y
-				idx111 := idx110 + 1
+					for k2 := 0; k2 < 4; k2++ {
+						d16 := (d11 - d10) * 0.25
+						lvt := d10 - d16
 
-				d000 := noiseField[idx000]
-				d001 := noiseField[idx001]
-				d010 := noiseField[idx010]
-				d011 := noiseField[idx011]
-				d100 := noiseField[idx100]
-				d101 := noiseField[idx101]
-				d110 := noiseField[idx110]
-				d111 := noiseField[idx111]
+						for l2 := 0; l2 < 4; l2++ {
+							lvt += d16
 
-				// Interpolate
-				for ly := 0; ly < 8; ly++ {
-					// Lerp factors for Y
-					// 0..8
-					ty := float64(ly) / 8.0
+							bx := i*4 + k2
+							by := i2*8 + j2
+							bz := l*4 + l2
 
-					// Interpolate along Y for 4 vertical lines
-					d00 := d000 + (d001-d000)*ty
-					d01 := d010 + (d011-d010)*ty
-					d10 := d100 + (d101-d100)*ty
-					d11 := d110 + (d111-d110)*ty
-
-					for lx := 0; lx < 4; lx++ {
-						tx := float64(lx) / 4.0
-
-						// Interpolate along X for 2 lines
-						d0 := d00 + (d10-d00)*tx
-						d1 := d01 + (d11-d01)*tx
-
-						for lz := 0; lz < 4; lz++ {
-							tz := float64(lz) / 4.0
-
-							// Interpolate along Z
-							val := d0 + (d1-d0)*tz
-
-							// Block position
-							bx := x*4 + lx
-							by := y*8 + ly
-							bz := z*4 + lz
-
-							if val > 0 {
-								chunk.SetBlock(bx, by, bz, BlockTypeStone)
-							} else if by < 63 {
-								chunk.SetBlock(bx, by, bz, BlockTypeWater)
-							} else {
-								chunk.SetBlock(bx, by, bz, BlockTypeAir)
+							if lvt > 0 {
+								c.SetBlock(bx, by, bz, BlockTypeStone)
+							} else if by < seaLevel {
+								c.SetBlock(bx, by, bz, BlockTypeWater)
 							}
+							// else: air (default)
 						}
+
+						d10 += d12
+						d11 += d13
 					}
+
+					d1 += d5
+					d2 += d6
+					d3 += d7
+					d4 += d8
 				}
 			}
 		}
 	}
 
-	// Bedrock at bottom
-	for x := 0; x < 16; x++ {
-		for z := 0; z < 16; z++ {
-			chunk.SetBlock(x, 0, z, BlockTypeBedrock)
+	// Phase 2: Surface replacement (grass/dirt) + bedrock
+	cp.replaceSurface(c, xChunk, zChunk)
+
+	c.dirty = true
+}
+
+// replaceSurface replaces top stone with grass/dirt layers and adds bedrock.
+func (cp *ChunkProvider189) replaceSurface(c *Chunk, xChunk, zChunk int) {
+	for lx := 0; lx < ChunkSizeX; lx++ {
+		for lz := 0; lz < ChunkSizeZ; lz++ {
+			worldX := xChunk*ChunkSizeX + lx
+			worldZ := zChunk*ChunkSizeZ + lz
+			biome := GetBiomeForCoords(float64(worldX), float64(worldZ), cp.seed)
+
+			topBlock := biome.TopBlock
+			fillerBlock := biome.FillerBlock
+			fillerDepth := -1
+
+			for y := 255; y >= 0; y-- {
+				// Bedrock layer (y 0-4)
+				if y <= 4 {
+					if y == 0 {
+						c.SetBlock(lx, y, lz, BlockTypeBedrock)
+						continue
+					}
+					hash := uint64(worldX)*0x9E3779B9 + uint64(worldZ)*0x517CC1B7 + uint64(y)*0x6C622723
+					hash = (hash ^ (hash >> 16)) * 0x45D9F3B
+					if int(hash%5) <= (4 - y) {
+						c.SetBlock(lx, y, lz, BlockTypeBedrock)
+						continue
+					}
+				}
+
+				block := c.GetBlock(lx, y, lz)
+
+				if block == BlockTypeAir || block == BlockTypeWater {
+					fillerDepth = -1
+					continue
+				}
+
+				if block != BlockTypeStone {
+					continue
+				}
+
+				if fillerDepth == -1 {
+					fillerDepth = 3
+					if y >= seaLevel-1 {
+						c.SetBlock(lx, y, lz, topBlock)
+					} else {
+						c.SetBlock(lx, y, lz, fillerBlock)
+					}
+				} else if fillerDepth > 0 {
+					fillerDepth--
+					c.SetBlock(lx, y, lz, fillerBlock)
+				}
+			}
 		}
 	}
-
-	return chunk
 }

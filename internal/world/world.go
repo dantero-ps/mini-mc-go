@@ -34,7 +34,7 @@ type ChunkCoord struct {
 func New() *World {
 	store := NewChunkStore()
 	entities := NewEntityManager()
-	gen := NewDensityGenerator(1337)
+	gen := NewChunkProvider189(1337)
 	streamer := NewChunkStreamer(store, gen)
 
 	return &World{

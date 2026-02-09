@@ -28,6 +28,13 @@ type Blocks struct {
 	cachedRadius   int
 	cachedModCount uint64
 	cachedNearby   []world.ChunkWithCoord
+
+	// Fluid Rendering
+	fluidShader   *graphics.Shader
+	fluidVAO      uint32
+	fluidVBO      uint32
+	fluidVerts    []float32 // Scratch buffer for fluid verts
+	fluidVertsCap int
 }
 
 func NewBlocks() *Blocks {
@@ -40,12 +47,18 @@ func NewBlocks() *Blocks {
 		cachedPCZ:      1<<31 - 1,
 		cachedRadius:   -1,
 		cachedNearby:   make([]world.ChunkWithCoord, 0, 1024),
+		fluidVerts:     make([]float32, 0, 65536),
+		fluidVertsCap:  65536,
 	}
 }
 
 func (b *Blocks) Init() error {
 	var err error
 	b.mainShader, err = graphics.NewShader(MainVertShader, MainFragShader)
+	if err != nil {
+		return err
+	}
+	b.fluidShader, err = graphics.NewShader(FluidVertShader, FluidFragShader)
 	if err != nil {
 		return err
 	}
@@ -61,6 +74,27 @@ func (b *Blocks) Init() error {
 	}
 
 	setupAtlas()
+
+	// Init Fluid buffers
+	gl.GenVertexArrays(1, &b.fluidVAO)
+	gl.GenBuffers(1, &b.fluidVBO)
+	gl.BindVertexArray(b.fluidVAO)
+	gl.BindBuffer(gl.ARRAY_BUFFER, b.fluidVBO)
+	// Pre-allocate some space?
+	gl.BufferData(gl.ARRAY_BUFFER, b.fluidVertsCap*4, nil, gl.DYNAMIC_DRAW)
+
+	// Layout: Pos(3), UV(2), TexID(1), Tint(3) = 9 floats
+	stride := int32(9 * 4)
+	gl.EnableVertexAttribArray(0)
+	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, stride, gl.PtrOffset(0))
+	gl.EnableVertexAttribArray(1)
+	gl.VertexAttribPointer(1, 2, gl.FLOAT, false, stride, gl.PtrOffset(3*4))
+	gl.EnableVertexAttribArray(2)
+	gl.VertexAttribPointer(2, 1, gl.FLOAT, false, stride, gl.PtrOffset(5*4))
+	gl.EnableVertexAttribArray(3)
+	gl.VertexAttribPointer(3, 3, gl.FLOAT, false, stride, gl.PtrOffset(6*4))
+
+	gl.BindVertexArray(0)
 
 	return nil
 }
@@ -95,6 +129,13 @@ func (b *Blocks) Dispose() {
 		if r.vbo != 0 {
 			gl.DeleteBuffers(1, &r.vbo)
 		}
+	}
+
+	if b.fluidVAO != 0 {
+		gl.DeleteVertexArrays(1, &b.fluidVAO)
+	}
+	if b.fluidVBO != 0 {
+		gl.DeleteBuffers(1, &b.fluidVBO)
 	}
 
 	for _, m := range chunkMeshes {
@@ -302,5 +343,70 @@ func (b *Blocks) renderBlocksInternal(ctx renderer.RenderContext) {
 				glCheckError("atlas multi-draw columns")
 			}
 		}
+	}()
+
+	// Render Fluids
+	b.renderFluidsInternal(ctx, visible)
+}
+
+func (b *Blocks) renderFluidsInternal(ctx renderer.RenderContext, visible []world.ChunkWithCoord) {
+	// Collect fluid verts from visible chunks
+	b.fluidVerts = b.fluidVerts[:0]
+
+	for _, vc := range visible {
+		if cm, ok := chunkMeshes[vc.Coord]; ok && cm != nil && len(cm.fluidVerts) > 0 {
+			b.fluidVerts = append(b.fluidVerts, cm.fluidVerts...)
+		}
+	}
+
+	if len(b.fluidVerts) == 0 {
+		return
+	}
+
+	func() {
+		defer profiling.Track("renderer.renderFluids")()
+
+		// Enable blending for transparency
+		gl.Enable(gl.BLEND)
+		gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+		// Usually depth write should be disabled for transparent objects to avoid occlusion issues,
+		// but for fluids we might want it enabled if we want them to interact with depth buffer correctly?
+		// Common MC trick: simple transparency often writes depth.
+		// If we disable depth write, water behind water might look weird?
+		// Let's keep depth write enabled for now (default).
+
+		b.fluidShader.Use()
+
+		if GlobalTextureAtlas != nil {
+			gl.ActiveTexture(gl.TEXTURE0)
+			gl.BindTexture(gl.TEXTURE_2D_ARRAY, GlobalTextureAtlas.TextureID)
+			b.fluidShader.SetInt("textureArray", 0)
+		}
+
+		b.fluidShader.SetMatrix4("proj", &ctx.Proj[0])
+		b.fluidShader.SetMatrix4("view", &ctx.View[0])
+
+		// Upload data
+		gl.BindVertexArray(b.fluidVAO)
+		gl.BindBuffer(gl.ARRAY_BUFFER, b.fluidVBO)
+
+		requiredSize := len(b.fluidVerts) * 4
+		if requiredSize > b.fluidVertsCap*4 {
+			// Grow buffer
+			b.fluidVertsCap = max(len(b.fluidVerts), b.fluidVertsCap*2)
+			gl.BufferData(gl.ARRAY_BUFFER, b.fluidVertsCap*4, nil, gl.DYNAMIC_DRAW)
+		}
+
+		// Upload (Orphan)
+		// gl.BufferData(gl.ARRAY_BUFFER, b.fluidVertsCap*4, nil, gl.DYNAMIC_DRAW) // Orphan if same size?
+		// Just BufferSubData for now
+		gl.BufferSubData(gl.ARRAY_BUFFER, 0, len(b.fluidVerts)*4, gl.Ptr(b.fluidVerts))
+
+		// Draw
+		count := int32(len(b.fluidVerts) / 9) // 9 floats per vertex
+		gl.DrawArrays(gl.TRIANGLES, 0, count)
+
+		gl.BindVertexArray(0)
+		gl.Disable(gl.BLEND)
 	}()
 }

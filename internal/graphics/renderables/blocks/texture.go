@@ -51,14 +51,58 @@ func InitTextureAtlas() error {
 		rgba := image.NewRGBA(img.Bounds())
 		draw.Draw(rgba, rgba.Bounds(), img, image.Point{0, 0}, draw.Src)
 
-		if width == 0 {
-			width = rgba.Bounds().Dx()
-			height = rgba.Bounds().Dy()
-		} else if rgba.Bounds().Dx() != width || rgba.Bounds().Dy() != height {
-			return fmt.Errorf("texture %s dimensions mismatch", name)
+		// Check bounds and crop if necessary (e.g. animated textures like water_flow)
+		// We expect square textures for the atlas (e.g. 16x16, 32x32).
+		// If height > width, we take the top square.
+
+		finalImg := rgba
+		dx := rgba.Bounds().Dx()
+		dy := rgba.Bounds().Dy()
+
+		if dy > dx {
+			// Crop top square
+			rect := image.Rect(0, 0, dx, dx)
+			cropped := image.NewRGBA(rect)
+			draw.Draw(cropped, rect, rgba, image.Point{0, 0}, draw.Src)
+			finalImg = cropped
+			// Update dimensions check to use cropped size
+			dy = dx
 		}
 
-		images = append(images, rgba)
+		if width == 0 {
+			width = dx
+			height = dy
+		} else if dx != width || dy != height {
+			// Resize/Resample if mismatch (Nearest Neighbor)
+			// e.g. 32x32 -> 16x16
+			log.Printf("Resizing texture %s from %dx%d to %dx%d", name, dx, dy, width, height)
+
+			resized := image.NewRGBA(image.Rect(0, 0, width, height))
+
+			// Simple Nearest Neighbor scaling
+			xRatio := float32(dx) / float32(width)
+			yRatio := float32(dy) / float32(height)
+
+			for y := 0; y < height; y++ {
+				for x := 0; x < width; x++ {
+					srcX := int(float32(x) * xRatio)
+					srcY := int(float32(y) * yRatio)
+
+					// Clamp
+					if srcX >= dx {
+						srcX = dx - 1
+					}
+					if srcY >= dy {
+						srcY = dy - 1
+					}
+
+					resized.Set(x, y, finalImg.At(srcX, srcY))
+				}
+			}
+			finalImg = resized
+		}
+
+		images = append(images, finalImg)
 	}
 
 	// Create Texture Array

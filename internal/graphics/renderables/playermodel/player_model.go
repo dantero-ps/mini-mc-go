@@ -417,11 +417,11 @@ func createVAO(vao, vbo *uint32, vertices []float32) int32 {
 	gl.BufferData(gl.ARRAY_BUFFER, len(vertices)*4, gl.Ptr(vertices), gl.STATIC_DRAW)
 
 	gl.EnableVertexAttribArray(0)
-	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, 8*4, gl.PtrOffset(0))
+	gl.VertexAttribPointerWithOffset(0, 3, gl.FLOAT, false, 8*4, 0)
 	gl.EnableVertexAttribArray(1)
-	gl.VertexAttribPointer(1, 3, gl.FLOAT, false, 8*4, gl.PtrOffset(3*4))
+	gl.VertexAttribPointerWithOffset(1, 3, gl.FLOAT, false, 8*4, 3*4)
 	gl.EnableVertexAttribArray(2)
-	gl.VertexAttribPointer(2, 2, gl.FLOAT, false, 8*4, gl.PtrOffset(6*4))
+	gl.VertexAttribPointerWithOffset(2, 2, gl.FLOAT, false, 8*4, 6*4)
 
 	gl.BindVertexArray(0)
 	return int32(len(vertices) / 8)

@@ -8,13 +8,9 @@ func TestChunkProvider189_GenerateChunk(t *testing.T) {
 	seed := int64(12345)
 	cp := NewChunkProvider189(seed)
 
-	chunk := cp.GenerateChunk(0, 0)
+	chunk := NewChunk(0, 0, 0)
+	cp.PopulateChunk(chunk)
 
-	if chunk == nil {
-		t.Fatal("GenerateChunk returned nil")
-	}
-
-	// Verify some blocks are set
 	hasStone := false
 	hasAir := false
 
@@ -37,8 +33,6 @@ func TestChunkProvider189_GenerateChunk(t *testing.T) {
 	if !hasAir {
 		t.Error("Chunk has no Air")
 	}
-	// Note: Depending on seed, Water might not be present if land is high, but usually at (0,0) there should be some water or stone.
-	// But let's check water exists below Y=63 if density <= 0.
 }
 
 func TestChunkProvider189_Determinism(t *testing.T) {
@@ -46,8 +40,10 @@ func TestChunkProvider189_Determinism(t *testing.T) {
 	cp1 := NewChunkProvider189(seed)
 	cp2 := NewChunkProvider189(seed)
 
-	chunk1 := cp1.GenerateChunk(10, 10)
-	chunk2 := cp2.GenerateChunk(10, 10)
+	chunk1 := NewChunk(10, 0, 10)
+	chunk2 := NewChunk(10, 0, 10)
+	cp1.PopulateChunk(chunk1)
+	cp2.PopulateChunk(chunk2)
 
 	for x := 0; x < 16; x++ {
 		for z := 0; z < 16; z++ {

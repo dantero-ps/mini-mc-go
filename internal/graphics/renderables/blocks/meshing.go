@@ -73,11 +73,13 @@ func applyMeshResult(result meshing.MeshResult) {
 	}
 
 	verts := result.Vertices
-	if len(verts) > 0 {
+	fluidVerts := result.FluidVertices
+	if len(verts) > 0 || len(fluidVerts) > 0 {
 		// Vertex count is just length of packed array (one uint32 per vertex)
 		existing.vertexCount = int32(len(verts))
 		// Keep CPU copy for column meshing
 		existing.cpuVerts = verts
+		existing.fluidVerts = fluidVerts
 		// Note: We don't upload individual chunks to atlas anymore, only combined columns.
 		// appendOrUpdateAtlas(coord.X, coord.Z, existing)
 
@@ -89,6 +91,7 @@ func applyMeshResult(result meshing.MeshResult) {
 	} else {
 		existing.vertexCount = 0
 		existing.cpuVerts = nil
+		existing.fluidVerts = nil
 	}
 	chunkMeshes[coord] = existing
 }
@@ -156,6 +159,7 @@ func PruneMeshesByWorld(w *world.World, centerX, centerZ float32, radiusChunks i
 		if !present || dx*dx+dz*dz > radiusChunks*radiusChunks {
 			if m != nil {
 				m.cpuVerts = nil
+				m.fluidVerts = nil
 			}
 			delete(chunkMeshes, coord)
 			colKey := [2]int{coord.X, coord.Z}

@@ -341,14 +341,33 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int) []u
 					visible := false
 					localNX := x + nx
 					if localNX >= 0 && localNX < sx {
-						if c.IsAir(localNX, y, z) {
+						// Check local neighbor
+						nbt := c.GetBlock(localNX, y, z)
+						if nbt == world.BlockTypeAir {
+							visible = true
+						} else if def, ok := registry.Blocks[nbt]; ok && !def.IsSolid {
+							// If neighbor is transparent (like Water/Lava), we MUST render this face.
+							// Exception: if neighbor is same material and it merges (like glass-to-glass),
+							// but here we are rendering OPAQUE block against TRANSPARENT block.
+							// So if neighbor is not solid (transparent), we see through it -> visible = true.
 							visible = true
 						}
 					} else {
 						wx, wy, wz := baseX+x, baseY+y, baseZ+z
 						nxw, nyw, nzw := wx+nx, wy, wz
-						if w.GetChunkFromBlockCoords(nxw, nyw, nzw, false) == nil || w.IsAir(nxw, nyw, nzw) {
-							visible = true
+
+						// Check global neighbor
+						nChunk := w.GetChunkFromBlockCoords(nxw, nyw, nzw, false)
+						if nChunk == nil {
+							visible = true // Render boundary if chunk not loaded
+						} else {
+							// Get block type from world
+							nbt := w.Get(nxw, nyw, nzw)
+							if nbt == world.BlockTypeAir {
+								visible = true
+							} else if def, ok := registry.Blocks[nbt]; ok && !def.IsSolid {
+								visible = true
+							}
 						}
 					}
 
@@ -463,14 +482,26 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int) []u
 					visible := false
 					localNY := y + ny
 					if localNY >= 0 && localNY < sy {
-						if c.IsAir(x, localNY, z) {
+						nbt := c.GetBlock(x, localNY, z)
+						if nbt == world.BlockTypeAir {
+							visible = true
+						} else if def, ok := registry.Blocks[nbt]; ok && !def.IsSolid {
 							visible = true
 						}
 					} else {
 						wx, wy, wz := baseX+x, baseY+y, baseZ+z
 						nxw, nyw, nzw := wx, wy+ny, wz
-						if w.GetChunkFromBlockCoords(nxw, nyw, nzw, false) == nil || w.IsAir(nxw, nyw, nzw) {
+
+						nChunk := w.GetChunkFromBlockCoords(nxw, nyw, nzw, false)
+						if nChunk == nil {
 							visible = true
+						} else {
+							nbt := w.Get(nxw, nyw, nzw)
+							if nbt == world.BlockTypeAir {
+								visible = true
+							} else if def, ok := registry.Blocks[nbt]; ok && !def.IsSolid {
+								visible = true
+							}
 						}
 					}
 
@@ -578,14 +609,26 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int) []u
 				visible := false
 				localNZ := z + nz
 				if localNZ >= 0 && localNZ < sz {
-					if c.IsAir(x, y, localNZ) {
+					nbt := c.GetBlock(x, y, localNZ)
+					if nbt == world.BlockTypeAir {
+						visible = true
+					} else if def, ok := registry.Blocks[nbt]; ok && !def.IsSolid {
 						visible = true
 					}
 				} else {
 					wx, wy, wz := baseX+x, baseY+y, baseZ+z
 					nxw, nyw, nzw := wx, wy, wz+nz
-					if w.GetChunkFromBlockCoords(nxw, nyw, nzw, false) == nil || w.IsAir(nxw, nyw, nzw) {
+
+					nChunk := w.GetChunkFromBlockCoords(nxw, nyw, nzw, false)
+					if nChunk == nil {
 						visible = true
+					} else {
+						nbt := w.Get(nxw, nyw, nzw)
+						if nbt == world.BlockTypeAir {
+							visible = true
+						} else if def, ok := registry.Blocks[nbt]; ok && !def.IsSolid {
+							visible = true
+						}
 					}
 				}
 
