@@ -2,6 +2,8 @@
 
 A simple Minecraft clone developed using Go, OpenGL, and GLFW.
 
+![Preview](preview/in-game.gif)
+
 ## Prerequisites
 
 - **Go:** [golang.org](https://golang.org/dl/) (v1.24+)

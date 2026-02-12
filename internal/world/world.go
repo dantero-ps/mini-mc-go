@@ -2,6 +2,7 @@ package world
 
 import (
 	"github.com/go-gl/mathgl/mgl32"
+	"math/rand"
 )
 
 // Ticker interface for updating entities (avoids circular dependency with entity package)
@@ -34,7 +35,7 @@ type ChunkCoord struct {
 func New() *World {
 	store := NewChunkStore()
 	entities := NewEntityManager()
-	gen := NewChunkProvider189(1337)
+	gen := NewChunkProvider189(rand.Int63n(10000))
 	streamer := NewChunkStreamer(store, gen)
 
 	return &World{

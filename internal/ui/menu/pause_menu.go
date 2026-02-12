@@ -58,7 +58,7 @@ func NewPauseMenu() *PauseMenu {
 	})
 
 	// Resume Button
-	resumeBtn := widget.NewButton("Devam Et", 0, 0, 200, 40, func() {
+	resumeBtn := widget.NewButton("Continue", 0, 0, 200, 40, func() {
 		pm.shouldResume = true
 	})
 	resumeBtn.NormalColor = mgl32.Vec3{0.2, 0.2, 0.2}
@@ -66,7 +66,7 @@ func NewPauseMenu() *PauseMenu {
 	pm.buttons = append(pm.buttons, resumeBtn)
 
 	// Quit Button
-	quitBtn := widget.NewButton("Ana Menü", 0, 0, 200, 40, func() {
+	quitBtn := widget.NewButton("Main Menu", 0, 0, 200, 40, func() {
 		pm.shouldQuit = true
 	})
 	quitBtn.NormalColor = mgl32.Vec3{0.2, 0.2, 0.2}
@@ -173,9 +173,9 @@ func (p *PauseMenu) Render(u *ui.UI, window *glfw.Window) {
 	p.bobbing.H = float32(20.0)
 	p.bobbing.Render(u, window)
 	// Status Text
-	statusText := "Kapalı"
+	statusText := "Off"
 	if p.bobbing.IsOn {
-		statusText = "Açık"
+		statusText = "On"
 	}
 	u.DrawText(statusText, p.bobbing.X+toggleW+10, startY+15, 0.35, mgl32.Vec3{0.8, 0.8, 0.8})
 
