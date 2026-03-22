@@ -31,11 +31,12 @@ type Blocks struct {
 	cachedNearby   []world.ChunkWithCoord
 
 	// Fluid Rendering
-	fluidShader   *graphics.Shader
-	fluidVAO      uint32
-	fluidVBO      uint32
-	fluidVerts    []float32 // Scratch buffer for fluid verts
-	fluidVertsCap int
+	fluidShader    *graphics.Shader
+	fluidVAO       uint32
+	fluidVBO       uint32
+	fluidVerts     []float32 // Scratch buffer for fluid verts
+	fluidVertsCap  int
+	fluidStartTime time.Time
 }
 
 func NewBlocks() *Blocks {
@@ -84,8 +85,8 @@ func (b *Blocks) Init() error {
 	// Pre-allocate some space?
 	gl.BufferData(gl.ARRAY_BUFFER, b.fluidVertsCap*4, nil, gl.DYNAMIC_DRAW)
 
-	// Layout: Pos(3), UV(2), TexID(1), Tint(3) = 9 floats
-	stride := int32(9 * 4)
+	// Layout: Pos(3), UV(2), TexID(1), Tint(3), AnimType(1) = 10 floats
+	stride := int32(10 * 4)
 	gl.EnableVertexAttribArray(0)
 	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, stride, gl.PtrOffset(0))
 	gl.EnableVertexAttribArray(1)
@@ -94,8 +95,12 @@ func (b *Blocks) Init() error {
 	gl.VertexAttribPointer(2, 1, gl.FLOAT, false, stride, gl.PtrOffset(5*4))
 	gl.EnableVertexAttribArray(3)
 	gl.VertexAttribPointer(3, 3, gl.FLOAT, false, stride, gl.PtrOffset(6*4))
+	gl.EnableVertexAttribArray(4)
+	gl.VertexAttribPointer(4, 1, gl.FLOAT, false, stride, gl.PtrOffset(9*4))
 
 	gl.BindVertexArray(0)
+
+	b.fluidStartTime = time.Now()
 
 	return nil
 }
@@ -395,6 +400,7 @@ func (b *Blocks) renderFluidsInternal(ctx renderer.RenderContext, visible []worl
 		b.fluidShader.SetMatrix4("view", &ctx.View[0])
 		b.fluidShader.SetVector3("cameraPos", ctx.Player.Position[0], ctx.Player.Position[1], ctx.Player.Position[2])
 		b.fluidShader.SetInt("isUnderwater", int32(isUnderwater))
+		b.fluidShader.SetFloat("time", float32(time.Since(b.fluidStartTime).Seconds()))
 
 		// Upload data
 		gl.BindVertexArray(b.fluidVAO)
@@ -413,7 +419,7 @@ func (b *Blocks) renderFluidsInternal(ctx renderer.RenderContext, visible []worl
 		gl.BufferSubData(gl.ARRAY_BUFFER, 0, len(b.fluidVerts)*4, gl.Ptr(b.fluidVerts))
 
 		// Draw
-		count := int32(len(b.fluidVerts) / 9) // 9 floats per vertex
+		count := int32(len(b.fluidVerts) / 10) // 10 floats per vertex
 		gl.DrawArrays(gl.TRIANGLES, 0, count)
 
 		gl.BindVertexArray(0)

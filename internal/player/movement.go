@@ -26,18 +26,23 @@ const (
 	GroundDrag      = 0.91 // Default ground drag (before friction)
 	BlockFriction   = 0.6  // Default block friction
 
-	WaterGravityFactor = 0.4
-	WaterDrag          = 0.8
-	WaterSwimSpeed     = 0.04
-	WaterUpSpeed       = 3.6 // upward speed when pressing jump in water
+	WaterGravityFactor   = 0.25 // MC: motionY -= 0.02/tick → 0.02*(20^2) = 8 m/s² = Gravity*0.25
+	WaterDrag            = 0.8
+	WaterSwimSpeed       = 0.04
+	WaterUpAccel         = 16.0 // MC: motionY += 0.04/tick → 0.04*(20^2) = 16 m/s²
+	WaterUpSpeed         = 2.0  // safety cap (natural terminal ~1.79 m/s from drag equilibrium)
+	WaterSurfacePopSpeed = 3.5  // exit velocity when leaving water surface → ~0.19 block consistent bob
 )
 
-// IsInWater checks if the player's feet are in water
+// IsInWater checks if the player's body is in water.
+// MC: handleWaterMovement uses bbox.expand(0, -0.4, 0) which checks
+// the region from feet+0.4 to head-0.4 (roughly mid-body).
 func (p *Player) IsInWater() bool {
-	footY := int(math.Floor(float64(p.Position[1])))
-	footX := int(math.Floor(float64(p.Position[0])))
-	footZ := int(math.Floor(float64(p.Position[2])))
-	return p.World.Get(footX, footY, footZ) == world.BlockTypeWater
+	x := int(math.Floor(float64(p.Position[0])))
+	z := int(math.Floor(float64(p.Position[2])))
+	// Check mid-body (feet+0.4), matching MC's contracted bounding box
+	midY := int(math.Floor(float64(p.Position[1]) + 0.4))
+	return p.World.Get(x, midY, z) == world.BlockTypeWater
 }
 
 func (p *Player) UpdatePosition(dt float64, im *input.InputManager) {
@@ -210,13 +215,26 @@ func (p *Player) UpdatePosition(dt float64, im *input.InputManager) {
 		// Drag is applied after position update to match MC behavior
 	} else if p.IsInWater() {
 		// Water physics: swim up with jump, reduced speed
+		p.wasInWater = true
 
+		// MC: motionY += 0.04 per tick (isJumping in water → updateAITick)
 		if !p.IsInventoryOpen && im.IsActive(input.ActionJump) {
-			p.Velocity[1] = WaterUpSpeed
+			p.Velocity[1] += WaterUpAccel * float32(dt)
+			if p.Velocity[1] > WaterUpSpeed {
+				p.Velocity[1] = WaterUpSpeed
+			}
 		}
 
 		applyMovement(strafe, forward, WaterSwimSpeed)
 	} else {
+		// Surface pop: on first frame after exiting water while holding space,
+		// set a fixed exit velocity so the bob height is always consistent.
+		// Only boost if below pop speed — don't reduce a horizontal-collision boost (6 m/s).
+		if p.wasInWater && p.Velocity[1] > 0 && p.Velocity[1] < WaterSurfacePopSpeed && !p.IsInventoryOpen && im.IsActive(input.ActionJump) {
+			p.Velocity[1] = WaterSurfacePopSpeed
+		}
+		p.wasInWater = false
+
 		// Normal walking/jumping physics
 
 		// Calculate ground friction factor
@@ -331,6 +349,7 @@ func (p *Player) UpdatePosition(dt float64, im *input.InputManager) {
 	}
 
 	// Then resolve X at updated Y
+	collidedX := false
 	testPosX := mgl32.Vec3{newPos[0], p.Position[1], p.Position[2]}
 	if !physics.Collides(testPosX, pWidth, pHeight, p.World) {
 		if p.IsSneaking && p.Velocity[1] == 0 && physics.FindGroundLevel(newPos[0], p.Position[2], p.Position, pWidth, pHeight, p.World) < p.Position[1]-0.1 {
@@ -341,9 +360,11 @@ func (p *Player) UpdatePosition(dt float64, im *input.InputManager) {
 	} else {
 		p.Velocity[0] = 0
 		p.IsSprinting = false
+		collidedX = true
 	}
 
 	// Finally resolve Z at updated Y
+	collidedZ := false
 	testPosZ := mgl32.Vec3{p.Position[0], p.Position[1], newPos[2]}
 	if !physics.Collides(testPosZ, pWidth, pHeight, p.World) {
 		if p.IsSneaking && p.Velocity[1] == 0 && physics.FindGroundLevel(p.Position[0], newPos[2], p.Position, pWidth, pHeight, p.World) < p.Position[1]-0.1 {
@@ -354,6 +375,19 @@ func (p *Player) UpdatePosition(dt float64, im *input.InputManager) {
 	} else {
 		p.Velocity[2] = 0
 		p.IsSprinting = false
+		collidedZ = true
+	}
+
+	// MC: isCollidedHorizontally && isInWater → motionY = 0.3 blocks/tick = 6 blocks/sec
+	// Allows player to swim up and over the edge of water onto land.
+	// Use feet-level check (not mid-body) so it triggers even near the water surface.
+	feetInWater := p.World.Get(
+		int(math.Floor(float64(p.Position[0]))),
+		int(math.Floor(float64(p.Position[1]))),
+		int(math.Floor(float64(p.Position[2]))),
+	) == world.BlockTypeWater
+	if (collidedX || collidedZ) && feetInWater {
+		p.Velocity[1] = 6.0
 	}
 
 	// Final ground settle

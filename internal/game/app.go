@@ -110,7 +110,7 @@ func (a *App) tick() {
 
 	// Check if frame took too long (> 16ms)
 	processingDuration := time.Since(startTick)
-	if processingDuration > 5*time.Millisecond {
+	if processingDuration > 7*time.Millisecond {
 		log.Printf("Slow frame: %v", processingDuration)
 	}
 

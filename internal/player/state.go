@@ -82,6 +82,9 @@ type Player struct {
 	// Block breaking cooldown
 	breakCooldown float64
 
+	// Water state tracking
+	wasInWater bool
+
 	// Flight mode double-tap detection
 	lastSpacePressTime float64
 	lastSpaceState     bool
