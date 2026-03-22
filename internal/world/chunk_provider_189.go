@@ -378,10 +378,175 @@ func (cp *ChunkProvider189) PopulateChunk(c *Chunk) {
 		}
 	}
 
-	// Phase 2: Surface replacement (grass/dirt) + bedrock
+	// Phase 2: Surface replacement (grass/dirt/sand) + bedrock
 	cp.replaceSurface(c, xChunk, zChunk, &bufs.surfaceBiomes, &bufs.heightMap)
 
+	// Phase 3: Vegetation (trees)
+	cp.generateTrees(c, xChunk, zChunk, &bufs.surfaceBiomes)
+
 	c.dirty = true
+}
+
+// absInt returns the absolute value of an integer.
+func absInt(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
+}
+
+// generateTrees places trees after surface generation.
+// Uses the center biome of the chunk to pick tree type and count,
+// matching the MC 1.8.9 BiomeDecorator approach (treesPerChunk attempts).
+func (cp *ChunkProvider189) generateTrees(c *Chunk, xChunk, zChunk int, surfaceBiomes *[256]*Biome) {
+	// Determine tree parameters from the chunk's center biome.
+	biome := surfaceBiomes[7*16+7]
+	if biome.Trees == TreeNone || biome.TreeCount == 0 {
+		return
+	}
+
+	// Seeded RNG for deterministic, chunk-local decoration.
+	// XOR-mix of world seed and chunk coords — matches MC's per-chunk decoration seed pattern.
+	rngSeed := cp.seed ^ (int64(xChunk) * 0x4F9939F508) ^ (int64(zChunk) * 0x1EF1565BD5)
+	rng := rand.New(rand.NewSource(rngSeed))
+
+	count := int(biome.TreeCount)
+	if rng.Intn(10) == 0 { // MC adds 10% chance of +1 tree
+		count++
+	}
+
+	for i := 0; i < count; i++ {
+		lx := 1 + rng.Intn(14) // stay off edges so canopy has room
+		lz := 1 + rng.Intn(14)
+
+		// Find the surface block in this column (scan down from max expected height).
+		surfaceY := -1
+		for y := 120; y >= seaLevel; y-- {
+			b := c.GetBlock(lx, y, lz)
+			if b != BlockTypeAir && b != BlockTypeWater {
+				surfaceY = y
+				break
+			}
+		}
+		if surfaceY < seaLevel {
+			continue
+		}
+		// Trees only grow on grass.
+		if c.GetBlock(lx, surfaceY, lz) != BlockTypeGrass {
+			continue
+		}
+
+		switch biome.Trees {
+		case TreeOak:
+			cp.placeOakTree(c, lx, surfaceY+1, lz, rng)
+		case TreeSpruce:
+			cp.placeSpruceTree(c, lx, surfaceY+1, lz, rng)
+		}
+	}
+}
+
+// placeOakTree generates a standard oak tree matching WorldGenTrees exactly.
+// baseY is the Y of the first trunk block (one above ground).
+func (cp *ChunkProvider189) placeOakTree(c *Chunk, x, baseY, z int, rng *rand.Rand) {
+	i := rng.Intn(3) + 4 // 4-6: trunk height (WorldGenTrees minTreeHeight=4)
+
+	// Abort if trunk space is obstructed.
+	for y := 0; y < i; y++ {
+		if c.GetBlock(x, baseY+y, z) != BlockTypeAir {
+			return
+		}
+	}
+
+	// topLeafY: one above the last trunk block (position.getY() + i in MC).
+	topLeafY := baseY + i
+
+	// Leaf layers: 4 layers from topLeafY-3 to topLeafY.
+	// Radius formula: j1 = 1 - i4/2 where i4 = leafY - topLeafY
+	// i4=-3 → j1=2, i4=-2 → j1=2, i4=-1 → j1=1, i4=0 → j1=1
+	for leafY := topLeafY - 3; leafY <= topLeafY; leafY++ {
+		i4 := leafY - topLeafY // -3..0
+		j1 := 1 - i4/2         // radius: 2,2,1,1
+		for dx := -j1; dx <= j1; dx++ {
+			for dz := -j1; dz <= j1; dz++ {
+				isCorner := absInt(dx) == j1 && absInt(dz) == j1
+				// MC: drop corner if at top layer (i4==0) OR with 50% chance elsewhere.
+				if isCorner && (i4 == 0 || rng.Intn(2) == 0) {
+					continue
+				}
+				if c.GetBlock(x+dx, leafY, z+dz) == BlockTypeAir {
+					c.SetBlock(x+dx, leafY, z+dz, BlockTypeOakLeaves)
+				}
+			}
+		}
+	}
+
+	// Trunk: placed after leaves to overwrite any leaf at trunk position.
+	for y := 0; y < i; y++ {
+		b := c.GetBlock(x, baseY+y, z)
+		if b == BlockTypeAir || b == BlockTypeOakLeaves {
+			c.SetBlock(x, baseY+y, z, BlockTypeOakLog)
+		}
+	}
+}
+
+// placeSpruceTree generates a spruce tree matching WorldGenTaiga2 exactly.
+// baseY is the Y of the first trunk block (one above ground).
+func (cp *ChunkProvider189) placeSpruceTree(c *Chunk, x, baseY, z int, rng *rand.Rand) {
+	i := rng.Intn(4) + 6 // 6-9: total height
+	j := 1 + rng.Intn(2) // 1-2: bare trunk blocks at bottom (no leaves below)
+	k := i - j           // number of leaf coverage layers
+	l := 2 + rng.Intn(2) // 2-3: max leaf radius
+
+	// Abort if trunk space is obstructed.
+	for y := 0; y < i; y++ {
+		if c.GetBlock(x, baseY+y, z) != BlockTypeAir {
+			return
+		}
+	}
+
+	// Leaf placement using MC's staircase radius pattern (WorldGenTaiga2).
+	// Iterates from top (baseY+i) downward k+1 times.
+	// The radius zig-zags: 0,1,0,1,2,1,2,3,... giving the classic stepped look.
+	i3 := rng.Intn(2) // starting radius: 0 or 1
+	j3 := 1           // threshold at which radius resets and step grows
+	k3 := 0           // value i3 resets to
+
+	for l3 := 0; l3 <= k; l3++ {
+		leafY := baseY + i - l3
+
+		for dx := -i3; dx <= i3; dx++ {
+			for dz := -i3; dz <= i3; dz++ {
+				// MC uses hollow squares: skip the 4 exact corners.
+				if absInt(dx) == i3 && absInt(dz) == i3 && i3 > 0 {
+					continue
+				}
+				if c.GetBlock(x+dx, leafY, z+dz) == BlockTypeAir {
+					c.SetBlock(x+dx, leafY, z+dz, BlockTypeSpruceLeaves)
+				}
+			}
+		}
+
+		// Advance radius: staircase pattern.
+		if i3 >= j3 {
+			i3 = k3
+			k3 = 1
+			j3++
+			if j3 > l {
+				j3 = l
+			}
+		} else {
+			i3++
+		}
+	}
+
+	// Trunk placed after leaves (may be slightly shorter than i), overwriting leaves.
+	trunkH := i - rng.Intn(3)
+	for y := 0; y < trunkH; y++ {
+		b := c.GetBlock(x, baseY+y, z)
+		if b == BlockTypeAir || b == BlockTypeSpruceLeaves {
+			c.SetBlock(x, baseY+y, z, BlockTypeSpruceLog)
+		}
+	}
 }
 
 // replaceSurface replaces top stone with grass/dirt layers and adds bedrock.

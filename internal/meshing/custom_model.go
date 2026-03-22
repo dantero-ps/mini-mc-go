@@ -46,8 +46,9 @@ func meshCustomBlock(vertices *[]uint32, w *world.World, c *world.Chunk, x, y, z
 		// For compliance, we emit the faces that exist, clamped to integer grid.
 
 		for dir, face := range elem.Faces {
-			// Skip Top/Bottom for solid blocks (Greedy handles them)
-			if def.IsSolid && (dir == "up" || dir == "down") {
+			// Skip Top/Bottom only for solid opaque blocks (Greedy handles them).
+			// Transparent solid blocks (e.g. leaves) are fully handled here — all 6 faces.
+			if def.IsSolid && !def.IsTransparent && (dir == "up" || dir == "down") {
 				continue
 			}
 

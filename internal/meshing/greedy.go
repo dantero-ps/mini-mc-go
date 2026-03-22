@@ -225,8 +225,8 @@ func BuildGreedyMeshForChunk(w *world.World, c *world.Chunk, pool *DirectionWork
 						continue
 					}
 
-					// If it wasn't solid OR it was complex, we skipped it in greedy pass. Render it now.
-					if !def.IsSolid || len(def.Elements) > 1 {
+					// Transparent blocks (leaves) and complex/non-solid blocks are handled by custom model pass.
+					if !def.IsSolid || def.IsTransparent || len(def.Elements) > 1 {
 						// Appends directly into vertices to avoid an intermediate allocation.
 						meshCustomBlock(&vertices, w, c, x, y, z, def)
 					}
@@ -278,9 +278,9 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int, nei
 					if bt == world.BlockTypeAir {
 						continue
 					}
-					// Skip custom/complex/transparent blocks for greedy meshing
+					// Skip transparent/complex blocks for greedy meshing (handled by custom model pass)
 					def := registry.BlockDefs[bt]
-					if def == nil || !def.IsSolid || len(def.Elements) > 1 {
+					if def == nil || !def.IsSolid || def.IsTransparent || len(def.Elements) > 1 {
 						continue
 					}
 					// Check visibility
@@ -291,7 +291,7 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int, nei
 						nbt := c.GetBlock(localNX, y, z)
 						if nbt == world.BlockTypeAir {
 							visible = true
-						} else if nDef := registry.BlockDefs[nbt]; nDef != nil && !nDef.IsSolid {
+						} else if nDef := registry.BlockDefs[nbt]; nDef != nil && (!nDef.IsSolid || nDef.IsTransparent) {
 							visible = true
 						}
 					} else {
@@ -310,7 +310,7 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int, nei
 							nbt := neighborChunk.GetBlock(nlx, y, z)
 							if nbt == world.BlockTypeAir {
 								visible = true
-							} else if nDef := registry.BlockDefs[nbt]; nDef != nil && !nDef.IsSolid {
+							} else if nDef := registry.BlockDefs[nbt]; nDef != nil && (!nDef.IsSolid || nDef.IsTransparent) {
 								visible = true
 							}
 						}
@@ -420,9 +420,9 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int, nei
 					if bt == world.BlockTypeAir {
 						continue
 					}
-					// Skip custom/complex/transparent blocks for greedy meshing
+					// Skip transparent/complex blocks for greedy meshing (handled by custom model pass)
 					def := registry.BlockDefs[bt]
-					if def == nil || !def.IsSolid {
+					if def == nil || !def.IsSolid || def.IsTransparent {
 						continue
 					}
 					visible := false
@@ -431,7 +431,7 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int, nei
 						nbt := c.GetBlock(x, localNY, z)
 						if nbt == world.BlockTypeAir {
 							visible = true
-						} else if nDef := registry.BlockDefs[nbt]; nDef != nil && !nDef.IsSolid {
+						} else if nDef := registry.BlockDefs[nbt]; nDef != nil && (!nDef.IsSolid || nDef.IsTransparent) {
 							visible = true
 						}
 					} else {
@@ -450,7 +450,7 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int, nei
 							nbt := neighborChunk.GetBlock(x, nly, z)
 							if nbt == world.BlockTypeAir {
 								visible = true
-							} else if nDef := registry.BlockDefs[nbt]; nDef != nil && !nDef.IsSolid {
+							} else if nDef := registry.BlockDefs[nbt]; nDef != nil && (!nDef.IsSolid || nDef.IsTransparent) {
 								visible = true
 							}
 						}
@@ -558,9 +558,9 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int, nei
 				if bt == world.BlockTypeAir {
 					continue
 				}
-				// Skip custom/complex/transparent blocks for greedy meshing
+				// Skip transparent/complex blocks for greedy meshing (handled by custom model pass)
 				def := registry.BlockDefs[bt]
-				if def == nil || !def.IsSolid || len(def.Elements) > 1 {
+				if def == nil || !def.IsSolid || def.IsTransparent || len(def.Elements) > 1 {
 					continue
 				}
 				visible := false
@@ -569,7 +569,7 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int, nei
 					nbt := c.GetBlock(x, y, localNZ)
 					if nbt == world.BlockTypeAir {
 						visible = true
-					} else if nDef := registry.BlockDefs[nbt]; nDef != nil && !nDef.IsSolid {
+					} else if nDef := registry.BlockDefs[nbt]; nDef != nil && (!nDef.IsSolid || nDef.IsTransparent) {
 						visible = true
 					}
 				} else {
@@ -588,7 +588,7 @@ func buildGreedyForDirection(w *world.World, c *world.Chunk, nx, ny, nz int, nei
 						nbt := neighborChunk.GetBlock(x, y, nlz)
 						if nbt == world.BlockTypeAir {
 							visible = true
-						} else if nDef := registry.BlockDefs[nbt]; nDef != nil && !nDef.IsSolid {
+						} else if nDef := registry.BlockDefs[nbt]; nDef != nil && (!nDef.IsSolid || nDef.IsTransparent) {
 							visible = true
 						}
 					}

@@ -347,6 +347,60 @@ func InitRegistry() {
 		Hardness: 2.0,
 	})
 
+	// Sand — desert and ocean floor surface block.
+	RegisterBlock(&BlockDefinition{
+		ID:       world.BlockTypeSand,
+		Name:     "sand",
+		IsSolid:  true,
+		Hardness: 0.5,
+	})
+
+	// Oak Log — vertical log with bark side and ring top/bottom textures.
+	RegisterBlock(&BlockDefinition{
+		ID:       world.BlockTypeOakLog,
+		Name:     "oak_log",
+		IsSolid:  true,
+		Hardness: 2.0,
+	})
+
+	// Oak Leaves — tinted with MC foliage green (leaves_oak.png is a grayscale dot pattern).
+	RegisterBlock(&BlockDefinition{
+		ID:            world.BlockTypeOakLeaves,
+		Name:          "oak_leaves",
+		IsSolid:       true,
+		IsTransparent: true,
+		TintColor:     0x4A9931,
+		TintFaces: map[world.BlockFace]bool{
+			world.FaceNorth: true, world.FaceSouth: true,
+			world.FaceEast: true, world.FaceWest: true,
+			world.FaceTop: true, world.FaceBottom: true,
+		},
+		Hardness: 0.2,
+	})
+
+	// Spruce Log
+	RegisterBlock(&BlockDefinition{
+		ID:       world.BlockTypeSpruceLog,
+		Name:     "spruce_log",
+		IsSolid:  true,
+		Hardness: 2.0,
+	})
+
+	// Spruce Leaves — tinted with spruce foliage green.
+	RegisterBlock(&BlockDefinition{
+		ID:            world.BlockTypeSpruceLeaves,
+		Name:          "spruce_leaves",
+		IsSolid:       true,
+		IsTransparent: true,
+		TintColor:     0x619961,
+		TintFaces: map[world.BlockFace]bool{
+			world.FaceNorth: true, world.FaceSouth: true,
+			world.FaceEast: true, world.FaceWest: true,
+			world.FaceTop: true, world.FaceBottom: true,
+		},
+		Hardness: 0.2,
+	})
+
 	// Register extra fluid textures
 	registerTexture("water_flow.png")
 	registerTexture("lava_still.png")

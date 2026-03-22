@@ -18,6 +18,11 @@ const (
 	BlockTypeWater
 	BlockTypeLava
 	BlockTypeObsidian
+	BlockTypeSand
+	BlockTypeOakLog
+	BlockTypeOakLeaves
+	BlockTypeSpruceLog
+	BlockTypeSpruceLeaves
 )
 
 // BlockSolidTable is a flat lookup indexed by BlockType (uint8).

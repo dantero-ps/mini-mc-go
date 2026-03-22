@@ -13,6 +13,7 @@ out vec4 FragColor;
 
 void main() {
 	vec4 texColor = texture(textureArray, TexCoord);
+	if (texColor.a < 0.1) discard;
 	texColor.rgb *= TintColor;
 	vec3 col = texColor.rgb * Brightness;
 

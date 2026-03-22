@@ -6,28 +6,140 @@ import (
 	"mini-mc/internal/world"
 )
 
+// neighbors6 holds the 6 face-adjacent pre-fetched neighbor chunks.
+// Index layout matches the face directions used throughout this file:
+//
+//	0: +X (east),  1: -X (west)
+//	2: +Y (up),    3: -Y (down)
+//	4: +Z (south), 5: -Z (north)
+type neighbors6 = [6]*world.Chunk
+
+// getBlockLocal returns the block type for a neighbor offset from a local chunk
+// coordinate (lx, ly, lz).  When the offset stays inside the chunk bounds it
+// calls c.GetBlock directly (no mutex).  When it crosses a chunk boundary it
+// uses the appropriate pre-fetched neighbor chunk (also no mutex).  A nil
+// neighbor is treated as air, which makes the face visible — the conservative
+// choice.
+func getBlockLocal(c *world.Chunk, nb neighbors6, lx, ly, lz int) world.BlockType {
+	// Fast path: fully interior — most calls land here.
+	if lx >= 0 && lx < world.ChunkSizeX &&
+		ly >= 0 && ly < world.ChunkSizeY &&
+		lz >= 0 && lz < world.ChunkSizeZ {
+		return c.GetBlock(lx, ly, lz)
+	}
+
+	// Determine which neighbor chunk to use and translate local coordinates.
+	var nc *world.Chunk
+	nlx, nly, nlz := lx, ly, lz
+
+	switch {
+	case lx >= world.ChunkSizeX:
+		nc = nb[0] // +X
+		nlx = lx - world.ChunkSizeX
+	case lx < 0:
+		nc = nb[1] // -X
+		nlx = lx + world.ChunkSizeX
+	case ly >= world.ChunkSizeY:
+		nc = nb[2] // +Y
+		nly = ly - world.ChunkSizeY
+	case ly < 0:
+		nc = nb[3] // -Y
+		nly = ly + world.ChunkSizeY
+	case lz >= world.ChunkSizeZ:
+		nc = nb[4] // +Z
+		nlz = lz - world.ChunkSizeZ
+	case lz < 0:
+		nc = nb[5] // -Z
+		nlz = lz + world.ChunkSizeZ
+	}
+
+	if nc == nil {
+		return world.BlockTypeAir
+	}
+	return nc.GetBlock(nlx, nly, nlz)
+}
+
+// getMetaLocal is like getBlockLocal but returns the metadata byte.
+func getMetaLocal(c *world.Chunk, nb neighbors6, lx, ly, lz int) uint8 {
+	if lx >= 0 && lx < world.ChunkSizeX &&
+		ly >= 0 && ly < world.ChunkSizeY &&
+		lz >= 0 && lz < world.ChunkSizeZ {
+		return c.GetMeta(lx, ly, lz)
+	}
+
+	var nc *world.Chunk
+	nlx, nly, nlz := lx, ly, lz
+
+	switch {
+	case lx >= world.ChunkSizeX:
+		nc = nb[0]
+		nlx = lx - world.ChunkSizeX
+	case lx < 0:
+		nc = nb[1]
+		nlx = lx + world.ChunkSizeX
+	case ly >= world.ChunkSizeY:
+		nc = nb[2]
+		nly = ly - world.ChunkSizeY
+	case ly < 0:
+		nc = nb[3]
+		nly = ly + world.ChunkSizeY
+	case lz >= world.ChunkSizeZ:
+		nc = nb[4]
+		nlz = lz - world.ChunkSizeZ
+	case lz < 0:
+		nc = nb[5]
+		nlz = lz + world.ChunkSizeZ
+	}
+
+	if nc == nil {
+		return 0
+	}
+	return nc.GetMeta(nlx, nly, nlz)
+}
+
 // BuildFluidMesh generates vertices for fluid blocks (water/lava) in the chunk.
 // Vertex format: Pos(3), UV(2), TexID(1), Tint(3), FlowAngle(1) = 10 floats.
 func BuildFluidMesh(w *world.World, c *world.Chunk) []float32 {
 	var vertices []float32
 
-	// Base coordinates
+	// Pre-fetch all 6 face-adjacent neighbor chunks once.
+	// This is the key optimisation: instead of going through ChunkStore.Get()
+	// (with its RWMutex) for every single neighbor lookup, we pay the 6 mutex
+	// acquisitions once here and then do all subsequent lookups mutex-free.
+	nb := neighbors6{
+		w.GetChunk(c.X+1, c.Y, c.Z, false), // 0: +X east
+		w.GetChunk(c.X-1, c.Y, c.Z, false), // 1: -X west
+		w.GetChunk(c.X, c.Y+1, c.Z, false), // 2: +Y up
+		w.GetChunk(c.X, c.Y-1, c.Z, false), // 3: -Y down
+		w.GetChunk(c.X, c.Y, c.Z+1, false), // 4: +Z south
+		w.GetChunk(c.X, c.Y, c.Z-1, false), // 5: -Z north
+	}
+
+	// Base world coordinates for this chunk.
 	baseX := c.X * world.ChunkSizeX
 	baseY := c.Y * world.ChunkSizeY
 	baseZ := c.Z * world.ChunkSizeZ
 
-	for x := 0; x < world.ChunkSizeX; x++ {
-		for z := 0; z < world.ChunkSizeZ; z++ {
-			for y := 0; y < world.ChunkSizeY; y++ {
-				blockType := c.GetBlock(x, y, z)
+	// Iterate section-by-section so we can skip empty sections cheaply.
+	for secIdx := 0; secIdx < world.NumSections; secIdx++ {
+		if c.IsSectionEmpty(secIdx) {
+			continue
+		}
 
-				// Handle Water and Lava
-				if blockType != world.BlockTypeWater && blockType != world.BlockTypeLava {
-					continue
+		sectionBaseY := secIdx * world.SectionHeight
+
+		for lx := 0; lx < world.ChunkSizeX; lx++ {
+			for lz := 0; lz < world.ChunkSizeZ; lz++ {
+				for ly := 0; ly < world.SectionHeight; ly++ {
+					y := sectionBaseY + ly
+					blockType := c.GetBlock(lx, y, lz)
+
+					if blockType != world.BlockTypeWater && blockType != world.BlockTypeLava {
+						continue
+					}
+
+					renderFluidBlock(c, nb, lx, y, lz, baseX, baseY, baseZ, blockType, &vertices)
 				}
-
-				renderFluidBlock(w, c, x, y, z, baseX, baseY, baseZ, blockType, &vertices)
-
 			}
 		}
 	}
@@ -35,9 +147,9 @@ func BuildFluidMesh(w *world.World, c *world.Chunk) []float32 {
 	return vertices
 }
 
-func renderFluidBlock(w *world.World, c *world.Chunk, x, y, z int, baseX, baseY, baseZ int, blockType world.BlockType, vertices *[]float32) {
-	// BlockPos in world coords
-	wx, wy, wz := baseX+x, baseY+y, baseZ+z
+func renderFluidBlock(c *world.Chunk, nb neighbors6, lx, ly, lz int, baseX, baseY, baseZ int, blockType world.BlockType, vertices *[]float32) {
+	// World-space position of this block.
+	wx, wy, wz := baseX+lx, baseY+ly, baseZ+lz
 
 	// Get Material/Textures
 	isLava := blockType == world.BlockTypeLava
@@ -52,9 +164,9 @@ func renderFluidBlock(w *world.World, c *world.Chunk, x, y, z int, baseX, baseY,
 		flowTex = registry.TextureMap["water_flow.png"]
 	}
 
-	// Neighbor checks for visibility
-	shouldRenderFace := func(dx, dy, dz int, face world.BlockFace) bool {
-		nType := w.Get(wx+dx, wy+dy, wz+dz)
+	// Neighbor visibility checks — all mutex-free via chunk-local lookups.
+	shouldRenderFace := func(dlx, dly, dlz int) bool {
+		nType := getBlockLocal(c, nb, lx+dlx, ly+dly, lz+dlz)
 		if nType == blockType {
 			return false
 		}
@@ -64,22 +176,22 @@ func renderFluidBlock(w *world.World, c *world.Chunk, x, y, z int, baseX, baseY,
 		return true
 	}
 
-	renderUp := shouldRenderFace(0, 1, 0, world.FaceTop)
-	renderDown := shouldRenderFace(0, -1, 0, world.FaceBottom)
-	renderNorth := shouldRenderFace(0, 0, -1, world.FaceNorth)
-	renderSouth := shouldRenderFace(0, 0, 1, world.FaceSouth)
-	renderWest := shouldRenderFace(-1, 0, 0, world.FaceWest)
-	renderEast := shouldRenderFace(1, 0, 0, world.FaceEast)
+	renderUp := shouldRenderFace(0, 1, 0)
+	renderDown := shouldRenderFace(0, -1, 0)
+	renderNorth := shouldRenderFace(0, 0, -1)
+	renderSouth := shouldRenderFace(0, 0, 1)
+	renderWest := shouldRenderFace(-1, 0, 0)
+	renderEast := shouldRenderFace(1, 0, 0)
 
 	if !renderUp && !renderDown && !renderNorth && !renderSouth && !renderWest && !renderEast {
 		return
 	}
 
-	// Heights
-	f7 := getFluidHeight(w, wx, wy, wz, blockType)     // NW
-	f8 := getFluidHeight(w, wx, wy, wz+1, blockType)   // SW
-	f9 := getFluidHeight(w, wx+1, wy, wz+1, blockType) // SE
-	f10 := getFluidHeight(w, wx+1, wy, wz, blockType)  // NE
+	// Heights — use local variant that avoids ChunkStore lookups.
+	f7 := getFluidHeightLocal(c, nb, lx, ly, lz, blockType)     // NW
+	f8 := getFluidHeightLocal(c, nb, lx, ly, lz+1, blockType)   // SW
+	f9 := getFluidHeightLocal(c, nb, lx+1, ly, lz+1, blockType) // SE
+	f10 := getFluidHeightLocal(c, nb, lx+1, ly, lz, blockType)  // NE
 
 	// Fluid margin
 	f11 := float32(0.001)
@@ -91,7 +203,7 @@ func renderFluidBlock(w *world.World, c *world.Chunk, x, y, z int, baseX, baseY,
 		f9 -= f11
 		f10 -= f11
 
-		meta := int(w.GetMeta(wx, wy, wz))
+		meta := int(c.GetMeta(lx, ly, lz))
 		var texID float32
 		var flowAngle float32
 		if meta == 0 {
@@ -101,7 +213,7 @@ func renderFluidBlock(w *world.World, c *world.Chunk, x, y, z int, baseX, baseY,
 		} else {
 			// Flowing block: flow texture, directional animation
 			texID = float32(flowTex)
-			flowAngle = computeFlowAngle(w, wx, wy, wz, blockType)
+			flowAngle = computeFlowAngleLocal(c, nb, lx, ly, lz, blockType)
 		}
 
 		u1, v1 := float32(0.0), float32(0.0)
@@ -177,10 +289,11 @@ func emitVertex(vertices *[]float32, x, y, z float32, u, v float32, texID float3
 	*vertices = append(*vertices, x, y, z, u, v, texID, r, g, b, flowAngle)
 }
 
-// computeFlowAngle computes the MC-style flow direction for a flowing fluid block.
-// Returns the angle (radians) in the XZ plane, or -1.0 if no directional flow.
-func computeFlowAngle(w *world.World, wx, wy, wz int, blockType world.BlockType) float32 {
-	myMeta := int(w.GetMeta(wx, wy, wz))
+// computeFlowAngleLocal is the chunk-local variant of computeFlowAngle.
+// It uses getBlockLocal / getMetaLocal instead of w.Get / w.GetMeta so that
+// none of the neighbor lookups require a mutex acquisition.
+func computeFlowAngleLocal(c *world.Chunk, nb neighbors6, lx, ly, lz int, blockType world.BlockType) float32 {
+	myMeta := int(c.GetMeta(lx, ly, lz))
 	if myMeta >= 8 {
 		myMeta = 0 // falling blocks have source-level effective level
 	}
@@ -189,11 +302,11 @@ func computeFlowAngle(w *world.World, wx, wy, wz int, blockType world.BlockType)
 
 	dirs := [4][2]int{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}
 	for _, d := range dirs {
-		nx, nz := wx+d[0], wz+d[1]
-		nb := w.Get(nx, wy, nz)
+		nlx, nlz := lx+d[0], lz+d[1]
+		nb_ := getBlockLocal(c, nb, nlx, ly, nlz)
 
-		if nb == blockType {
-			nm := int(w.GetMeta(nx, wy, nz))
+		if nb_ == blockType {
+			nm := int(getMetaLocal(c, nb, nlx, ly, nlz))
 			if nm >= 8 {
 				nm = 0
 			}
@@ -201,9 +314,9 @@ func computeFlowAngle(w *world.World, wx, wy, wz int, blockType world.BlockType)
 			diff := nm - myMeta
 			fdx += float32(d[0]) * float32(diff)
 			fdz += float32(d[1]) * float32(diff)
-		} else if !world.BlockSolidTable[nb] {
-			// Air or replaceable neighbor - check for a drop below
-			below := w.Get(nx, wy-1, nz)
+		} else if !world.BlockSolidTable[nb_] {
+			// Air or replaceable neighbor — check for a drop below
+			below := getBlockLocal(c, nb, nlx, ly-1, nlz)
 			if !world.BlockSolidTable[below] && below != blockType {
 				// Strong attraction toward drop-off edges
 				fdx += float32(d[0]) * 8.0
@@ -224,9 +337,13 @@ func computeFlowAngle(w *world.World, wx, wy, wz int, blockType world.BlockType)
 	return float32(angle)
 }
 
-func getFluidHeight(w *world.World, x, y, z int, blockType world.BlockType) float32 {
+// getFluidHeightLocal is the chunk-local variant of getFluidHeight.
+// (lx, ly, lz) are the local coordinates of the fluid block whose corner height
+// we are computing.  The four corner-sharing blocks are sampled via
+// getBlockLocal / getMetaLocal, so no ChunkStore mutex is involved.
+func getFluidHeightLocal(c *world.Chunk, nb neighbors6, lx, ly, lz int, blockType world.BlockType) float32 {
 	// MC 1.8.9 BlockLiquid.getFluidHeight() - computes the average fluid height
-	// at corner (x, z) by sampling the 4 blocks sharing that corner.
+	// at corner (lx, lz) by sampling the 4 blocks sharing that corner.
 	count := 0
 	sum := float32(0.0)
 
@@ -234,14 +351,14 @@ func getFluidHeight(w *world.World, x, y, z int, blockType world.BlockType) floa
 		dx := -(j & 1)
 		dz := -(j >> 1 & 1)
 
-		bx, by, bz := x+dx, y, z+dz
+		bx, by, bz := lx+dx, ly, lz+dz
 
 		// If same fluid is directly above this corner block, height is 1.0
-		if w.Get(bx, by+1, bz) == blockType {
+		if getBlockLocal(c, nb, bx, by+1, bz) == blockType {
 			return 1.0
 		}
 
-		b := w.Get(bx, by, bz)
+		b := getBlockLocal(c, nb, bx, by, bz)
 
 		if b != blockType {
 			// Not fluid - if not solid, contributes height 0 (1 unit of drop)
@@ -252,7 +369,7 @@ func getFluidHeight(w *world.World, x, y, z int, blockType world.BlockType) floa
 			// Solid blocks are ignored (don't contribute to average)
 		} else {
 			// Same fluid block - read metadata for level
-			meta := int(w.GetMeta(bx, by, bz))
+			meta := int(getMetaLocal(c, nb, bx, by, bz))
 			if meta >= 8 || meta == 0 {
 				// Source (0) or falling (>=8) - weighted ×10
 				sum += world.GetLiquidHeightPercent(meta) * 10.0
@@ -268,4 +385,64 @@ func getFluidHeight(w *world.World, x, y, z int, blockType world.BlockType) floa
 	}
 
 	return 1.0 - sum/float32(count)
+}
+
+// computeFlowAngle is the World-based wrapper kept for tests and callers that
+// don't have pre-fetched neighbor chunks.  Hot path code should use
+// computeFlowAngleLocal instead.
+func computeFlowAngle(w *world.World, wx, wy, wz int, blockType world.BlockType) float32 {
+	c, nb, lx, ly, lz := worldToLocal(w, wx, wy, wz)
+	if c == nil {
+		return -1.0
+	}
+	return computeFlowAngleLocal(c, nb, lx, ly, lz, blockType)
+}
+
+// getFluidHeight is the World-based wrapper kept for tests and callers that
+// don't have pre-fetched neighbor chunks.
+func getFluidHeight(w *world.World, wx, wy, wz int, blockType world.BlockType) float32 {
+	c, nb, lx, ly, lz := worldToLocal(w, wx, wy, wz)
+	if c == nil {
+		return 0.0
+	}
+	return getFluidHeightLocal(c, nb, lx, ly, lz, blockType)
+}
+
+// worldToLocal resolves world coordinates to a chunk, its 6 neighbors, and
+// local coordinates.  Returns nil chunk when the position is unloaded.
+func worldToLocal(w *world.World, wx, wy, wz int) (*world.Chunk, neighbors6, int, int, int) {
+	cx := floorDivM(wx, world.ChunkSizeX)
+	cy := floorDivM(wy, world.ChunkSizeY)
+	cz := floorDivM(wz, world.ChunkSizeZ)
+	c := w.GetChunk(cx, cy, cz, false)
+	if c == nil {
+		return nil, neighbors6{}, 0, 0, 0
+	}
+	nb := neighbors6{
+		w.GetChunk(cx+1, cy, cz, false),
+		w.GetChunk(cx-1, cy, cz, false),
+		w.GetChunk(cx, cy+1, cz, false),
+		w.GetChunk(cx, cy-1, cz, false),
+		w.GetChunk(cx, cy, cz+1, false),
+		w.GetChunk(cx, cy, cz-1, false),
+	}
+	lx := modM(wx, world.ChunkSizeX)
+	ly := modM(wy, world.ChunkSizeY)
+	lz := modM(wz, world.ChunkSizeZ)
+	return c, nb, lx, ly, lz
+}
+
+func floorDivM(a, b int) int {
+	if a >= 0 {
+		return a / b
+	}
+	return (a - b + 1) / b
+}
+
+func modM(a, b int) int {
+	r := a % b
+	if r < 0 {
+		r += b
+	}
+	return r
 }
