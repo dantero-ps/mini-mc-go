@@ -290,6 +290,7 @@ func (b *Blocks) renderBlocksInternal(ctx renderer.RenderContext) {
 		stop()
 	}
 
+	gl.Disable(gl.CULL_FACE)
 	func() {
 		defer profiling.Track("renderer.renderBlocks.drawAtlas")()
 		// Aggregate visible chunks into unique XZ columns
@@ -361,6 +362,7 @@ func (b *Blocks) renderBlocksInternal(ctx renderer.RenderContext) {
 			}
 		}
 	}()
+	gl.Enable(gl.CULL_FACE)
 
 	// Render Fluids
 	b.renderFluidsInternal(ctx, visible, isUnderwater)
