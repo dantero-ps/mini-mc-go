@@ -389,6 +389,12 @@ func compactRegion(r *atlasRegion) {
 	// Delete old VBO
 	gl.DeleteBuffers(1, &r.vbo)
 	r.vbo = newVBO
+
+	// Update global allocation tracking if capacity changed
+	if newCap != r.capacityBytes {
+		totalAllocatedBytes -= r.capacityBytes
+		totalAllocatedBytes += newCap
+	}
 	r.capacityBytes = newCap
 
 	// Re-bind VAO to new VBO
@@ -400,6 +406,65 @@ func compactRegion(r *atlasRegion) {
 	r.fragmentedBytes = 0
 
 	log.Printf("atlas region %v compacted (CPU-MemCpy): %d bytes used, %d columns moved", r.key, r.totalFloats*2, len(activeCols))
+}
+
+// evictLRUColumns evicts the least-recently-drawn columns from the given region
+// until at least targetFreeBytes worth of int16 data has been freed.
+// It marks evicted columns as empty, then runs compactRegion to reclaim the space.
+// Returns the total bytes freed (estimated from vertex counts before eviction).
+func evictLRUColumns(r *atlasRegion, targetFreeBytes int) int {
+	if r == nil || targetFreeBytes <= 0 {
+		return 0
+	}
+
+	// Collect all columns in this region that currently hold data.
+	type candidate struct {
+		key [2]int
+		col *columnMesh
+	}
+	candidates := make([]candidate, 0, len(columnMeshes))
+	for k, c := range columnMeshes {
+		if c == nil || c.regionKey != r.key {
+			continue
+		}
+		if c.firstFloat < 0 || c.vertexCount <= 0 {
+			continue
+		}
+		candidates = append(candidates, candidate{k, c})
+	}
+
+	if len(candidates) == 0 {
+		return 0
+	}
+
+	// Sort ascending by drawnFrame so the oldest-drawn columns come first.
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].col.drawnFrame < candidates[j].col.drawnFrame
+	})
+
+	freedBytes := 0
+	for _, cand := range candidates {
+		if freedBytes >= targetFreeBytes {
+			break
+		}
+		col := cand.col
+		// 6 int16s per vertex, 2 bytes per int16 → 12 bytes per vertex.
+		colBytes := int(col.vertexCount) * 12
+		// Mark as evicted so compactRegion skips it.
+		col.vertexCount = 0
+		col.firstFloat = -1
+		col.firstVertex = -1
+		col.dirty = true
+		freedBytes += colBytes
+	}
+
+	if freedBytes > 0 {
+		// Compact to actually reclaim the space from evicted columns.
+		compactRegion(r)
+		log.Printf("atlas region %v: evicted LRU columns, freed ~%d bytes", r.key, freedBytes)
+	}
+
+	return freedBytes
 }
 
 func maybeCompactRegions() {
@@ -462,8 +527,24 @@ func ensureColumnMeshForXZ(x, z int) *columnMesh {
 
 	requiredBytes := (r.totalFloats + len(buf)) * 2
 	if requiredBytes > r.capacityBytes {
-		if !ensureRegionCapacity(r, requiredBytes) {
-			return col
+		// Try compacting first to reclaim fragmented space before growing
+		if r.fragmentedBytes > 0 {
+			compactRegion(r)
+			// Recalculate after compaction since totalFloats is now smaller
+			requiredBytes = (r.totalFloats + len(buf)) * 2
+		}
+		if requiredBytes > r.capacityBytes {
+			if !ensureRegionCapacity(r, requiredBytes) {
+				// Growth failed (hit maxAtlasBytes). Try evicting least-recently-drawn columns.
+				needed := requiredBytes - r.capacityBytes + len(buf)*2 // extra headroom
+				freed := evictLRUColumns(r, needed)
+				if freed > 0 {
+					requiredBytes = (r.totalFloats + len(buf)) * 2
+				}
+				if requiredBytes > r.capacityBytes {
+					return col // truly out of space
+				}
+			}
 		}
 	}
 	offsetBytes := r.totalFloats * 2

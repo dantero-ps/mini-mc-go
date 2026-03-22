@@ -349,5 +349,19 @@ func (cs *ChunkStore) AddChunk(coord ChunkCoord, chunk *Chunk) {
 			col[coord.Y] = chunk
 			cs.colIndex[key] = col
 		}
+		// Mark face-adjacent neighbors dirty so they re-mesh against the new chunk.
+		neighborDirs := [6]ChunkCoord{
+			{coord.X + 1, coord.Y, coord.Z},
+			{coord.X - 1, coord.Y, coord.Z},
+			{coord.X, coord.Y + 1, coord.Z},
+			{coord.X, coord.Y - 1, coord.Z},
+			{coord.X, coord.Y, coord.Z + 1},
+			{coord.X, coord.Y, coord.Z - 1},
+		}
+		for _, nc := range neighborDirs {
+			if nb, ok := cs.chunks[nc]; ok {
+				nb.dirty = true
+			}
+		}
 	}
 }
