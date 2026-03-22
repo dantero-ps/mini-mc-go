@@ -7,25 +7,14 @@ import (
 
 // meshCustomBlock generates vertices for a block with custom model elements
 // matching the compressed vertex format used by the greedy mesher.
-// meshCustomBlock generates vertices for a block with custom model elements.
 // Note: Current vertex format enforces integer coordinates, so sub-voxel precision is lost/rounded.
-func meshCustomBlock(w *world.World, c *world.Chunk, x, y, z int, def *registry.BlockDefinition) []uint32 {
-	var vertices []uint32
-
-	// Re-implementation of packVertex from neighbor logic (duplicated for now, or should be shared)
-	// V1: X(5) Y(9) Z(5) N(3) B(8)
-	// V2: T(16) C(16)
-	packVertex := func(lx, ly, lz int, normal byte, texID int, brightness byte, tint uint16) (uint32, uint32) {
-		v1 := uint32(lx) | (uint32(ly) << 5) | (uint32(lz) << 14) | (uint32(normal) << 19) | (uint32(brightness) << 22)
-		v2 := uint32(texID) | (uint32(tint) << 16)
-		return v1, v2
-	}
-
+// Vertices are appended directly to the provided slice to avoid an intermediate allocation.
+func meshCustomBlock(vertices *[]uint32, w *world.World, c *world.Chunk, x, y, z int, def *registry.BlockDefinition) {
 	// Helper to resolve texture from the block definition for a specific face
 	// In the registry, we only stored Top/Bot/Side.
 	// We really should look at the ELEMENT's texture logic.
 	// But `def.Elements[i].Faces[dir].Texture` is a string reference.
-	// `registry.Blocks` doesn't expose the texture map anymore.
+	// `registry.BlockDefs` doesn't expose the texture map anymore.
 	// Fallback strategy: Use Top/Bot/Side based on direction.
 	getTexID := func(faceDir string) int {
 		var name string
@@ -226,27 +215,27 @@ func meshCustomBlock(w *world.World, c *world.Chunk, x, y, z int, def *registry.
 				// Check neighbor info
 				// Need world/chunk access to neighbor
 				// Simple check: inside chunk?
-				nx, ny, nz := x+bx, y+by, z+bz
+				nnx, nny, nnz := x+bx, y+by, z+bz
 				var neighborDef *registry.BlockDefinition
 
 				// We'll use the logic from greedy.go:151+ for neighbors
 				// But to keep it simple and safe for this file:
 				// 1. Check local chunk bounds
-				if nx >= 0 && nx < world.ChunkSizeX && ny >= 0 && ny < world.ChunkSizeY && nz >= 0 && nz < world.ChunkSizeZ {
-					nbt := c.GetBlock(nx, ny, nz)
+				if nnx >= 0 && nnx < world.ChunkSizeX && nny >= 0 && nny < world.ChunkSizeY && nnz >= 0 && nnz < world.ChunkSizeZ {
+					nbt := c.GetBlock(nnx, nny, nnz)
 					if nbt != world.BlockTypeAir {
-						neighborDef = registry.Blocks[nbt]
+						neighborDef = registry.BlockDefs[nbt]
 					}
 				} else {
 					// Global lookup for cross-chunk culling
 					// Must convert local chunk coord to world coord
-					wx := c.X*world.ChunkSizeX + nx
-					wy := c.Y*world.ChunkSizeY + ny
-					wz := c.Z*world.ChunkSizeZ + nz
+					wx := c.X*world.ChunkSizeX + nnx
+					wy := c.Y*world.ChunkSizeY + nny
+					wz := c.Z*world.ChunkSizeZ + nnz
 
 					nbt := w.Get(wx, wy, wz)
 					if nbt != world.BlockTypeAir {
-						neighborDef = registry.Blocks[nbt]
+						neighborDef = registry.BlockDefs[nbt]
 					}
 				}
 
@@ -262,22 +251,21 @@ func meshCustomBlock(w *world.World, c *world.Chunk, x, y, z int, def *registry.
 				continue
 			}
 
-			// Emit Quad (2 Triangles)
+			// Emit Quad (2 Triangles) — uses package-level packVertex from greedy.go.
 			// Tri 1: qa, qb, qc
 			v1, v2 := packVertex(qa[0], qa[1], qa[2], nm, texID, brightness, tint)
-			vertices = append(vertices, v1, v2)
+			*vertices = append(*vertices, v1, v2)
 			v1, v2 = packVertex(qb[0], qb[1], qb[2], nm, texID, brightness, tint)
-			vertices = append(vertices, v1, v2)
+			*vertices = append(*vertices, v1, v2)
 			v1, v2 = packVertex(qc[0], qc[1], qc[2], nm, texID, brightness, tint)
-			vertices = append(vertices, v1, v2)
+			*vertices = append(*vertices, v1, v2)
 
 			// Tri 2: qc, qd, qa
-			vertices = append(vertices, v1, v2) // reuse qc
+			*vertices = append(*vertices, v1, v2) // reuse qc
 			v1, v2 = packVertex(qd[0], qd[1], qd[2], nm, texID, brightness, tint)
-			vertices = append(vertices, v1, v2)
+			*vertices = append(*vertices, v1, v2)
 			v1, v2 = packVertex(qa[0], qa[1], qa[2], nm, texID, brightness, tint) // reuse qa
-			vertices = append(vertices, v1, v2)
+			*vertices = append(*vertices, v1, v2)
 		}
 	}
-	return vertices
 }

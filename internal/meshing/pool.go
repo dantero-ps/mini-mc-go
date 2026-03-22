@@ -8,29 +8,32 @@ import (
 
 // MeshJob represents a meshing job request
 type MeshJob struct {
-	World *world.World
-	Chunk *world.Chunk
-	Coord world.ChunkCoord
-	// Result channel - will be sent the result when done
-	ResultChan chan MeshResult
+	World           *world.World
+	Chunk           *world.Chunk
+	Coord           world.ChunkCoord
+	ResultChan      chan MeshResult
+	ChunkGeneration uint64 // snapshot of chunk.Generation() at submission time
 }
 
 // MeshResult contains the result of a meshing operation
 type MeshResult struct {
-	Coord         world.ChunkCoord
-	Vertices      []uint32  // Packed vertices
-	FluidVertices []float32 // Fluid vertices (custom format)
-	Error         error
+	Coord           world.ChunkCoord
+	Chunk           *world.Chunk // The chunk that was meshed; used to call SetClean after applying
+	Vertices        []uint32     // Packed vertices
+	FluidVertices   []float32    // Fluid vertices (custom format)
+	Error           error
+	ChunkGeneration uint64 // echoed from the job; compared against chunk.Generation() in applyMeshResult
 }
 
 // WorkerPool manages goroutines for mesh generation
 type WorkerPool struct {
-	jobQueue      chan MeshJob
-	workers       int
-	ctx           context.Context
-	cancel        context.CancelFunc
-	wg            sync.WaitGroup
-	directionPool *DirectionWorkerPool
+	jobQueue         chan MeshJob
+	priorityJobQueue chan MeshJob // checked before jobQueue; for player-interaction updates
+	workers          int
+	ctx              context.Context
+	cancel           context.CancelFunc
+	wg               sync.WaitGroup
+	directionPool    *DirectionWorkerPool
 }
 
 // NewWorkerPool creates a new mesh worker pool
@@ -47,11 +50,12 @@ func NewWorkerPool(workers int, queueSize int) *WorkerPool {
 	directionPool.Start()
 
 	pool := &WorkerPool{
-		jobQueue:      make(chan MeshJob, queueSize),
-		workers:       workers,
-		ctx:           ctx,
-		cancel:        cancel,
-		directionPool: directionPool,
+		jobQueue:         make(chan MeshJob, queueSize),
+		priorityJobQueue: make(chan MeshJob, 64),
+		workers:          workers,
+		ctx:              ctx,
+		cancel:           cancel,
+		directionPool:    directionPool,
 	}
 
 	// Start worker goroutines
@@ -63,14 +67,26 @@ func NewWorkerPool(workers int, queueSize int) *WorkerPool {
 	return pool
 }
 
-// SubmitJob submits a mesh generation job to the pool
-// Returns true if job was submitted successfully, false if queue is full
+// SubmitJob submits a mesh generation job to the normal (low-priority) queue.
+// Returns true if the job was accepted, false if the queue is full.
 func (p *WorkerPool) SubmitJob(job MeshJob) bool {
 	select {
 	case p.jobQueue <- job:
 		return true
 	default:
-		return false // Queue is full
+		return false
+	}
+}
+
+// SubmitPriorityJob submits a job to the high-priority queue (checked before normal jobs).
+// Use this for player-interaction updates so they are not delayed by initial-load backlog.
+// Returns true if accepted, false if the priority queue is full.
+func (p *WorkerPool) SubmitPriorityJob(job MeshJob) bool {
+	select {
+	case p.priorityJobQueue <- job:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -82,31 +98,46 @@ func (p *WorkerPool) SubmitJobBlocking(job MeshJob) {
 	}
 }
 
-// worker is the worker goroutine that processes mesh jobs
+// processJob executes a single mesh job and sends the result.
+func (p *WorkerPool) processJob(job MeshJob) {
+	vertices := BuildGreedyMeshForChunk(job.World, job.Chunk, p.directionPool)
+	fluidVertices := BuildFluidMesh(job.World, job.Chunk)
+
+	result := MeshResult{
+		Coord:           job.Coord,
+		Chunk:           job.Chunk,
+		Vertices:        vertices,
+		FluidVertices:   fluidVertices,
+		ChunkGeneration: job.ChunkGeneration,
+	}
+
+	select {
+	case job.ResultChan <- result:
+	case <-p.ctx.Done():
+	}
+}
+
+// worker is the worker goroutine that processes mesh jobs.
+// Priority queue is always drained first so player-interaction jobs
+// are not delayed by the initial-load backlog in the normal queue.
 func (p *WorkerPool) worker(id int) {
 	defer p.wg.Done()
 
 	for {
+		// Non-blocking drain of priority queue first
 		select {
+		case job := <-p.priorityJobQueue:
+			p.processJob(job)
+			continue
+		default:
+		}
+
+		// Block waiting on either queue; priority still wins
+		select {
+		case job := <-p.priorityJobQueue:
+			p.processJob(job)
 		case job := <-p.jobQueue:
-			// Process the mesh job
-			vertices := BuildGreedyMeshForChunk(job.World, job.Chunk, p.directionPool)
-			fluidVertices := BuildFluidMesh(job.World, job.Chunk)
-
-			result := MeshResult{
-				Coord:         job.Coord,
-				Vertices:      vertices,
-				FluidVertices: fluidVertices,
-				Error:         nil,
-			}
-
-			// Send result back
-			select {
-			case job.ResultChan <- result:
-			case <-p.ctx.Done():
-				return
-			}
-
+			p.processJob(job)
 		case <-p.ctx.Done():
 			return
 		}

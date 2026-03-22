@@ -132,6 +132,101 @@ func (cs *ChunkStore) Set(x, y, z int, val BlockType) {
 	}
 }
 
+// GetMeta returns the metadata at the specified world coordinates.
+func (cs *ChunkStore) GetMeta(x, y, z int) uint8 {
+	chunk := cs.GetChunkFromBlockCoords(x, y, z, false)
+	if chunk == nil {
+		return 0
+	}
+
+	localX := mod(x, ChunkSizeX)
+	localY := mod(y, ChunkSizeY)
+	localZ := mod(z, ChunkSizeZ)
+
+	return chunk.GetMeta(localX, localY, localZ)
+}
+
+// SetMeta sets the metadata at the specified world coordinates.
+func (cs *ChunkStore) SetMeta(x, y, z int, meta uint8) {
+	chunk := cs.GetChunkFromBlockCoords(x, y, z, true)
+
+	localX := mod(x, ChunkSizeX)
+	localY := mod(y, ChunkSizeY)
+	localZ := mod(z, ChunkSizeZ)
+
+	chunk.SetMeta(localX, localY, localZ, meta)
+
+	// Sınır bloklarında komşu chunk'ları dirty yap
+	if localX == 0 {
+		if nb := cs.GetChunkFromBlockCoords(x-1, y, z, false); nb != nil {
+			nb.dirty = true
+		}
+	} else if localX == ChunkSizeX-1 {
+		if nb := cs.GetChunkFromBlockCoords(x+1, y, z, false); nb != nil {
+			nb.dirty = true
+		}
+	}
+	if localY == 0 {
+		if nb := cs.GetChunkFromBlockCoords(x, y-1, z, false); nb != nil {
+			nb.dirty = true
+		}
+	} else if localY == ChunkSizeY-1 {
+		if nb := cs.GetChunkFromBlockCoords(x, y+1, z, false); nb != nil {
+			nb.dirty = true
+		}
+	}
+	if localZ == 0 {
+		if nb := cs.GetChunkFromBlockCoords(x, y, z-1, false); nb != nil {
+			nb.dirty = true
+		}
+	} else if localZ == ChunkSizeZ-1 {
+		if nb := cs.GetChunkFromBlockCoords(x, y, z+1, false); nb != nil {
+			nb.dirty = true
+		}
+	}
+}
+
+// SetWithMeta sets the block type and metadata at the specified world coordinates atomically.
+func (cs *ChunkStore) SetWithMeta(x, y, z int, val BlockType, meta uint8) {
+	chunk := cs.GetChunkFromBlockCoords(x, y, z, true)
+
+	localX := mod(x, ChunkSizeX)
+	localY := mod(y, ChunkSizeY)
+	localZ := mod(z, ChunkSizeZ)
+
+	chunk.SetBlock(localX, localY, localZ, val)
+	chunk.SetMeta(localX, localY, localZ, meta)
+
+	// Sınır bloklarında komşu chunk'ları dirty yap
+	if localX == 0 {
+		if nb := cs.GetChunkFromBlockCoords(x-1, y, z, false); nb != nil {
+			nb.dirty = true
+		}
+	} else if localX == ChunkSizeX-1 {
+		if nb := cs.GetChunkFromBlockCoords(x+1, y, z, false); nb != nil {
+			nb.dirty = true
+		}
+	}
+	if localY == 0 {
+		if nb := cs.GetChunkFromBlockCoords(x, y-1, z, false); nb != nil {
+			nb.dirty = true
+		}
+	} else if localY == ChunkSizeY-1 {
+		if nb := cs.GetChunkFromBlockCoords(x, y+1, z, false); nb != nil {
+			nb.dirty = true
+		}
+	}
+	if localZ == 0 {
+		if nb := cs.GetChunkFromBlockCoords(x, y, z-1, false); nb != nil {
+			nb.dirty = true
+		}
+	} else if localZ == ChunkSizeZ-1 {
+		if nb := cs.GetChunkFromBlockCoords(x, y, z+1, false); nb != nil {
+			nb.dirty = true
+		}
+	}
+}
+
 // GetActiveBlocks returns a list of positions of all non-air blocks in the world.
 func (cs *ChunkStore) GetActiveBlocks() []mgl32.Vec3 {
 	var positions []mgl32.Vec3

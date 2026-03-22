@@ -5,6 +5,7 @@ import (
 	"mini-mc/internal/config"
 	"mini-mc/internal/graphics"
 	"mini-mc/internal/graphics/renderer"
+	"mini-mc/internal/player"
 	"mini-mc/internal/profiling"
 	"mini-mc/internal/registry"
 	"mini-mc/internal/world"
@@ -150,6 +151,17 @@ func (b *Blocks) SetViewport(width, height int) {
 }
 
 func (b *Blocks) renderBlocksInternal(ctx renderer.RenderContext) {
+	eyeY := ctx.Player.Position[1] + player.PlayerEyeHeight
+	eyeBlock := ctx.World.Get(
+		int(ctx.Player.Position[0]),
+		int(eyeY),
+		int(ctx.Player.Position[2]),
+	)
+	isUnderwater := 0
+	if eyeBlock == world.BlockTypeWater {
+		isUnderwater = 1
+	}
+
 	func() {
 		defer profiling.Track("renderer.renderBlocks.shaderSetup")()
 		b.mainShader.Use()
@@ -159,17 +171,17 @@ func (b *Blocks) renderBlocksInternal(ctx renderer.RenderContext) {
 			gl.BindTexture(gl.TEXTURE_2D_ARRAY, GlobalTextureAtlas.TextureID)
 			b.mainShader.SetInt("textureArray", 0)
 
-			// Set tint texture ID (grass_top.png)
 			if id, ok := registry.TextureMap["grass_top.png"]; ok {
 				b.mainShader.SetInt("tintTextureID", int32(id))
 			} else {
-				// Fallback if not found, use -1 to disable tinting
 				b.mainShader.SetInt("tintTextureID", -1)
 			}
 		}
 
 		b.mainShader.SetMatrix4("proj", &ctx.Proj[0])
 		b.mainShader.SetMatrix4("view", &ctx.View[0])
+		b.mainShader.SetVector3("cameraPos", ctx.Player.Position[0], ctx.Player.Position[1], ctx.Player.Position[2])
+		b.mainShader.SetInt("isUnderwater", int32(isUnderwater))
 
 		light := mgl32.Vec3{0.3, 1.0, 0.3}.Normalize()
 		b.mainShader.SetVector3("lightDir", light.X(), light.Y(), light.Z())
@@ -346,10 +358,10 @@ func (b *Blocks) renderBlocksInternal(ctx renderer.RenderContext) {
 	}()
 
 	// Render Fluids
-	b.renderFluidsInternal(ctx, visible)
+	b.renderFluidsInternal(ctx, visible, isUnderwater)
 }
 
-func (b *Blocks) renderFluidsInternal(ctx renderer.RenderContext, visible []world.ChunkWithCoord) {
+func (b *Blocks) renderFluidsInternal(ctx renderer.RenderContext, visible []world.ChunkWithCoord, isUnderwater int) {
 	// Collect fluid verts from visible chunks
 	b.fluidVerts = b.fluidVerts[:0]
 
@@ -366,14 +378,10 @@ func (b *Blocks) renderFluidsInternal(ctx renderer.RenderContext, visible []worl
 	func() {
 		defer profiling.Track("renderer.renderFluids")()
 
-		// Enable blending for transparency
 		gl.Enable(gl.BLEND)
 		gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
-		// Usually depth write should be disabled for transparent objects to avoid occlusion issues,
-		// but for fluids we might want it enabled if we want them to interact with depth buffer correctly?
-		// Common MC trick: simple transparency often writes depth.
-		// If we disable depth write, water behind water might look weird?
-		// Let's keep depth write enabled for now (default).
+		gl.Disable(gl.CULL_FACE)
+		gl.DepthMask(false)
 
 		b.fluidShader.Use()
 
@@ -385,6 +393,8 @@ func (b *Blocks) renderFluidsInternal(ctx renderer.RenderContext, visible []worl
 
 		b.fluidShader.SetMatrix4("proj", &ctx.Proj[0])
 		b.fluidShader.SetMatrix4("view", &ctx.View[0])
+		b.fluidShader.SetVector3("cameraPos", ctx.Player.Position[0], ctx.Player.Position[1], ctx.Player.Position[2])
+		b.fluidShader.SetInt("isUnderwater", int32(isUnderwater))
 
 		// Upload data
 		gl.BindVertexArray(b.fluidVAO)
@@ -407,6 +417,8 @@ func (b *Blocks) renderFluidsInternal(ctx renderer.RenderContext, visible []worl
 		gl.DrawArrays(gl.TRIANGLES, 0, count)
 
 		gl.BindVertexArray(0)
+		gl.DepthMask(true)
+		gl.Enable(gl.CULL_FACE)
 		gl.Disable(gl.BLEND)
 	}()
 }

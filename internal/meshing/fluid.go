@@ -69,7 +69,7 @@ func renderFluidBlock(w *world.World, c *world.Chunk, x, y, z int, baseX, baseY,
 			return false
 		}
 		// If neighbor is solid, don't render
-		if def, ok := registry.Blocks[nType]; ok && def.IsSolid && !def.IsTransparent {
+		if world.BlockSolidTable[nType] {
 			return false
 		}
 		return true
@@ -102,16 +102,12 @@ func renderFluidBlock(w *world.World, c *world.Chunk, x, y, z int, baseX, baseY,
 		f9 -= f11
 		f10 -= f11
 
-		// Calculate Flow Direction
-		// Java: getFlowDirection
-		// Since we don't have metadata (level), flow direction is static or 0.
-		// We'll skip complex flow direction calculation for now and use "Still" texture.
-		// Or implement a simple version if possible.
-
-		// For now: Use Still texture on top if level is source (which it is)
-		// But usually top texture is animated.
-
+		// Use still texture for source blocks (level 0), flow texture for flowing
+		meta := int(w.GetMeta(wx, wy, wz))
 		texID := float32(stillTex)
+		if meta != 0 {
+			texID = float32(flowTex)
+		}
 
 		// UVs
 		// Java code interpolates UVs. We just use 0..1
@@ -194,54 +190,8 @@ func emitVertex(vertices *[]float32, x, y, z float32, u, v float32, texID float3
 }
 
 func getFluidHeight(w *world.World, x, y, z int, blockType world.BlockType) float32 {
-	// Java Logic adapted
-	// Checks 4 neighbors around the corner (x,z)
-	// (x-1, z-1), (x, z-1), (x-1, z), (x, z)
-	// But `getFluidHeight` in Java takes a BlockPos and Material.
-	// It checks the block itself and neighbors to compute the average height at that corner.
-
-	// Implementation:
-	// To get height at corner (x, z) (relative to block), we need to check the 4 blocks sharing that corner.
-	// But the loop in renderFluid calls getFluidHeight with (x,z), (x, z+1)...
-	// which implies getFluidHeight calculates height for the block column?
-	// No, Java calls it with BlockPos.
-
-	// Java Logic:
-	/*
-	   int i = 0;
-	   float f = 0.0F;
-	   for (int j = 0; j < 4; ++j) {
-	       BlockPos blockpos = blockPosIn.add(-(j & 1), 0, -(j >> 1 & 1));
-	       // Checks block ABOVE
-	       if (blockAccess.getBlockState(blockpos.up()).getBlock().getMaterial() == blockMaterial) {
-	           return 1.0F;
-	       }
-	       // Checks block itself
-	       IBlockState iblockstate = blockAccess.getBlockState(blockpos);
-	       Material material = iblockstate.getBlock().getMaterial();
-	       if (material != blockMaterial) {
-	           if (!material.isSolid()) {
-	               ++f;
-	               ++i;
-	           }
-	       } else {
-	            int k = ((Integer)iblockstate.getValue(BlockLiquid.LEVEL)).intValue();
-	            if (k >= 8 || k == 0) {
-	                f += BlockLiquid.getLiquidHeightPercent(k) * 10.0F;
-	                i += 10;
-	            }
-	            f += BlockLiquid.getLiquidHeightPercent(k);
-	            ++i;
-	       }
-	   }
-	   return 1.0F - f / (float)i;
-	*/
-
-	// We emulate this.
-	// blockPosIn is the block coordinate being rendered? No, Java calls it with corner offsets?
-	// Java calls: getFluidHeight(pos), getFluidHeight(pos.south()), etc.
-	// This implies getFluidHeight computes height at the top-left corner of the block 'pos'.
-
+	// MC 1.8.9 BlockLiquid.getFluidHeight() - computes the average fluid height
+	// at corner (x, z) by sampling the 4 blocks sharing that corner.
 	count := 0
 	sum := float32(0.0)
 
@@ -251,7 +201,7 @@ func getFluidHeight(w *world.World, x, y, z int, blockType world.BlockType) floa
 
 		bx, by, bz := x+dx, y, z+dz
 
-		// Check block above
+		// If same fluid is directly above this corner block, height is 1.0
 		if w.Get(bx, by+1, bz) == blockType {
 			return 1.0
 		}
@@ -259,40 +209,26 @@ func getFluidHeight(w *world.World, x, y, z int, blockType world.BlockType) floa
 		b := w.Get(bx, by, bz)
 
 		if b != blockType {
-			// If not fluid, check if solid
-			def, ok := registry.Blocks[b]
-			if !ok || !def.IsSolid {
-				// Treated as empty/air (height 0, effectively)
-				// Java: ++f (adds 1 to sum? No, f is "fluid drop". Height = 1 - f/i)
-				// Java says: if !solid, ++f, ++i.
-				// This means it contributes "1 unit of drop" -> height 0.
+			// Not fluid - if not solid, contributes height 0 (1 unit of drop)
+			if !world.BlockSolidTable[b] {
 				sum += 1.0
 				count++
 			}
-			// If solid, it's ignored (doesn't contribute to average)
+			// Solid blocks are ignored (don't contribute to average)
 		} else {
-			// Is fluid.
-			// We assume level 0 (full source).
-			// k=0.
-			// Java: if (k>=8 || k==0) { f += 0 * 10; i += 10; }
-			// f += 0; i++;
-			// So f adds 0. i adds 11.
-			// Height = 1 - 0/11 = 1.0.
-
-			// If we want simply 1.0 for source blocks:
-			// sum += 0.0
-			count += 11 // Weight source blocks heavily?
+			// Same fluid block - read metadata for level
+			meta := int(w.GetMeta(bx, by, bz))
+			if meta >= 8 || meta == 0 {
+				// Source (0) or falling (>=8) - weighted ×10
+				sum += world.GetLiquidHeightPercent(meta) * 10.0
+				count += 10
+			}
+			sum += world.GetLiquidHeightPercent(meta)
+			count++
 		}
 	}
 
 	if count == 0 {
-		return 0.0 // Or 1.0? Java returns 1.0 - f/i. If i=0, NaN.
-		// But i only stays 0 if all 4 neighbors are SOLID.
-		// If surrounded by stone, water height is?
-		// Java: return 1.0F - f / (float)i;
-		// If i=0, we should probably return 0.
-		// But in MC, water against glass is 1.0?
-		// Let's return 0.0.
 		return 0.0
 	}
 

@@ -20,10 +20,11 @@ var ItemEntityConfigurator func(item Ticker, world interface{})
 // World represents the game world, composed of chunks
 type World struct {
 	// Components
-	store    *ChunkStore
-	entities *EntityManager
-	gen      TerrainGenerator
-	streamer *ChunkStreamer
+	store         *ChunkStore
+	entities      *EntityManager
+	gen           TerrainGenerator
+	streamer      *ChunkStreamer
+	tickScheduler *TickScheduler
 }
 
 // ChunkCoord is a unique identifier for a chunk based on its position
@@ -39,10 +40,11 @@ func New() *World {
 	streamer := NewChunkStreamer(store, gen)
 
 	return &World{
-		store:    store,
-		entities: entities,
-		gen:      gen,
-		streamer: streamer,
+		store:         store,
+		entities:      entities,
+		gen:           gen,
+		streamer:      streamer,
+		tickScheduler: NewTickScheduler(),
 	}
 }
 
@@ -119,6 +121,21 @@ func (w *World) Set(x, y, z int, val BlockType) {
 	w.store.Set(x, y, z, val)
 }
 
+// GetMeta returns the metadata at the specified world coordinates
+func (w *World) GetMeta(x, y, z int) uint8 {
+	return w.store.GetMeta(x, y, z)
+}
+
+// SetMeta sets the metadata at the specified world coordinates
+func (w *World) SetMeta(x, y, z int, meta uint8) {
+	w.store.SetMeta(x, y, z, meta)
+}
+
+// SetWithMeta sets the block type and metadata atomically at the specified world coordinates
+func (w *World) SetWithMeta(x, y, z int, val BlockType, meta uint8) {
+	w.store.SetWithMeta(x, y, z, val, meta)
+}
+
 // GetActiveBlocks returns a list of positions of all non-air blocks in the world
 func (w *World) GetActiveBlocks() []mgl32.Vec3 {
 	return w.store.GetActiveBlocks()
@@ -146,8 +163,30 @@ func (w *World) StreamChunksAroundAsync(x, z float32, radius int) {
 }
 
 // EvictFarChunks removes chunks outside the given radius (in chunks) from the center (world x,z).
+// Pending ticks for evicted positions are lazily cancelled to prevent stale heap growth.
 func (w *World) EvictFarChunks(x, z float32, radius int) int {
+	cx := floorDiv(int(x), ChunkSizeX)
+	cz := floorDiv(int(z), ChunkSizeZ)
+	w.tickScheduler.CancelOutsideRadius(cx, cz, radius)
 	return w.streamer.EvictFarChunks(x, z, radius)
+}
+
+// Tick processes one game tick - runs scheduled block updates.
+func (w *World) Tick() {
+	positions := w.tickScheduler.Process(1024)
+	for _, pos := range positions {
+		FluidTick(w, pos.X, pos.Y, pos.Z)
+	}
+}
+
+// ScheduleBlockTick schedules a block update at (x, y, z) to fire after delay ticks.
+func (w *World) ScheduleBlockTick(x, y, z, delay, priority int) {
+	w.tickScheduler.Schedule(BlockPos{X: x, Y: y, Z: z}, delay, priority)
+}
+
+// CancelBlockTick cancels a pending block tick at (x, y, z).
+func (w *World) CancelBlockTick(x, y, z int) {
+	w.tickScheduler.Cancel(BlockPos{X: x, Y: y, Z: z})
 }
 
 // SurfaceHeightAt exposes the terrain surface height used for generation at world (x,z).

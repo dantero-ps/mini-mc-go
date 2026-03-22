@@ -3,7 +3,32 @@ package world
 import (
 	"math"
 	"math/rand"
+	"sync"
 )
+
+// chunkGenBuffers holds pre-allocated noise and biome buffers reused across chunk generation calls.
+type chunkGenBuffers struct {
+	densityField  []float64   // 825 = 5*33*5
+	depthNoise    []float64   // 25  = 5*1*5
+	mainNoise     []float64   // 825 = 5*33*5
+	minNoise      []float64   // 825 = 5*33*5
+	maxNoise      []float64   // 825 = 5*33*5
+	biomeGrid     [81]*Biome  // 9×9 grid covering the density blending neighbourhood
+	surfaceBiomes [256]*Biome // 16×16 grid for replaceSurface
+	heightMap     [256]int16  // per-column max Y with non-air block, indexed [lx*16+lz]
+}
+
+var genBufferPool = sync.Pool{
+	New: func() interface{} {
+		return &chunkGenBuffers{
+			densityField: make([]float64, noiseGridX*noiseGridZ*noiseGridY),
+			depthNoise:   make([]float64, noiseGridX*noiseGridZ),
+			mainNoise:    make([]float64, noiseGridX*noiseGridZ*noiseGridY),
+			minNoise:     make([]float64, noiseGridX*noiseGridZ*noiseGridY),
+			maxNoise:     make([]float64, noiseGridX*noiseGridZ*noiseGridY),
+		}
+	},
+}
 
 // ChunkProvider189 implements TerrainGenerator using Minecraft 1.8.9 authentic noise.
 // Thread-safe: all noise buffers are allocated per-call, generators are read-only after init.
@@ -92,29 +117,48 @@ const (
 	seaLevel   = 63
 )
 
-// generateDensityField computes the 5x33x5 density field for a chunk.
+// generateDensityField computes the 5x33x5 density field for a chunk into bufs.densityField.
 // This is a 1:1 port of MC's func_147423_a.
 // MC field_147434_q layout: [825] indexed as (x*5+z)*33+y (iterating k=x, l=z, l1=y).
-func (cp *ChunkProvider189) generateDensityField(xChunk, zChunk int) []float64 {
-	field := make([]float64, noiseGridX*noiseGridZ*noiseGridY)
+// bufs.biomeGrid must be pre-populated before calling this function.
+func (cp *ChunkProvider189) generateDensityField(xChunk, zChunk int, bufs *chunkGenBuffers) []float64 {
+	field := bufs.densityField
 
 	xPos := xChunk * 4
 	zPos := zChunk * 4
 
-	// Depth noise: 2D (5x5), MC uses noiseGen6 with 2D bouncer
-	depthNoiseArray := cp.depthNoise.GenerateNoiseOctaves2D(nil, xPos, zPos, 5, 5,
-		cp.depthNoiseScaleX, cp.depthNoiseScaleZ, cp.depthNoiseExpo)
-
-	// 3D noise arrays
+	// 3D noise arrays — pass pre-allocated slices to avoid 3 × 825 allocations per chunk.
 	f := cp.coordinateScale
 	f1 := cp.heightScale
 
-	mainRegion := cp.mainNoise.GenerateNoiseOctaves(nil, xPos, 0, zPos, 5, 33, 5,
-		f/cp.mainNoiseScaleX, f1/cp.mainNoiseScaleY, f/cp.mainNoiseScaleZ)
-	minLimitRegion := cp.minLimitNoise.GenerateNoiseOctaves(nil, xPos, 0, zPos, 5, 33, 5,
-		f, f1, f)
-	maxLimitRegion := cp.maxLimitNoise.GenerateNoiseOctaves(nil, xPos, 0, zPos, 5, 33, 5,
-		f, f1, f)
+	// Run the 3 expensive 3D noise computations in parallel goroutines.
+	var wg sync.WaitGroup
+	wg.Add(3)
+	go func() {
+		defer wg.Done()
+		cp.mainNoise.GenerateNoiseOctaves(bufs.mainNoise, xPos, 0, zPos, 5, 33, 5,
+			f/cp.mainNoiseScaleX, f1/cp.mainNoiseScaleY, f/cp.mainNoiseScaleZ)
+	}()
+	go func() {
+		defer wg.Done()
+		cp.minLimitNoise.GenerateNoiseOctaves(bufs.minNoise, xPos, 0, zPos, 5, 33, 5, f, f1, f)
+	}()
+	go func() {
+		defer wg.Done()
+		cp.maxLimitNoise.GenerateNoiseOctaves(bufs.maxNoise, xPos, 0, zPos, 5, 33, 5, f, f1, f)
+	}()
+
+	// Run cheap depth noise on current goroutine while the 3D noises run in parallel.
+	// Depth noise: 2D (5x5), MC uses noiseGen6 with 2D bouncer
+	// Pass pre-allocated slice; GenerateNoiseOctaves2D zeroes it before use.
+	depthNoiseArray := cp.depthNoise.GenerateNoiseOctaves2D(bufs.depthNoise, xPos, zPos, 5, 5,
+		cp.depthNoiseScaleX, cp.depthNoiseScaleZ, cp.depthNoiseExpo)
+
+	wg.Wait()
+
+	mainRegion := bufs.mainNoise
+	minLimitRegion := bufs.minNoise
+	maxLimitRegion := bufs.maxNoise
 
 	// MC iterates: k (x 0..4), l (z 0..4), l1 (y 0..32)
 	// field_147434_q index i increments linearly
@@ -124,23 +168,17 @@ func (cp *ChunkProvider189) generateDensityField(xChunk, zChunk int) []float64 {
 
 	for k := 0; k < 5; k++ {
 		for l := 0; l < 5; l++ {
-			// Biome blending over 5x5 neighborhood
+			// Biome blending over 5x5 neighborhood.
+			// biomeGrid covers (k-2..k+2) × (l-2..l+2) already pre-computed as a 9×9 grid
+			// where grid[gx*9+gz] maps to world grid column (xPos+k-2+gx, zPos+l-2+gz).
+			// For the current (k,l) the center is at gx=k+2, gz=l+2 in that 9×9.
 			var f2, f3, f4 float64
 
-			// Center biome at grid position
-			centerBiome := GetBiomeForCoords(
-				float64((xPos+k)*4+2),
-				float64((zPos+l)*4+2),
-				cp.seed,
-			)
+			centerBiome := bufs.biomeGrid[(k+2)*9+(l+2)]
 
 			for j1 := -2; j1 <= 2; j1++ {
 				for k1 := -2; k1 <= 2; k1++ {
-					biome := GetBiomeForCoords(
-						float64((xPos+k+j1)*4+2),
-						float64((zPos+l+k1)*4+2),
-						cp.seed,
-					)
+					biome := bufs.biomeGrid[(k+j1+2)*9+(l+k1+2)]
 
 					f5 := cp.biomeDepthOffset + biome.MinHeight*cp.biomeDepthWeight
 					f6 := cp.biomeScaleOffset + biome.MaxHeight*cp.biomeScaleWeight
@@ -234,7 +272,40 @@ func (cp *ChunkProvider189) PopulateChunk(c *Chunk) {
 	xChunk := c.X
 	zChunk := c.Z
 
-	noiseField := cp.generateDensityField(xChunk, zChunk)
+	// Acquire per-call reusable buffers from pool.
+	bufs := genBufferPool.Get().(*chunkGenBuffers)
+	defer genBufferPool.Put(bufs)
+
+	// Zero heightMap: -1 means no non-air block seen in this column yet.
+	for i := range bufs.heightMap {
+		bufs.heightMap[i] = -1
+	}
+
+	xPos := xChunk * 4
+	zPos := zChunk * 4
+
+	// Pre-compute 9×9 biome grid covering all density columns and their 5×5 neighbourhoods.
+	// Grid origin is (xPos-2, zPos-2); index = gx*9 + gz.
+	for gx := 0; gx < 9; gx++ {
+		for gz := 0; gz < 9; gz++ {
+			bufs.biomeGrid[gx*9+gz] = GetBiomeForCoords(
+				float64((xPos-2+gx)*4+2),
+				float64((zPos-2+gz)*4+2),
+				cp.seed,
+			)
+		}
+	}
+
+	// Pre-compute 16×16 surface biomes for replaceSurface.
+	for lx := 0; lx < ChunkSizeX; lx++ {
+		for lz := 0; lz < ChunkSizeZ; lz++ {
+			worldX := xChunk*ChunkSizeX + lx
+			worldZ := zChunk*ChunkSizeZ + lz
+			bufs.surfaceBiomes[lx*16+lz] = GetBiomeForCoords(float64(worldX), float64(worldZ), cp.seed)
+		}
+	}
+
+	noiseField := cp.generateDensityField(xChunk, zChunk, bufs)
 
 	// MC's interpolation loop:
 	// for i (x 0..3): j = i*5, k = (i+1)*5
@@ -281,9 +352,15 @@ func (cp *ChunkProvider189) PopulateChunk(c *Chunk) {
 							bz := l*4 + l2
 
 							if lvt > 0 {
-								c.SetBlock(bx, by, bz, BlockTypeStone)
+								c.SetBlockFast(bx, by, bz, BlockTypeStone)
+								if int16(by) > bufs.heightMap[bx*16+bz] {
+									bufs.heightMap[bx*16+bz] = int16(by)
+								}
 							} else if by < seaLevel {
-								c.SetBlock(bx, by, bz, BlockTypeWater)
+								c.SetBlockFast(bx, by, bz, BlockTypeWater)
+								if int16(by) > bufs.heightMap[bx*16+bz] {
+									bufs.heightMap[bx*16+bz] = int16(by)
+								}
 							}
 							// else: air (default)
 						}
@@ -302,34 +379,41 @@ func (cp *ChunkProvider189) PopulateChunk(c *Chunk) {
 	}
 
 	// Phase 2: Surface replacement (grass/dirt) + bedrock
-	cp.replaceSurface(c, xChunk, zChunk)
+	cp.replaceSurface(c, xChunk, zChunk, &bufs.surfaceBiomes, &bufs.heightMap)
 
 	c.dirty = true
 }
 
 // replaceSurface replaces top stone with grass/dirt layers and adds bedrock.
-func (cp *ChunkProvider189) replaceSurface(c *Chunk, xChunk, zChunk int) {
+// surfaceBiomes is a pre-computed 16×16 array indexed [lx*16+lz].
+// heightMap tracks the maximum Y with a non-air block per column, allowing the Y loop
+// to start from the actual terrain surface rather than always scanning from y=255.
+func (cp *ChunkProvider189) replaceSurface(c *Chunk, xChunk, zChunk int, surfaceBiomes *[256]*Biome, heightMap *[256]int16) {
 	for lx := 0; lx < ChunkSizeX; lx++ {
 		for lz := 0; lz < ChunkSizeZ; lz++ {
 			worldX := xChunk*ChunkSizeX + lx
 			worldZ := zChunk*ChunkSizeZ + lz
-			biome := GetBiomeForCoords(float64(worldX), float64(worldZ), cp.seed)
+			biome := surfaceBiomes[lx*16+lz]
 
 			topBlock := biome.TopBlock
 			fillerBlock := biome.FillerBlock
 			fillerDepth := -1
 
-			for y := 255; y >= 0; y-- {
+			startY := int(heightMap[lx*16+lz])
+			if startY < 0 {
+				startY = 4 // no terrain in this column; still process bedrock layer
+			}
+			for y := startY; y >= 0; y-- {
 				// Bedrock layer (y 0-4)
 				if y <= 4 {
 					if y == 0 {
-						c.SetBlock(lx, y, lz, BlockTypeBedrock)
+						c.SetBlockFast(lx, y, lz, BlockTypeBedrock)
 						continue
 					}
 					hash := uint64(worldX)*0x9E3779B9 + uint64(worldZ)*0x517CC1B7 + uint64(y)*0x6C622723
 					hash = (hash ^ (hash >> 16)) * 0x45D9F3B
 					if int(hash%5) <= (4 - y) {
-						c.SetBlock(lx, y, lz, BlockTypeBedrock)
+						c.SetBlockFast(lx, y, lz, BlockTypeBedrock)
 						continue
 					}
 				}
@@ -348,13 +432,13 @@ func (cp *ChunkProvider189) replaceSurface(c *Chunk, xChunk, zChunk int) {
 				if fillerDepth == -1 {
 					fillerDepth = 3
 					if y >= seaLevel-1 {
-						c.SetBlock(lx, y, lz, topBlock)
+						c.SetBlockFast(lx, y, lz, topBlock)
 					} else {
-						c.SetBlock(lx, y, lz, fillerBlock)
+						c.SetBlockFast(lx, y, lz, fillerBlock)
 					}
 				} else if fillerDepth > 0 {
 					fillerDepth--
-					c.SetBlock(lx, y, lz, fillerBlock)
+					c.SetBlockFast(lx, y, lz, fillerBlock)
 				}
 			}
 		}

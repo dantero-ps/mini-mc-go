@@ -64,6 +64,14 @@ func applyMeshResult(result meshing.MeshResult) {
 		return // Skip on error
 	}
 
+	// Only mark the chunk clean if its generation hasn't advanced since the job
+	// was submitted. If the generation differs, the chunk was modified while the
+	// job was in-flight (e.g. the player broke a block), so the result is stale.
+	// Leaving dirty=true ensures ensureChunkMesh will queue a fresh job next frame.
+	if result.Chunk != nil && result.Chunk.Generation() == result.ChunkGeneration {
+		result.Chunk.SetClean()
+	}
+
 	existing := chunkMeshes[coord]
 	if existing == nil {
 		existing = &chunkMesh{
@@ -115,23 +123,29 @@ func ensureChunkMesh(w *world.World, coord world.ChunkCoord, ch *world.Chunk) *c
 
 	// If chunk is dirty and no job is pending, submit a new mesh job
 	if ch.IsDirty() && !hasPendingJob && meshPool != nil {
-		// Create job and submit to worker pool
 		job := meshing.MeshJob{
-			World:      w,
-			Chunk:      ch,
-			Coord:      coord,
-			ResultChan: meshResultsChannel,
+			World:           w,
+			Chunk:           ch,
+			Coord:           coord,
+			ResultChan:      meshResultsChannel,
+			ChunkGeneration: ch.Generation(),
 		}
 
-		// Try to submit job (non-blocking)
-		if meshPool.SubmitJob(job) {
-			// Mark as pending
+		// Chunks that already have a mesh are being updated (e.g. player broke a
+		// block). Submit them to the priority queue so they aren't delayed behind
+		// the initial-load backlog in the normal queue.
+		submitted := false
+		if existing != nil {
+			submitted = meshPool.SubmitPriorityJob(job)
+		}
+		if !submitted {
+			submitted = meshPool.SubmitJob(job)
+		}
+
+		if submitted {
 			pendingMeshMutex.Lock()
 			pendingMeshJobs[coord] = meshResultsChannel
 			pendingMeshMutex.Unlock()
-
-			// Mark chunk as clean to prevent duplicate submissions
-			ch.SetClean()
 		}
 	}
 

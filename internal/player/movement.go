@@ -6,6 +6,7 @@ import (
 	"mini-mc/internal/input"
 	"mini-mc/internal/physics"
 	"mini-mc/internal/profiling"
+	"mini-mc/internal/world"
 	"time"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -24,7 +25,20 @@ const (
 	AirDrag         = 0.98 // Default air drag per tick
 	GroundDrag      = 0.91 // Default ground drag (before friction)
 	BlockFriction   = 0.6  // Default block friction
+
+	WaterGravityFactor = 0.4
+	WaterDrag          = 0.8
+	WaterSwimSpeed     = 0.04
+	WaterUpSpeed       = 3.6 // upward speed when pressing jump in water
 )
+
+// IsInWater checks if the player's feet are in water
+func (p *Player) IsInWater() bool {
+	footY := int(math.Floor(float64(p.Position[1])))
+	footX := int(math.Floor(float64(p.Position[0])))
+	footZ := int(math.Floor(float64(p.Position[2])))
+	return p.World.Get(footX, footY, footZ) == world.BlockTypeWater
+}
 
 func (p *Player) UpdatePosition(dt float64, im *input.InputManager) {
 	start := time.Now()
@@ -194,6 +208,14 @@ func (p *Player) UpdatePosition(dt float64, im *input.InputManager) {
 		applyMovement(strafe, forward, friction)
 
 		// Drag is applied after position update to match MC behavior
+	} else if p.IsInWater() {
+		// Water physics: swim up with jump, reduced speed
+
+		if !p.IsInventoryOpen && im.IsActive(input.ActionJump) {
+			p.Velocity[1] = WaterUpSpeed
+		}
+
+		applyMovement(strafe, forward, WaterSwimSpeed)
 	} else {
 		// Normal walking/jumping physics
 
@@ -377,6 +399,19 @@ func (p *Player) UpdatePosition(dt float64, im *input.InputManager) {
 		verticalDrag := float32(0.6)
 		verticalDragFactor := float32(math.Pow(float64(verticalDrag), float64(modeDistance)))
 		p.Velocity[1] *= verticalDragFactor
+	} else if p.IsInWater() {
+		// Reduced gravity in water
+		p.Velocity[1] -= Gravity * WaterGravityFactor * float32(dt)
+		waterTerminal := float32(TerminalVelocity * WaterGravityFactor)
+		if p.Velocity[1] < waterTerminal {
+			p.Velocity[1] = waterTerminal
+		}
+
+		// Water drag on all axes
+		waterDragFactor := float32(math.Pow(float64(WaterDrag), float64(modeDistance)))
+		p.Velocity[0] *= waterDragFactor
+		p.Velocity[2] *= waterDragFactor
+		p.Velocity[1] *= float32(math.Pow(0.8, float64(modeDistance)))
 	} else {
 		// Apply gravity
 		p.Velocity[1] -= Gravity * float32(dt)
@@ -418,6 +453,12 @@ func (p *Player) UpdatePosition(dt float64, im *input.InputManager) {
 
 func (p *Player) UpdateFallState(dy float64, onGround bool) {
 	if p.IsFlying {
+		p.FallDistance = 0
+		return
+	}
+
+	// Reset fall distance in water (no fall damage)
+	if p.IsInWater() {
 		p.FallDistance = 0
 		return
 	}

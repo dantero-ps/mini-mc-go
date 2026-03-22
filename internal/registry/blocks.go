@@ -34,7 +34,19 @@ var (
 	TextureNames []string
 	TextureMap   = make(map[string]int)
 	ModelLoader  *blockmodel.Loader
+
+	// BlockDefs is a flat lookup array indexed by BlockType (uint8). Populated at
+	// registration time alongside Blocks for O(1) access in hot paths.
+	BlockDefs [256]*BlockDefinition
 )
+
+// Pre-computed texture layer lookup: blockTexLayers[blockType][face] = texture layer index.
+// Face indices mirror world.BlockFace: 0=North, 1=South, 2=East, 3=West, 4=Top, 5=Bottom.
+var blockTexLayers [256][6]int
+
+// Pre-computed tint lookup: blockTints[blockType][face] = packed RGB565 tint.
+// 0xFFFF means no tint (white). Face indices same as blockTexLayers.
+var blockTints [256][6]uint16
 
 func RegisterBlock(def *BlockDefinition) {
 	if ModelLoader != nil && def.Name != "air" && def.Name != "water_still" && def.Name != "lava_still" {
@@ -53,6 +65,7 @@ func RegisterBlock(def *BlockDefinition) {
 	}
 
 	Blocks[def.ID] = def
+	BlockDefs[def.ID] = def
 	BlockNames[def.Name] = def.ID
 
 	registerTexture(def.TextureTop)
@@ -233,6 +246,13 @@ func InitRegistry() {
 	})
 
 	RegisterBlock(&BlockDefinition{
+		ID:       world.BlockTypeObsidian,
+		Name:     "obsidian",
+		IsSolid:  true,
+		Hardness: 50.0,
+	})
+
+	RegisterBlock(&BlockDefinition{
 		ID:        world.BlockTypeGrass,
 		Name:      "grass",
 		IsSolid:   true,
@@ -331,6 +351,23 @@ func InitRegistry() {
 	registerTexture("water_flow.png")
 	registerTexture("lava_still.png")
 	registerTexture("lava_flow.png")
+
+	precomputeMeshingLookups()
+	populateWorldLookups()
+}
+
+// populateWorldLookups fills world.BlockSolidTable and world.BlockFluidTable from
+// the registered block definitions. Called after all blocks are registered so that
+// the world package can use fast lookup arrays without importing registry.
+func populateWorldLookups() {
+	for i := 0; i < 256; i++ {
+		def := BlockDefs[i]
+		if def != nil {
+			world.BlockSolidTable[i] = def.IsSolid
+		}
+	}
+	world.BlockFluidTable[world.BlockTypeWater] = true
+	world.BlockFluidTable[world.BlockTypeLava] = true
 }
 
 // GetTextureLayer returns the texture layer index for a given block and face
@@ -354,4 +391,67 @@ func GetTextureLayer(blockType world.BlockType, face world.BlockFace) int {
 		return idx
 	}
 	return 0
+}
+
+// precomputeMeshingLookups fills blockTexLayers and blockTints for all 256 possible
+// BlockType values. Must be called after all blocks and textures are registered.
+func precomputeMeshingLookups() {
+	faces := [6]world.BlockFace{
+		world.FaceNorth, world.FaceSouth, world.FaceEast,
+		world.FaceWest, world.FaceTop, world.FaceBottom,
+	}
+
+	for bt := range 256 {
+		def := BlockDefs[bt]
+		if def == nil {
+			// Undefined block type: no texture, white (no) tint.
+			for f := range 6 {
+				blockTints[bt][f] = 0xFFFF
+			}
+			continue
+		}
+
+		// Texture layers per face.
+		for fi, face := range faces {
+			var texName string
+			switch face {
+			case world.FaceTop:
+				texName = def.TextureTop
+			case world.FaceBottom:
+				texName = def.TextureBot
+			default:
+				texName = def.TextureSide
+			}
+			if idx, ok := TextureMap[texName]; ok {
+				blockTexLayers[bt][fi] = idx
+			}
+		}
+
+		// RGB565 tints per face.
+		for fi, face := range faces {
+			if def.TintColor != 0 && def.TintFaces[face] {
+				r := (def.TintColor >> 16) & 0xFF
+				g := (def.TintColor >> 8) & 0xFF
+				b := def.TintColor & 0xFF
+				r5 := (r >> 3) & 0x1F
+				g6 := (g >> 2) & 0x3F
+				b5 := (b >> 3) & 0x1F
+				blockTints[bt][fi] = uint16((r5 << 11) | (g6 << 5) | b5)
+			} else {
+				blockTints[bt][fi] = 0xFFFF // White = no tint
+			}
+		}
+	}
+}
+
+// GetTexLayerFast returns the pre-computed texture layer index for a block type and
+// face index (0=North, 1=South, 2=East, 3=West, 4=Top, 5=Bottom).
+func GetTexLayerFast(bt world.BlockType, faceIdx int) int {
+	return blockTexLayers[bt][faceIdx]
+}
+
+// GetTintFast returns the pre-computed RGB565 tint for a block type and face index.
+// 0xFFFF means no tint (white). Face indices same as GetTexLayerFast.
+func GetTintFast(bt world.BlockType, faceIdx int) uint16 {
+	return blockTints[bt][faceIdx]
 }

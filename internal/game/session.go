@@ -39,6 +39,8 @@ type Session struct {
 	Frames           int
 	LastFPSCheckTime time.Time
 	lastEviction     time.Time
+
+	tickAccumulator float64 // seconds accumulated toward the next 20 TPS game tick
 }
 
 func NewSession(window *glfw.Window, mode player.GameMode) (*Session, error) {
@@ -159,6 +161,20 @@ func (s *Session) Update(dt float64, im *standardInput.InputManager) menu.Action
 		s.Player.Update(dt, im)
 		profiling.Track("world.UpdateEntities")
 		s.World.UpdateEntities(dt)
+
+		// Fixed-rate game ticks at 20 TPS (0.05 s per tick).
+		// Cap to 10 ticks per frame to prevent spiral-of-death on slow frames.
+		s.tickAccumulator += dt
+		ticksThisFrame := 0
+		for s.tickAccumulator >= 0.05 && ticksThisFrame < 10 {
+			s.World.Tick()
+			s.tickAccumulator -= 0.05
+			ticksThisFrame++
+		}
+		// Hard cap: discard excess accumulation rather than spiral.
+		if s.tickAccumulator > 0.5 {
+			s.tickAccumulator = 0.5
+		}
 	}
 
 	s.handleInputActions(im)

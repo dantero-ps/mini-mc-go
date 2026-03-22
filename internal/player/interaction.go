@@ -36,6 +36,13 @@ func (p *Player) HandleMouseButton(button glfw.MouseButton, action glfw.Action) 
 						if p.World.IsAir(ax, ay, az) && (placingUnderFeet || !physics.IntersectsBlock(p.Position, width, height, ax, ay, az)) {
 							// Place the selected block type
 							p.World.Set(ax, ay, az, selectedStack.Type)
+							p.World.NotifyNeighbors(ax, ay, az)
+							// Schedule initial tick for fluid blocks so they begin flowing
+							if selectedStack.Type == world.BlockTypeWater {
+								p.World.ScheduleBlockTick(ax, ay, az, world.WaterTickRate, 0)
+							} else if selectedStack.Type == world.BlockTypeLava {
+								p.World.ScheduleBlockTick(ax, ay, az, world.LavaTickRate, 0)
+							}
 							p.TriggerHandSwing()
 							// Consume item if not in creative mode
 							if p.GameMode != GameModeCreative {

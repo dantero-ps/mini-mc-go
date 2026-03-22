@@ -81,3 +81,5 @@ Thumbs.db
 !assets/
 
 .agent/rules/file-paths.md
+original-minecraft/
+research/

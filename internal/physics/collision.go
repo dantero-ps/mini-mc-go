@@ -12,7 +12,7 @@ import (
 )
 
 // Checks if a position collides with any block in the world
-func Collides(pos mgl32.Vec3, width, height float32, world *world.World) bool {
+func Collides(pos mgl32.Vec3, width, height float32, w *world.World) bool {
 	now := time.Now()
 
 	defer profiling.Track("physics.Collides")()
@@ -29,7 +29,7 @@ func Collides(pos mgl32.Vec3, width, height float32, world *world.World) bool {
 	for x := minX - 1; x <= maxX+1; x++ {
 		for y := minY - 1; y <= maxY+1; y++ {
 			for z := minZ - 1; z <= maxZ+1; z++ {
-				if !world.IsAir(x, y, z) {
+				if world.BlockSolidTable[w.Get(x, y, z)] {
 					iterations++
 					blockMinX := float32(x)
 					blockMaxX := float32(x) + 1.0
@@ -64,7 +64,7 @@ func Collides(pos mgl32.Vec3, width, height float32, world *world.World) bool {
 }
 
 // FindGroundLevel finds the highest block below the player
-func FindGroundLevel(x, z float32, playerPos mgl32.Vec3, width, height float32, world *world.World) float32 {
+func FindGroundLevel(x, z float32, playerPos mgl32.Vec3, width, height float32, w *world.World) float32 {
 	defer profiling.Track("physics.FindGroundLevel")()
 	minX := int(math.Floor(float64(x - width/2)))
 	maxX := int(math.Floor(float64(x + width/2)))
@@ -91,7 +91,7 @@ func FindGroundLevel(x, z float32, playerPos mgl32.Vec3, width, height float32, 
 			}
 			// Search from player feet downwards
 			for by := int(math.Floor(float64(playerPos.Y()))); by >= 0; by-- {
-				if !world.IsAir(bx, by, bz) {
+				if world.BlockSolidTable[w.Get(bx, by, bz)] {
 					// Top of block is at y+1
 					groundY := float32(by) + 1.0
 					if groundY > maxGroundY {
@@ -129,7 +129,7 @@ func IntersectsBlock(playerPos mgl32.Vec3, width, height float32, bx, by, bz int
 }
 
 // FindCeilingLevel finds the lowest ceiling (bottom face of a block) above the player's head
-func FindCeilingLevel(x, z float32, playerPos mgl32.Vec3, width, height float32, world *world.World) float32 {
+func FindCeilingLevel(x, z float32, playerPos mgl32.Vec3, width, height float32, w *world.World) float32 {
 	defer profiling.Track("physics.FindCeilingLevel")()
 	minX := int(math.Floor(float64(x - width/2)))
 	maxX := int(math.Floor(float64(x + width/2)))
@@ -158,7 +158,7 @@ func FindCeilingLevel(x, z float32, playerPos mgl32.Vec3, width, height float32,
 				continue
 			}
 			for by := startY; by <= 255; by++ {
-				if !world.IsAir(bx, by, bz) {
+				if world.BlockSolidTable[w.Get(bx, by, bz)] {
 					// Bottom of block is at by
 					ceilingY := float32(by)
 					if ceilingY < minCeilingY {

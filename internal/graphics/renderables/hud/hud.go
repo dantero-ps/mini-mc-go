@@ -118,8 +118,10 @@ func (h *HUD) Render(ctx renderer.RenderContext) {
 
 	// Render World-Level HUD elements (Hotbar, Health, Food) which should be dimmed by menus
 	h.renderHotbar(ctx.Player)
-	h.renderHealth(ctx.Player)
-	h.renderFood(ctx.Player)
+	if ctx.Player.GameMode != player.GameModeCreative {
+		h.renderHealth(ctx.Player)
+		h.renderFood(ctx.Player)
+	}
 
 	if ctx.Player.IsInventoryOpen {
 		// Dim background

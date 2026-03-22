@@ -95,6 +95,7 @@ func (p *Player) BreakBlock() {
 
 	if blockType != world.BlockTypeAir {
 		p.World.Set(x, y, z, world.BlockTypeAir)
+		p.World.NotifyNeighbors(x, y, z)
 
 		if p.GameMode != GameModeCreative {
 			// Determine drops

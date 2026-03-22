@@ -23,7 +23,7 @@ type RaycastResult struct {
 }
 
 // Raycast performs a ray casting operation from a starting point in a given direction
-func Raycast(start mgl32.Vec3, direction mgl32.Vec3, minDist, maxDist float32, world *world.World) RaycastResult {
+func Raycast(start mgl32.Vec3, direction mgl32.Vec3, minDist, maxDist float32, w *world.World) RaycastResult {
 	defer profiling.Track("physics.Raycast")()
 
 	// Initial block position
@@ -140,8 +140,8 @@ func Raycast(start mgl32.Vec3, direction mgl32.Vec3, minDist, maxDist float32, w
 			continue
 		}
 
-		// Check if block is not air
-		if !world.IsAir(bx, by, bz) {
+		// Check if block is solid
+		if world.BlockSolidTable[w.Get(bx, by, bz)] {
 			if dist < minDist {
 				continue
 			}

@@ -111,7 +111,7 @@ func (a *App) tick() {
 	// Check if frame took too long (> 16ms)
 	processingDuration := time.Since(startTick)
 	if processingDuration > 5*time.Millisecond {
-		log.Printf("Slow frame: %v. Top tasks: %s", processingDuration)
+		log.Printf("Slow frame: %v", processingDuration)
 	}
 
 	a.inputManager.PostUpdate() // Clear "JustPressed" flags
