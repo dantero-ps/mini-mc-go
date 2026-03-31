@@ -1,121 +1,67 @@
-# Minecraft Clone (Go)
+# Mini-MC Benchmarks
 
 ## What This Is
 
-A full-featured Minecraft clone written in Go from scratch. A voxel-based sandbox game with procedurally generated infinite worlds, survival and creative modes, multiplayer support, and modern rendering. Built as a long-term passion project to explore game development, procedural generation, and Go's concurrency for real-time applications.
+A Go + OpenGL Minecraft clone (Mini-MC) that needs comprehensive Go benchmark files covering all hot-path subsystems. The benchmarks will live as `_test.go` files runnable via `go test -bench` and serve as a performance regression safety net — catching slowdowns before they land in future changes.
 
 ## Core Value
 
-**Infinite, beautiful worlds that are fun to explore.**
-
-Everything else—combat, crafting, building—depends on having compelling terrain that players want to discover and inhabit. World generation quality drives the entire experience.
+Every hot-path subsystem has a benchmark you can run with `go test -bench` to immediately detect performance regressions after code changes.
 
 ## Requirements
 
 ### Validated
 
-<!-- Already implemented and working -->
-
-- ✓ Voxel rendering system with greedy meshing — existing codebase
-- ✓ Chunk-based world (16x256x16) with sparse storage — existing codebase
-- ✓ Deterministic world generation from seed — existing codebase
-- ✓ Player physics and collision detection — existing codebase
-- ✓ Block placement and breaking system — existing codebase
-- ✓ Basic 2D heightmap terrain generation — existing codebase
+- ✓ Chunk generation pipeline benchmarks (gen → mesh → unpack → GPU upload, E2E, parallel) — `internal/benchmark/pipeline_test.go`
+- ✓ Density generator populate chunk benchmark — `internal/world/generator_test.go`
+- ✓ Greedy meshing with direction worker pools — existing
+- ✓ MC 1.8.9 terrain generation (ChunkProvider189) — existing
+- ✓ AABB collision detection system — existing
+- ✓ Block raytracing — existing
+- ✓ Fluid meshing with flow angle computation — existing
+- ✓ Value noise / octave noise generation — existing
+- ✓ Chunk storage with sectioned layout (16x16x16 sections) — existing
 
 ### Active
 
-<!-- Current development focus: World Generation -->
-
-**Phase Focus: World & Generation**
-- [ ] 3D density-based terrain (enables caves, overhangs, floating islands)
-- [ ] Multi-biome system with smooth transitions
-- [ ] Natural cave generation (cheese caves + spaghetti tunnels)
-- [ ] Ore distribution and resource placement
-- [ ] Structure generation (trees, villages, dungeons)
-
-**Future Core Systems:**
-- [ ] Inventory and item system
-- [ ] Crafting and recipes
-- [ ] Survival mechanics (health, hunger, day/night)
-- [ ] Mob AI and spawning
-- [ ] Multiplayer networking (client-server)
-- [ ] Save/load world persistence
+- [ ] Benchmark AABB collision detection (single entity vs chunk blocks)
+- [ ] Benchmark block raytracing at various distances and angles
+- [ ] Benchmark fluid mesh generation (flow angle, fluid height)
+- [ ] Benchmark value noise and octave noise generation
+- [ ] Benchmark ChunkProvider189 terrain generation in isolation
+- [ ] Benchmark chunk block operations (GetBlock/SetBlock/section allocation)
+- [ ] Benchmark chunk store cache operations (get/put/eviction)
 
 ### Out of Scope
 
-- **Exact Minecraft data compatibility** — Legal and technical complexity; build inspired-by, not compatible
-- **Redstone circuits** — Defer to late phases; complex simulation system
-- **Modding API initially** — Focus on core game first; extensibility later
-- **Mobile/web platforms** — Desktop-first; cross-platform is future consideration
-- **Pixel-perfect Minecraft clone** — Inspired by, not replication; legal and creative freedom
+- CI performance gates — manual `go test -bench` runs are sufficient
+- Baseline snapshot comparison — just the benchmark files
+- Rendering benchmarks (GPU-bound, already covered by GPU upload stage) — OpenGL calls require headless window context, already benchmarked in pipeline
+- Inventory/UI/player model benchmarks — not hot paths
+- Network benchmarks — no network layer exists
 
 ## Context
 
-### Current Codebase State
-
-**Foundation is solid** (from `.planning/codebase/` analysis):
-- Custom voxel engine with no external game framework dependencies
-- Worker pool-based parallel chunk generation and meshing
-- Memory-efficient sparse chunk storage
-- Clean separation: world generation, rendering, physics
-- Go-idiomatic patterns (channels, goroutines, sync primitives)
-
-**Architecture:**
-- Entry: `cmd/main.go` → game loop
-- World: `internal/world/` → chunks, generation, storage
-- Rendering: `internal/render/` → OpenGL, meshes, shaders
-- Physics: `internal/physics/` → collision, player movement
-
-**Tech Stack:**
-- Go 1.21+
-- OpenGL 3.3 via go-gl/gl
-- GLFW for windowing
-- Custom noise/generation (no external world gen libs)
-
-### Known Issues (from `.planning/codebase/CONCERNS.md`)
-
-**High Priority:**
-- 2D heightmap limits terrain variety (blocks caves/overhangs)
-- No biome system (all terrain looks same)
-- Missing world persistence (can't save/load)
-- Performance degrades at high render distances
-
-**Medium Priority:**
-- Some TODOs in physics collision handling
-- Test coverage gaps in world generation
-- Documentation needs expansion
-
-### Research Insights (from `.planning/research/`)
-
-**Critical Path:** 3D terrain → biomes → caves → structures
-- Each phase builds on previous
-- 3D density function is foundation for everything
-- Determinism testing is crucial at each step
-
-**Performance Strategy:**
-- Profile before optimizing (current patterns are good)
-- Chunk-level caching for expensive noise
-- LOD system for distant chunks (future)
+- **Language:** Go 1.24, OpenGL 4.1 Core, GLFW
+- **Existing benchmarks:** `internal/benchmark/pipeline_test.go` covers the full chunk generation pipeline (gen, meshing, vertex unpack, GPU upload, E2E, parallel meshing). Well-structured with `TestMain` for GLFW/GL context setup, `b.Loop()` (Go 1.24 style), `b.ReportAllocs()`, and domain-specific metrics (`vertices/op`, `bytes/op`).
+- **Existing test patterns:** Unit tests co-located with code, same package naming, `world.NewEmpty()` for minimal test worlds, `init()` for manual table population.
+- **Key packages:** `internal/physics` (collision, raycast), `internal/meshing` (greedy, fluid), `internal/world` (noise, chunk, chunk_provider_189, chunk_store, generator).
+- **Performance risks from CONCERNS.md:** `SetMeta`/`SetBlock` do O(4096) zero-scan on block removal, `colSet` map allocated every frame causes GC pressure, height-cache lookup race in chunk streamer.
+- **Test convention:** `b.Loop()` for new benchmarks (not `for i := 0; i < b.N; i++`), `b.ReportAllocs()` on all benchmarks, `b.ReportMetric()` for domain-specific metrics.
 
 ## Constraints
 
-- **Tech Stack:** Go + OpenGL — Chosen for learning/performance; locked for project continuity
-- **Timeline:** Long-term hobby project — No deadlines, prioritize learning and quality over speed
-- **Scope:** Full Minecraft-like feature set — Large scope acknowledged; phased approach required
-- **Platform:** Desktop (Windows/Mac/Linux) — Single-player focus initially, multiplayer later
-- **Dependencies:** Minimal external libs — Maintain control over core systems (world gen, physics)
+- **Tech Stack:** Go 1.24 standard `testing` package only — no third-party benchmark libraries
+- **Package Convention:** Benchmarks that test cross-package hot paths go in `internal/benchmark/` (uses GLFW `TestMain` for GL context). Package-internal benchmarks can stay in the same package.
+- **No GL context needed for most:** Physics, noise, chunk ops don't need OpenGL — they can use simpler test setup without GLFW
+- **Package naming:** `internal/benchmark/` uses `package benchmark`, physics benchmarks may use `package physics_test` (external) to match existing pattern
 
 ## Key Decisions
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Custom noise implementation | Full determinism control; no dependency on external RNG behavior | ✓ Good — Working well |
-| Greedy meshing | Reduce vertex count dramatically; industry standard for voxel games | ✓ Good — Performant |
-| Worker pool pattern | Go's goroutines excel at parallel chunk generation | ✓ Good — Clean scaling |
-| Chunk-based world | Standard for infinite worlds; memory-efficient streaming | ✓ Good — Proven pattern |
-| 2D heightmap (current) | Quick start; simple terrain | ⚠️ Revisit — Limits features, replace with 3D |
-| No game framework | Full control; learning focus | — Pending — More code but better understanding |
+| Hot paths only (not full coverage) | Regression safety on performance-critical code, not exhaustive coverage | — Pending |
+| `internal/benchmark/` for cross-package, co-located for package-internal | Follows existing convention from pipeline_test.go | — Pending |
 
 ---
-*Last updated: 2026-02-08 after project initialization*
+*Last updated: 2026-03-31 after initialization*
