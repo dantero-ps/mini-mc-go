@@ -88,18 +88,15 @@ func applyMeshResult(result meshing.MeshResult) {
 		// Keep CPU copy for column meshing
 		existing.cpuVerts = verts
 		existing.fluidVerts = fluidVerts
-		// Note: We don't upload individual chunks to atlas anymore, only combined columns.
-		// appendOrUpdateAtlas(coord.X, coord.Z, existing)
-
-		// Invalidate combined column mesh
-		key := [2]int{coord.X, coord.Z}
-		if col := columnMeshes[key]; col != nil {
-			col.dirty = true
-		}
 	} else {
 		existing.vertexCount = 0
 		existing.cpuVerts = nil
 		existing.fluidVerts = nil
+	}
+	// Mark the column as dirty in all cases: even when transitioning from a full chunk to an empty one
+	// ensureColumnMeshForXZ should free the atlas slot and shrink the column.
+	if col := columnMeshes[[2]int{coord.X, coord.Z}]; col != nil {
+		col.dirty = true
 	}
 	chunkMeshes[coord] = existing
 }
@@ -121,8 +118,8 @@ func ensureChunkMesh(w *world.World, coord world.ChunkCoord, ch *world.Chunk) *c
 	_, hasPendingJob := pendingMeshJobs[coord]
 	pendingMeshMutex.RUnlock()
 
-	// If chunk is dirty and no job is pending, submit a new mesh job
-	if ch.IsDirty() && !hasPendingJob && meshPool != nil {
+	// If chunk is dirty or has no mesh and no job is pending, submit a new mesh job
+	if (ch.IsDirty() || existing == nil) && !hasPendingJob && meshPool != nil {
 		job := meshing.MeshJob{
 			World:           w,
 			Chunk:           ch,
@@ -178,16 +175,12 @@ func PruneMeshesByWorld(w *world.World, centerX, centerZ float32, radiusChunks i
 			delete(chunkMeshes, coord)
 			colKey := [2]int{coord.X, coord.Z}
 			if col := columnMeshes[colKey]; col != nil {
+				// Y-chunk içeriği değişti; rebuild gerekiyor.
+				// firstFloat/vertexCount'a DOKUNMA — eski slot referansı kaybolursa
+				// freeInRegion çağrılamaz ve atlas region'ında orphan veri kalır.
+				// ensureColumnMeshForXZ next frame collectColumnVerts ile yeni boyutu
+				// görür ve ya same-size in-place yazar ya da alloc-new + free-old yapar.
 				col.dirty = true
-				col.vertexCount = 0
-				col.firstFloat = -1
-				col.firstVertex = -1
-
-				// HACK: Also remove from atlas region immediately?
-				// No, atlas compaction handles holes. But we must ensure the column is marked dirty so it gets rebuilt/cleared.
-				// However, if we just zero out vertexCount, maybeCompactRegions sees it as "nothing to draw".
-				// But we also need to reclaim the space in Atlas eventually.
-				// For now, let's just make sure we don't hold references.
 			}
 			freed++
 		}
@@ -201,7 +194,8 @@ func PruneMeshesByWorld(w *world.World, centerX, centerZ float32, radiusChunks i
 			// Mark as empty and reclaim space tracking
 			if col.firstFloat >= 0 && col.vertexCount > 0 {
 				if r := atlasRegions[col.regionKey]; r != nil {
-					r.fragmentedBytes += int(col.vertexCount) * 12
+					freeInRegion(r, col.firstFloat, int(col.vertexCount)*6)
+					r.activeColumns--
 				}
 			}
 

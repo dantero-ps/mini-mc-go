@@ -114,11 +114,18 @@ func (h *HUD) renderPlayerPosition(p *player.Player) {
 	// Build text and draw at top-left
 	// Calculate horiz speed (m/s)
 	speed := math.Sqrt(float64(p.Velocity[0]*p.Velocity[0] + p.Velocity[2]*p.Velocity[2]))
-	text := fmt.Sprintf("Pos: %.2f, %.2f, %.2f | Speed: %.2f m/s | MaxJump: %.3f", p.Position[0], p.Position[1], p.Position[2], speed, p.MaxJumpHeight)
-	x := float32(10)
-	y := float32(30)
+
+	chunkX := int(math.Floor(float64(p.Position[0]) / 16))
+	chunkZ := int(math.Floor(float64(p.Position[2]) / 16))
+
+	yawDeg := math.Mod(float64(p.CamYaw), 360)
+	if yawDeg < 0 {
+		yawDeg += 360
+	}
+
+	text := fmt.Sprintf("Pos: %.1f, %.1f, %.1f | Chunk: %d, %d | Yaw: %.0f° | Speed: %.2f", p.Position[0], p.Position[1], p.Position[2], chunkX, chunkZ, yawDeg, speed)
 	color := mgl32.Vec3{1.0, 1.0, 1.0}
-	h.fontRenderer.Render(text, x, y, 0.35, color)
+	h.fontRenderer.Render(text, 10, 30, 0.35, color)
 }
 
 // renderFPS renders the current FPS value on screen

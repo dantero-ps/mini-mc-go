@@ -361,6 +361,7 @@ func (cs *ChunkStore) AddChunk(coord ChunkCoord, chunk *Chunk) {
 		for _, nc := range neighborDirs {
 			if nb, ok := cs.chunks[nc]; ok {
 				nb.dirty = true
+				nb.generation++
 			}
 		}
 	}

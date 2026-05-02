@@ -4,7 +4,7 @@ import (
 	"log"
 	"mini-mc/internal/graphics/renderables/font"
 	"mini-mc/internal/graphics/renderables/ui"
-	standardInput "mini-mc/internal/input"
+	"mini-mc/internal/input"
 	"mini-mc/internal/player"
 	"mini-mc/internal/profiling"
 	"mini-mc/internal/ui/menu"
@@ -24,7 +24,7 @@ const (
 
 type App struct {
 	window       *glfw.Window
-	inputManager *standardInput.InputManager
+	inputManager *input.InputManager
 
 	state AppState
 
@@ -40,7 +40,7 @@ type App struct {
 	lastTime   time.Time
 }
 
-func NewApp(window *glfw.Window, im *standardInput.InputManager) *App {
+func NewApp(window *glfw.Window) *App {
 	// Initialize UI for Main Menu
 	newUI := ui.NewUI()
 	if err := newUI.Init(); err != nil {
@@ -61,6 +61,8 @@ func NewApp(window *glfw.Window, im *standardInput.InputManager) *App {
 	width, height := window.GetSize()
 	newUI.SetViewport(width, height)
 	fr.SetViewport(float32(width), float32(height))
+
+	im := input.NewInputManager()
 
 	return &App{
 		window:       window,
@@ -110,7 +112,7 @@ func (a *App) tick() {
 
 	// Check if frame took too long (> 16ms)
 	processingDuration := time.Since(startTick)
-	if processingDuration > 7*time.Millisecond {
+	if processingDuration > 15*time.Millisecond {
 		log.Printf("Slow frame: %v", processingDuration)
 	}
 
@@ -126,7 +128,7 @@ func (a *App) tick() {
 
 func (a *App) updateMainMenu(dt float64) {
 	// Handle input for menu
-	action := a.mainMenu.Update(a.window, a.inputManager.JustPressed(standardInput.ActionMouseLeft))
+	action := a.mainMenu.Update(a.window, a.inputManager.JustPressed(input.ActionMouseLeft))
 
 	if action == menu.ActionStartSurvival {
 		a.StartSession(player.GameModeSurvival)

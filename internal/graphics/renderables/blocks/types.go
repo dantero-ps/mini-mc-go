@@ -20,17 +20,24 @@ type atlasWrite struct {
 	data        []int16
 }
 
+// freeSpan tracks a contiguous hole in an atlasRegion's VBO, measured in int16 units.
+type freeSpan struct {
+	offsetShorts int
+	sizeShorts   int
+}
+
 type atlasRegion struct {
-	key             [2]int
-	vao             uint32
-	vbo             uint32
-	capacityBytes   int
-	totalFloats     int // Total int16 count in the atlas
-	orderedColumns  []*columnMesh
-	pendingWrites   []atlasWrite
-	lastCompact     uint64
-	growthCount     int
-	fragmentedBytes int
+	key            [2]int
+	vao            uint32
+	vbo            uint32
+	capacityBytes  int
+	totalFloats    int        // high-water mark: next append offset in int16 units
+	freeList       []freeSpan // holes inside [0, totalFloats), sorted by offsetShorts, coalesced
+	orderedColumns []*columnMesh
+	pendingWrites  []atlasWrite
+	lastCompact    uint64
+	growthCount    int
+	activeColumns  int // number of columnMeshes with vertexCount>0 referencing this region
 }
 
 type chunkMesh struct {
@@ -52,6 +59,7 @@ type columnMesh struct {
 	drawnFrame   uint64 // last frame this column participated in a merged draw call
 	visibleFrame uint64 // last frame this column was marked visible
 	regionKey    [2]int // atlas region owning this column data
+	retryFrame   uint64 // earliest frame at which a failed alloc may be retried
 }
 
 type plane struct {
