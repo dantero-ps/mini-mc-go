@@ -76,7 +76,7 @@ func NewInputManager() *InputManager {
 	im.BindKey(glfw.KeyA, ActionMoveLeft)
 	im.BindKey(glfw.KeyD, ActionMoveRight)
 	im.BindKey(glfw.KeySpace, ActionJump)
-	im.BindKey(glfw.KeyLeftControl, ActionSprint)
+	im.bindSprintKey() // platform-specific: avoids OS shortcut conflicts
 	im.BindKey(glfw.KeyLeftShift, ActionSneak)
 	im.BindKey(glfw.KeyE, ActionInventory)
 	im.BindKey(glfw.KeyEscape, ActionPause)

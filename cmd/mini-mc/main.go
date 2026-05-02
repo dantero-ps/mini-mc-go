@@ -3,10 +3,8 @@ package main
 import (
 	"runtime"
 
-	"mini-mc/internal/game"
-	"mini-mc/internal/input"
-
 	"github.com/go-gl/glfw/v3.3/glfw"
+	"mini-mc/internal/game"
 )
 
 func init() {
@@ -25,12 +23,8 @@ func main() {
 		panic(err)
 	}
 
-	// Create input manager
-	inputManager := input.NewInputManager()
-	inputManager.SetKeyCallback(window)
-
 	// Create App (Manages Lifecycle)
-	app := game.NewApp(window, inputManager)
+	app := game.NewApp(window)
 
 	// Setup input handlers (routes low level callbacks to App/Session)
 	game.SetupInputHandlers(app)

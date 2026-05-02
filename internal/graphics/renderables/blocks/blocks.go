@@ -1,6 +1,7 @@
 package blocks
 
 import (
+	"log"
 	"math"
 	"mini-mc/internal/config"
 	"mini-mc/internal/graphics"
@@ -429,4 +430,10 @@ func (b *Blocks) renderFluidsInternal(ctx renderer.RenderContext, visible []worl
 		gl.Enable(gl.CULL_FACE)
 		gl.Disable(gl.BLEND)
 	}()
+}
+
+func glCheckError(label string) {
+	if err := gl.GetError(); err != gl.NO_ERROR {
+		log.Printf("gl error %s: 0x%x", label, err)
+	}
 }
